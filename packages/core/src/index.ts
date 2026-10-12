@@ -13,3 +13,7 @@ export * from "./library/library-manager.js";
 export * from "./import/pdf.js";
 export * from "./search/normalise.js";
 export * from "./search/index.js";
+export * from "./backup/types.js";
+export * from "./backup/export-zip.js";
+export * from "./backup/verify.js";
+export * from "./backup/import-zip.js";

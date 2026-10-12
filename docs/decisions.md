@@ -51,3 +51,23 @@ Running log of architectural and technical choices made during the development o
   - `NotesScreen` provides filtering by document, color, and kind, with Markdown export (`folio-notes-YYYYMMDD.md`).
 - **Metadata & Library Management**:
   - `DocumentSheet` bottom sheet (Vaul) provides in-place editing of title, author, tags, and collections, as well as complete cascaded deletion (removing files, search index, annotations, progress, and updating manifest).
+
+## Phase 4: Backup, Restore & Integrity Verification
+
+- **Streaming Backup Architecture**:
+  - Utilized `fflate.Zip` streaming async generator to pack the library incrementally without buffering the entire archive in memory.
+  - Generates standard naming `folio-backup-YYYYMMDD-HHMM.zip` with root `backup.json` metadata (schema 1, createdAt, appVersion, docCount, manifestSha256).
+  - Compression levels: Level 0 (store uncompressed) for already-compressed media (EPUB, PDF, images); Level 6 (deflate) for JSON and HTML documents.
+- **Archive Safety & Security Guards**:
+  - Validates all zip entry paths against path traversal attacks (`..`, leading `/` or `\`, Windows drive letters).
+  - Hard safety limits enforced during extraction: max 20,000 entries and max 1 GB total uncompressed size to defend against zip bomb attacks.
+- **Integrity Verification**:
+  - Computes SHA-256 for all archive entries and verifies them against `library/manifest.json` and `backup.json`. Reports any mismatches or corrupted files before restoring.
+- **Merge & Replace Restore Rules**:
+  - **Merge Mode (Default)**: Documents with existing `contentHash` are skipped; matching IDs resolve conflicts by choosing newer `updatedAt`; annotations merge by ID with newer `updatedAt` winning; reading progress keeps the newer entry per document; collections union `docIds` by collection ID; local settings preserved; never deletes existing documents.
+  - **Replace Mode**: Cleanly wipes existing library storage and re-establishes exact archive state upon explicit `"REPLACE"` user confirmation.
+  - Automatically rebuilds the search index across all documents after restore completes.
+- **Settings UI & Backup Reminder**:
+  - Added Backup & Restore controls with live progress in `SettingsScreen`.
+  - Storage persistence request via `navigator.storage.persist()`.
+  - Automatic reminder banner triggered when more than 20 changes or 14 days have passed without a backup.

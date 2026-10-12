@@ -214,13 +214,21 @@ export class LibraryManager {
         updates.collectionIds !== undefined ? updates.collectionIds : currentMeta.collectionIds
     };
 
-    await this.store.write(metaPath, JSON.stringify(updatedMeta, null, 2));
+    const updatedMetaBytes = new TextEncoder().encode(JSON.stringify(updatedMeta, null, 2));
+    await this.store.write(metaPath, updatedMetaBytes);
 
     // Update manifest entry
     const now = new Date().toISOString();
     mDoc.title = updatedMeta.title;
     mDoc.updatedAt = now;
     manifest.updatedAt = now;
+
+    // Update sha256 and size in manifest files
+    const metaFileEntry = mDoc.files.find((f) => f.path === metaPath);
+    if (metaFileEntry) {
+      metaFileEntry.size = updatedMetaBytes.byteLength;
+      metaFileEntry.sha256 = await sha256Hex(updatedMetaBytes);
+    }
     await this.store.write(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
 
     // Update search index
