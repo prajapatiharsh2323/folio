@@ -17,3 +17,7 @@ export * from "./backup/types.js";
 export * from "./backup/export-zip.js";
 export * from "./backup/verify.js";
 export * from "./backup/import-zip.js";
+export * from "./store/fs-access-store.js";
+export * from "./sync/types.js";
+export * from "./sync/drive.js";
+export * from "./sync/sync-manager.js";

@@ -88,3 +88,89 @@ Verification matrix of the ten items in the Section 9 Native-feel checklist:
 | 8 | **Install prompt capture** | Captured `beforeinstallprompt` event stored in state. "Install Folio App" card renders in Settings only when installable; hidden when already running in standalone mode. | **PASS** — Verified `beforeinstallprompt` and `appinstalled` listeners in `SettingsScreen`. |
 | 9 | **Performance targets** | Cold start loads in under 1.5 seconds. Minisearch query runs in under 40 ms for 500 documents. Offloaded non-blocking worker for search; 60 fps smooth list scrolling. | **PASS** — Verified against search benchmark test (< 40 ms) and lightweight DOM node counts. |
 | 10 | **Accessibility** | Visible `:focus-visible` outline rings with theme accent; explicit `aria-label` tags on all icon-only buttons; respects system font scaling. | **PASS** — Verified focus ring CSS rules and aria attributes across icon buttons. |
+
+## Phase 6: Google Drive Sync & Windows Folder Mode
+
+### Architecture & Security Decisions
+
+- **Direct Client-to-Drive Sync (Zero Server Architecture)**:
+  - No central accounts, databases, or intermediary servers. All synchronization is performed directly between the browser client and Google Drive APIs.
+  - OAuth authorization utilizes Google Identity Services (GIS) token client flow (`initTokenClient`).
+  - Authorization scope restricted strictly to `https://www.googleapis.com/auth/drive.file`. The application cannot read, modify, or list any external user files—it only accesses files created by Folio itself.
+  - Client ID is public by design; access tokens are kept in memory only and never written to persistent disk/storage.
+- **Drive Storage Layout & State Tracking**:
+  - Remote root folder: `Folio Library` mirroring `library/` without ephemeral search index directories (`index/`).
+  - File addressing: Because Google Drive identifies files by opaque alphanumeric IDs rather than Unix paths, a local mapping file `sync/state.json` tracks `{ path -> { driveId, sha256, remoteModifiedAt } }`.
+  - Drive `appProperties`: Every uploaded file stores its relative path (`relPath`) and SHA-256 hash (`sha256`) in Google Drive metadata `appProperties` for fast change detection and integrity checking without downloading payloads.
+- **Transfer Pipeline & Chunked Resumable Uploads**:
+  - Small files (< 5 MB) are uploaded via multipart HTTP requests combining metadata and binary payload in a single round-trip.
+  - Large files (> 5 MB, e.g. large EPUBs and PDFs) use Google Drive resumable upload sessions in 5 MB chunks with exponential backoff on HTTP 429 and 5xx errors.
+- **Reconciliation & Two-Device Convergence Algorithm**:
+  1. Downloads remote `library/manifest.json`.
+  2. Documents present only locally are uploaded. Documents present only remotely are downloaded.
+  3. For documents present on both sides, compares `updatedAt` on `meta.json`; newer metadata wins.
+  4. User files (`library/user/annotations.json`, `progress.json`, `collections.json`) are merged using the Phase 4 restore merge rules:
+     - Annotations: merged by ID; newer `updatedAt` wins.
+     - Progress: per `docId`; newer `updatedAt` wins.
+     - Collections: union of `docIds`; newer metadata wins.
+     - Merged user data is saved locally and uploaded to Drive.
+  5. Manifest is combined and uploaded last to ensure atomicity.
+  6. Search index is automatically rebuilt locally for newly downloaded documents.
+- **Deletions Policy**:
+  - In accordance with Section 8, version one never propagates deletions automatically to Google Drive. Deleting a document locally removes it from the local device only.
+- **Windows Folder Mode (File System Access API)**:
+  - Implemented `FsAccessStore` extending `FileStore` backed by `FileSystemDirectoryHandle` (`window.showDirectoryPicker()`).
+  - If a Windows desktop user selects a folder within their Google Drive for desktop sync directory, the OS keeps files synchronized in the background without requiring any Drive API calls or OAuth tokens.
+- **Content Security Policy (CSP)**:
+  - Updated CSP headers in `apps/web/public/_headers` and added GIS script to `apps/web/index.html`:
+    - `script-src 'self' https://accounts.google.com;`
+    - `connect-src 'self' https://www.googleapis.com https://accounts.google.com;`
+    - `frame-src 'self' blob: https://accounts.google.com;`
+
+---
+
+### Step-by-Step Google Cloud Console Setup Instructions
+
+To enable Google Drive sync, create a free OAuth 2.0 Web Client ID in the Google Cloud Console:
+
+1. **Create or Select a Google Cloud Project**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/).
+   - Click the project dropdown at the top and select **New Project**.
+   - Project Name: `Folio` (or any name you prefer). Click **Create**.
+
+2. **Enable the Google Drive API**:
+   - In the left sidebar, navigate to **APIs & Services > Library**.
+   - Search for `Google Drive API`.
+   - Click **Google Drive API** and click the **Enable** button.
+
+3. **Configure the OAuth Consent Screen**:
+   - Navigate to **APIs & Services > OAuth consent screen**.
+   - Choose **External** user type and click **Create**.
+   - Fill in required fields:
+     - **App name**: `Folio`
+     - **User support email**: Your Google email.
+     - **Developer contact information**: Your email.
+   - Click **Save and Continue**.
+   - Under **Scopes**, click **Add or Remove Scopes**, select `.../auth/drive.file` ("See, edit, create, and delete only the specific Google Drive files you use with this app"), and click **Update**.
+   - Click **Save and Continue**.
+   - Under **Test users**, click **+ Add Users** and enter your Google account email address.
+   - Click **Save and Continue**.
+
+4. **Create OAuth Client ID Credentials**:
+   - Navigate to **APIs & Services > Credentials**.
+   - Click **+ Create Credentials** at the top and select **OAuth client ID**.
+   - Application type: Select **Web application**.
+   - Name: `Folio Web Client`.
+   - Under **Authorized JavaScript origins**, click **+ Add URI** and add your app's origin:
+     - For local development: `http://localhost:5173` (and/or `http://localhost:4173`).
+     - For your production deployment: `https://your-domain.pages.dev` (or wherever Folio is hosted).
+     - *Note: Do NOT include a trailing slash.*
+   - Under **Authorized redirect URIs**, you can leave this blank because the Google Identity Services token flow runs in-page.
+   - Click **Create**.
+
+5. **Paste Client ID into Folio Settings**:
+   - Copy the generated **Client ID** (it looks like `1234567890-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com`).
+   - Open Folio -> Go to **Settings** -> Scroll to **Google Drive Mirror & Sync**.
+   - Paste the Client ID into the input field and click **Sign In**.
+   - Choose your Google account and grant permission for the `drive.file` scope.
+   - Once connected, click **Sync Now** to mirror your library to Google Drive!

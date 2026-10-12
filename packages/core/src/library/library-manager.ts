@@ -567,6 +567,17 @@ export class LibraryManager {
           text: st.text
         }));
         index.addAll(entries);
+      } else {
+        index.add({
+          id: `${doc.id}:meta`,
+          docId: doc.id,
+          chapterId: "",
+          title: doc.title,
+          chapterTitle: "",
+          author: doc.author || "",
+          tags: doc.tags || [],
+          text: ""
+        });
       }
     }
     await this.saveSearchIndex(index);

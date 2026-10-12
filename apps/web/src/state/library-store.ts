@@ -1,12 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { DocMeta, Progress, ReadingPrefs } from "@folio/core";
+import type { DocMeta, Progress, ReadingPrefs, FileStore } from "@folio/core";
 import { OpfsStore, MemoryStore, LibraryManager } from "@folio/core";
 
 // Storage provider for web
 const isOpfsSupported = typeof navigator !== "undefined" && !!navigator.storage?.getDirectory;
-export const fileStore = isOpfsSupported ? new OpfsStore() : new MemoryStore();
-export const libraryManager = new LibraryManager(fileStore);
+export let fileStore: FileStore = isOpfsSupported ? new OpfsStore() : new MemoryStore();
+export let libraryManager = new LibraryManager(fileStore);
+
+export function setCustomFileStore(newStore: FileStore): void {
+  fileStore = newStore;
+  libraryManager = new LibraryManager(newStore);
+}
 
 interface LibraryState {
   docs: DocMeta[];
