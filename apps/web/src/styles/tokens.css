@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+:root[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #1C1B19;
+  --muted: #6B6860;
+  --border: #E6E3DC;
+  --accent: #2F6F5E;
+  --hl-yellow: #FFE58A;
+  --hl-green: #B7E4B0;
+  --hl-blue: #A9D1F5;
+  --hl-pink: #F5B7CC;
+}
+
+:root[data-theme="warm"] {
+  --bg: #F4ECD8;
+  --surface: #FBF5E6;
+  --text: #3B3226;
+  --muted: #7A6C58;
+  --border: #E0D4B8;
+  --accent: #8A5A2B;
+  --hl-yellow: #FFE58A;
+  --hl-green: #B7E4B0;
+  --hl-blue: #A9D1F5;
+  --hl-pink: #F5B7CC;
+}
+
+:root[data-theme="dark"] {
+  --bg: #121214;
+  --surface: #1C1C20;
+  --text: #E6E3DC;
+  --muted: #9A968C;
+  --border: #2C2C32;
+  --accent: #7FC8B2;
+  --hl-yellow: #FFE58A;
+  --hl-green: #B7E4B0;
+  --hl-blue: #A9D1F5;
+  --hl-pink: #F5B7CC;
+}
+
+/* Base styles and mobile UX polish */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* Chrome elements user-select */
+.ui-chrome {
+  user-select: none;
+  -webkit-user-select: none;
+}
