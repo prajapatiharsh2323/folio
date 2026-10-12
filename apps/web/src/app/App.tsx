@@ -8,6 +8,7 @@ import { SettingsScreen } from "../screens/SettingsScreen.js";
 import { ImportScreen } from "../screens/ImportScreen.js";
 import { EpubSpikeScreen } from "../screens/EpubSpikeScreen.js";
 import { ReaderScreen } from "../screens/ReaderScreen.js";
+import { ClipInboxScreen } from "../screens/ClipInboxScreen.js";
 
 // Supports both BrowserRouter and HashRouter (for PWA shortcut URLs and file handler compatibility)
 export const App: React.FC = () => {
@@ -25,6 +26,7 @@ export const App: React.FC = () => {
           <Route path="notes" element={<NotesScreen />} />
           <Route path="settings" element={<SettingsScreen />} />
           <Route path="import" element={<ImportScreen />} />
+          <Route path="inbox" element={<ClipInboxScreen />} />
           <Route path="spike" element={<EpubSpikeScreen />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
