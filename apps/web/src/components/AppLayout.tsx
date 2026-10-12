@@ -2,6 +2,7 @@ import React from "react";
 import { Outlet } from "react-router-dom";
 import { BottomNav } from "./BottomNav.js";
 import { Sidebar } from "./Sidebar.js";
+import { ToastContainer } from "./ToastContainer.js";
 
 export const AppLayout: React.FC = () => {
   return (
@@ -16,6 +17,9 @@ export const AppLayout: React.FC = () => {
 
       {/* Mobile bottom navigation bar */}
       <BottomNav />
+
+      {/* Action and feedback toast alerts */}
+      <ToastContainer />
     </div>
   );
 };

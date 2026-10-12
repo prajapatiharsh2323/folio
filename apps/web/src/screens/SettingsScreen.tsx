@@ -36,6 +36,11 @@ export const SettingsScreen: React.FC = () => {
   const [lastBackupDate, setLastBackupDate] = useState<string | null>(null);
   const [changesSinceBackup, setChangesSinceBackup] = useState<number>(0);
 
+  // PWA Install prompt state (Checklist #8)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isAppInstalled, setIsAppInstalled] = useState(false);
+
   // Backup & Restore states
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<string>("");
@@ -51,6 +56,44 @@ export const SettingsScreen: React.FC = () => {
   const [showRestoreModal, setShowRestoreModal] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Check if running in standalone mode (already installed)
+    const isStandalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window.navigator as any).standalone === true;
+    if (isStandalone) {
+      setIsAppInstalled(true);
+    }
+
+    // Capture beforeinstallprompt
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    window.addEventListener("appinstalled", () => {
+      setIsAppInstalled(true);
+      setDeferredPrompt(null);
+    });
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === "accepted") {
+      setIsAppInstalled(true);
+    }
+    setDeferredPrompt(null);
+  };
 
   useEffect(() => {
     // Check storage persistence
@@ -232,6 +275,24 @@ export const SettingsScreen: React.FC = () => {
             Backup Now
           </button>
         </div>
+      )}
+
+      {/* Install App Section (Checklist #8) */}
+      {!isAppInstalled && deferredPrompt && (
+        <section className="mb-6 p-4 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-between gap-4">
+          <div>
+            <h4 className="text-sm font-semibold text-text">Install Folio App</h4>
+            <p className="text-xs text-muted mt-0.5">
+              Install Folio as a standalone PWA on your device for offline reading and quick launch.
+            </p>
+          </div>
+          <button
+            onClick={handleInstallApp}
+            className="px-4 py-2 rounded-xl bg-accent text-white text-xs font-semibold shadow-xs hover:opacity-90 transition-opacity whitespace-nowrap"
+          >
+            Install
+          </button>
+        </section>
       )}
 
       {/* Theme Selection */}

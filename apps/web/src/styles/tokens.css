@@ -61,3 +61,28 @@ body,
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* Touch targets and accessibility focus rings (Checklist #3 & #10) */
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* View transitions support (Checklist #5) */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}

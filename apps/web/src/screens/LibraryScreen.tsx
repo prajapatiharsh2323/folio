@@ -15,7 +15,7 @@ import { DocumentSheet } from "../components/DocumentSheet.js";
 
 export const LibraryScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { docs, recentDoc, loadLibrary, sortBy, setSortBy, filterKind, setFilterKind } =
+  const { docs, recentDoc, loading, loadLibrary, sortBy, setSortBy, filterKind, setFilterKind } =
     useLibraryStore();
 
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -187,8 +187,29 @@ export const LibraryScreen: React.FC = () => {
         </section>
       )}
 
-      {/* Main library grid */}
-      {sortedDocs.length === 0 ? (
+      {/* Main library grid or skeleton cards */}
+      {loading ? (
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div
+              key={i}
+              className="p-4 rounded-card border border-border/60 bg-surface/60 flex flex-col justify-between h-36"
+            >
+              <div className="flex gap-3">
+                <div className="w-10 h-14 rounded bg-border/60 flex-shrink-0" />
+                <div className="flex-1 space-y-2 py-1">
+                  <div className="h-4 bg-border/60 rounded w-3/4" />
+                  <div className="h-3 bg-border/40 rounded w-1/2" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between pt-3 border-t border-border/30">
+                <div className="h-2.5 bg-border/40 rounded w-1/4" />
+                <div className="h-2.5 bg-border/40 rounded w-12" />
+              </div>
+            </div>
+          ))}
+        </section>
+      ) : sortedDocs.length === 0 ? (
         <section className="flex-1 flex flex-col items-center justify-center py-16 text-center">
           <div className="w-16 h-16 rounded-2xl bg-accent/10 text-accent flex items-center justify-center mb-4">
             <BookOpen className="w-8 h-8" />
