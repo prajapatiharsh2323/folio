@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft,
   Type,
@@ -11,15 +11,35 @@ import {
   ChevronRight,
   Maximize2,
   Minimize2,
-  Bookmark
+  Bookmark,
+  Copy,
+  MessageSquare,
+  Check
 } from "lucide-react";
 import { EpubEngine } from "../reader/epub-engine.js";
-import { useLibraryStore, useReaderStore, fileStore, libraryManager } from "../state/library-store.js";
-import type { DocMeta } from "@folio/core";
+import { PdfEngine } from "../reader/pdf-engine.js";
+import type { ReaderEngine } from "../reader/reader-engine.js";
+import {
+  useLibraryStore,
+  useReaderStore,
+  fileStore,
+  libraryManager
+} from "../state/library-store.js";
+import type { DocMeta, Annotation } from "@folio/core";
+
+interface SelectionData {
+  quote: string;
+  prefix: string;
+  suffix: string;
+  location: string;
+  rect: DOMRect;
+  chapterId?: string;
+}
 
 export const ReaderScreen: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -30,11 +50,22 @@ export const ReaderScreen: React.FC = () => {
   const [currentCfi, setCurrentCfi] = useState<string>("");
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Selection & Highlight Toolbar State (Section 7)
+  const [selection, setSelection] = useState<SelectionData | null>(null);
+  const [noteInputOpen, setNoteInputOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const [copiedFeedback, setCopiedFeedback] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
-  const engineRef = useRef<EpubEngine | null>(null);
+  const engineRef = useRef<ReaderEngine | null>(null);
 
   const { prefs, setPrefs } = useReaderStore();
   const libraryDocs = useLibraryStore((state) => state.docs);
+
+  // Parse location and query parameters
+  const queryParams = new URLSearchParams(location.search);
+  const targetLoc = queryParams.get("loc");
+  const targetChapter = queryParams.get("chapter");
 
   // Load document metadata and saved progress
   useEffect(() => {
@@ -56,8 +87,19 @@ export const ReaderScreen: React.FC = () => {
   // Keep screen awake using Screen Wake Lock API (Section 7)
   useEffect(() => {
     let wakeLock: { release: () => Promise<void> } | null = null;
-    if ("wakeLock" in navigator && (navigator as unknown as { wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock) {
-      (navigator as unknown as { wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock
+    if (
+      "wakeLock" in navigator &&
+      (
+        navigator as unknown as {
+          wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void> }> };
+        }
+      ).wakeLock
+    ) {
+      (
+        navigator as unknown as {
+          wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void> }> };
+        }
+      ).wakeLock
         .request("screen")
         .then((lock) => {
           wakeLock = lock;
@@ -73,11 +115,11 @@ export const ReaderScreen: React.FC = () => {
 
   // Debounced progress saving (1.5s after change as specified in Section 7)
   const saveProgressDebounced = useCallback(
-    (cfi: string, percent: number) => {
+    (locStr: string, percent: number) => {
       if (!doc) return;
       const progress = {
         docId: doc.id,
-        location: cfi,
+        location: locStr,
         percent,
         updatedAt: new Date().toISOString()
       };
@@ -95,31 +137,52 @@ export const ReaderScreen: React.FC = () => {
     return () => clearTimeout(timer);
   }, [currentCfi, currentPercent, saveProgressDebounced]);
 
-  // Initialize EpubEngine when doc is ready
+  // Initialize Engine (EpubEngine or PdfEngine)
   useEffect(() => {
     if (!doc || !containerRef.current) return;
 
-    const engine = new EpubEngine();
+    let engine: ReaderEngine;
+    if (doc.sourceFormat === "pdf") {
+      engine = new PdfEngine();
+    } else {
+      engine = new EpubEngine();
+    }
     engineRef.current = engine;
 
     async function init() {
       if (!doc || !containerRef.current) return;
-      // Load saved progress location
       const saved = await libraryManager.getProgress(doc.id);
-      const readingFile = `library/docs/${doc.slug}/${doc.files.reading || "reading/book.epub"}`;
+
+      // Determine initial location: targetLoc -> targetChapter -> saved -> first page
+      let initialLocation = targetLoc || undefined;
+      if (!initialLocation && targetChapter) {
+        const foundCh = doc.chapters.find((c) => c.id === targetChapter);
+        if (foundCh) initialLocation = foundCh.href;
+      }
+      if (!initialLocation) {
+        initialLocation = saved?.location;
+      }
 
       let epubBytes: Uint8Array | undefined;
       let url: string | undefined;
 
-      if (await fileStore.exists(readingFile)) {
-        epubBytes = await fileStore.read(readingFile);
+      const readingPath = doc.files.reading
+        ? `library/docs/${doc.slug}/${doc.files.reading}`
+        : null;
+      const origPath = doc.files.original
+        ? `library/docs/${doc.slug}/${doc.files.original}`
+        : null;
+
+      if (readingPath && (await fileStore.exists(readingPath))) {
+        epubBytes = await fileStore.read(readingPath);
+      } else if (origPath && (await fileStore.exists(origPath))) {
+        epubBytes = await fileStore.read(origPath);
       } else {
-        // Fallback for direct test fixtures
         url = `/fixtures/${doc.files.original || "english-novel.epub"}`;
       }
 
       await engine.open(doc, containerRef.current, {
-        location: saved?.location,
+        location: initialLocation,
         prefs,
         epubBytes,
         url
@@ -130,6 +193,18 @@ export const ReaderScreen: React.FC = () => {
         setCurrentPercent(r.percent);
       });
 
+      engine.onSelection((s) => {
+        setSelection(s);
+        setNoteInputOpen(false);
+        setNoteText("");
+      });
+
+      // Load existing annotations
+      const existingAnn = await libraryManager.getAnnotations(doc.id);
+      for (const ann of existingAnn) {
+        engine.addHighlight(ann);
+      }
+
       const toc = await engine.getToc();
       setTocItems(toc);
     }
@@ -139,7 +214,7 @@ export const ReaderScreen: React.FC = () => {
     return () => {
       engine.destroy();
     };
-  }, [doc]);
+  }, [doc, targetLoc, targetChapter]);
 
   // Apply typography updates dynamically
   useEffect(() => {
@@ -152,32 +227,85 @@ export const ReaderScreen: React.FC = () => {
   // Key navigation (Section 7)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (noteInputOpen) return;
       if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
         engineRef.current?.next();
       } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
         engineRef.current?.prev();
       } else if (e.key === "t" || e.key === "T") {
         setTocOpen((prev) => !prev);
+      } else if (e.key === "Escape") {
+        setSelection(null);
+        setTocOpen(false);
+        setTypographyOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [noteInputOpen]);
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // If text was selected or clicking inside selection toolbar, don't trigger page turn
+    if (selection) {
+      setSelection(null);
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const width = rect.width;
 
     if (x < width / 3) {
-      // Tap left third: previous page
       engineRef.current?.prev();
     } else if (x > (2 * width) / 3) {
-      // Tap right third: next page
       engineRef.current?.next();
     } else {
-      // Tap middle third: toggle top/bottom interface chrome
       setControlsVisible((prev) => !prev);
+    }
+  };
+
+  const handleSaveHighlight = async (color: "yellow" | "green" | "blue" | "pink") => {
+    if (!doc || !selection) return;
+
+    // Haptic feedback (10ms) Section 9 Checklist #6
+    if ("vibrate" in navigator) {
+      try {
+        navigator.vibrate(10);
+      } catch {
+        // ignore
+      }
+    }
+
+    const annotation: Annotation = {
+      id: crypto.randomUUID(),
+      docId: doc.id,
+      quote: selection.quote,
+      prefix: selection.prefix,
+      suffix: selection.suffix,
+      location: selection.location,
+      kind: noteText ? "note" : "highlight",
+      color,
+      note: noteText.trim() || undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    await libraryManager.addAnnotation(annotation);
+    engineRef.current?.addHighlight(annotation);
+
+    setSelection(null);
+    setNoteInputOpen(false);
+    setNoteText("");
+  };
+
+  const handleCopyQuote = async () => {
+    if (!selection) return;
+    try {
+      await navigator.clipboard.writeText(selection.quote);
+      setCopiedFeedback(true);
+      setTimeout(() => setCopiedFeedback(false), 1500);
+    } catch {
+      // ignore
     }
   };
 
@@ -216,7 +344,9 @@ export const ReaderScreen: React.FC = () => {
           </button>
           <div className="overflow-hidden max-w-xs sm:max-w-md">
             <h3 className="font-semibold text-sm truncate text-text">{doc.title}</h3>
-            <p className="text-[11px] text-muted truncate">{doc.author || "Folio Reader"}</p>
+            <p className="text-[11px] text-muted truncate">
+              {doc.author || "Folio Reader"} · {doc.sourceFormat.toUpperCase()}
+            </p>
           </div>
         </div>
 
@@ -246,8 +376,98 @@ export const ReaderScreen: React.FC = () => {
       </header>
 
       {/* Main reading canvas with 3-column tap interaction */}
-      <main className="flex-1 relative h-full w-full overflow-hidden" onClick={handleContainerClick}>
+      <main
+        className="flex-1 relative h-full w-full overflow-hidden"
+        onClick={handleContainerClick}
+      >
         <div ref={containerRef} className="h-full w-full" />
+
+        {/* Text Selection Toolbar (Section 7) */}
+        {selection && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-50 transform -translate-x-1/2 bg-surface border border-border rounded-xl shadow-2xl p-2 flex flex-col gap-2 transition-all animate-in fade-in zoom-in-95"
+            style={{
+              left: `${Math.min(Math.max(selection.rect.left + selection.rect.width / 2, 120), window.innerWidth - 120)}px`,
+              top: `${Math.max(selection.rect.top - 60, 20)}px`
+            }}
+          >
+            {!noteInputOpen ? (
+              <div className="flex items-center gap-1.5">
+                {/* 4 Highlight colors */}
+                <button
+                  onClick={() => handleSaveHighlight("yellow")}
+                  title="Highlight Yellow"
+                  className="w-7 h-7 rounded-full bg-amber-400 hover:scale-110 transition-transform shadow-xs flex items-center justify-center border border-amber-500/30"
+                />
+                <button
+                  onClick={() => handleSaveHighlight("green")}
+                  title="Highlight Green"
+                  className="w-7 h-7 rounded-full bg-emerald-400 hover:scale-110 transition-transform shadow-xs flex items-center justify-center border border-emerald-500/30"
+                />
+                <button
+                  onClick={() => handleSaveHighlight("blue")}
+                  title="Highlight Blue"
+                  className="w-7 h-7 rounded-full bg-sky-400 hover:scale-110 transition-transform shadow-xs flex items-center justify-center border border-sky-500/30"
+                />
+                <button
+                  onClick={() => handleSaveHighlight("pink")}
+                  title="Highlight Pink"
+                  className="w-7 h-7 rounded-full bg-pink-400 hover:scale-110 transition-transform shadow-xs flex items-center justify-center border border-pink-500/30"
+                />
+
+                <div className="w-px h-5 bg-border mx-1" />
+
+                {/* Add Note Button */}
+                <button
+                  onClick={() => setNoteInputOpen(true)}
+                  className="px-2.5 py-1.5 rounded-lg hover:bg-bg text-text text-xs font-medium flex items-center gap-1.5"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>Note</span>
+                </button>
+
+                {/* Copy Button */}
+                <button
+                  onClick={handleCopyQuote}
+                  className="px-2.5 py-1.5 rounded-lg hover:bg-bg text-text text-xs font-medium flex items-center gap-1.5"
+                >
+                  {copiedFeedback ? (
+                    <Check className="w-3.5 h-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  <span>{copiedFeedback ? "Copied" : "Copy"}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 p-1 min-w-[240px]">
+                <textarea
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Add your thoughts or note..."
+                  rows={2}
+                  className="w-full text-xs p-2 rounded-lg border border-border bg-bg text-text focus:outline-none focus:border-accent resize-none"
+                  autoFocus
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => setNoteInputOpen(false)}
+                    className="px-2.5 py-1 text-xs rounded border border-border text-muted hover:text-text"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleSaveHighlight("yellow")}
+                    className="px-3 py-1 text-xs rounded bg-accent text-white font-medium hover:opacity-90"
+                  >
+                    Save Note
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {/* Bottom auto-hiding progress footer */}

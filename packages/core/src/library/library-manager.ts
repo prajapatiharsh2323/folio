@@ -1,7 +1,16 @@
 import type { FileStore } from "../store/file-store.js";
-import type { DocMeta, Manifest, ManifestDoc, ManifestFile, Progress } from "../types.js";
+import type {
+  DocMeta,
+  Manifest,
+  ManifestDoc,
+  ManifestFile,
+  Progress,
+  Annotation,
+  Collection
+} from "../types.js";
 import type { ImportResult } from "../import/epub.js";
 import { createDocSlug, sha256Hex } from "../util/hash.js";
+import { SearchIndex, type SearchDocEntry } from "../search/index.js";
 
 export const MANIFEST_PATH = "library/manifest.json";
 
@@ -116,7 +125,32 @@ export class LibraryManager {
       sha256: await sha256Hex(metaBytes)
     });
 
-    // 5. Commit to manifest.json (the commit point)
+    // 5. Save search text in index/text/<docId>.json if present
+    if (importResult.searchText && importResult.searchText.length > 0) {
+      await this.store.write(
+        `library/index/text/${id}.json`,
+        JSON.stringify(importResult.searchText, null, 2)
+      );
+      try {
+        const searchIndex = await this.getSearchIndex();
+        const entries: SearchDocEntry[] = importResult.searchText.map((st) => ({
+          id: `${id}:${st.chapterId}`,
+          docId: id,
+          chapterId: st.chapterId,
+          title: meta.title,
+          chapterTitle: st.title,
+          author: meta.author || "",
+          tags: meta.tags,
+          text: st.text
+        }));
+        searchIndex.addAll(entries);
+        await this.saveSearchIndex(searchIndex);
+      } catch {
+        // Can be rebuilt on demand
+      }
+    }
+
+    // 6. Commit to manifest.json (the commit point)
     const manifestDoc: ManifestDoc = {
       id,
       slug,
@@ -153,6 +187,158 @@ export class LibraryManager {
     }
 
     return docs;
+  }
+
+  /**
+   * Updates metadata (title, author, tags, collections) for a document.
+   * Section 5: Edits update library and search index at once.
+   */
+  async updateDocMeta(
+    id: string,
+    updates: Partial<Pick<DocMeta, "title" | "author" | "tags" | "collectionIds">>
+  ): Promise<DocMeta> {
+    const manifest = await this.getManifest();
+    const mDoc = manifest.docs.find((d) => d.id === id);
+    if (!mDoc) {
+      throw new Error(`Document not found in manifest: ${id}`);
+    }
+    const metaPath = `library/docs/${mDoc.slug}/meta.json`;
+    const metaText = await this.store.readText(metaPath);
+    const currentMeta: DocMeta = JSON.parse(metaText);
+
+    const updatedMeta: DocMeta = {
+      ...currentMeta,
+      ...updates,
+      tags: updates.tags !== undefined ? updates.tags : currentMeta.tags,
+      collectionIds:
+        updates.collectionIds !== undefined ? updates.collectionIds : currentMeta.collectionIds
+    };
+
+    await this.store.write(metaPath, JSON.stringify(updatedMeta, null, 2));
+
+    // Update manifest entry
+    const now = new Date().toISOString();
+    mDoc.title = updatedMeta.title;
+    mDoc.updatedAt = now;
+    manifest.updatedAt = now;
+    await this.store.write(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
+
+    // Update search index
+    try {
+      const searchTexts = await this.getSearchText(id);
+      if (searchTexts && searchTexts.length > 0) {
+        const searchIndex = await this.getSearchIndex();
+        searchIndex.removeByDocId(id);
+        const entries: SearchDocEntry[] = searchTexts.map((st) => ({
+          id: `${id}:${st.chapterId}`,
+          docId: id,
+          chapterId: st.chapterId,
+          title: updatedMeta.title,
+          chapterTitle: st.title,
+          author: updatedMeta.author || "",
+          tags: updatedMeta.tags,
+          text: st.text
+        }));
+        searchIndex.addAll(entries);
+        await this.saveSearchIndex(searchIndex);
+      }
+    } catch {
+      // Rebuildable on demand
+    }
+
+    return updatedMeta;
+  }
+
+  /**
+   * Deleting a document removes its folder, its annotations and progress, its entries
+   * in collections and the search index, then rewrites the manifest (Section 4 Rule 5).
+   */
+  async deleteDocument(id: string): Promise<void> {
+    const manifest = await this.getManifest();
+    const docIdx = manifest.docs.findIndex((d) => d.id === id);
+    if (docIdx === -1) return;
+
+    const mDoc = manifest.docs[docIdx]!;
+    const docDir = `library/docs/${mDoc.slug}`;
+
+    // 1. Remove folder
+    try {
+      await this.store.remove(docDir, { recursive: true });
+    } catch (err) {
+      console.warn(`Could not remove ${docDir}:`, err);
+    }
+
+    // 2. Remove search text
+    const textPath = `library/index/text/${id}.json`;
+    if (await this.store.exists(textPath)) {
+      try {
+        await this.store.remove(textPath);
+      } catch {
+        // ignore
+      }
+    }
+
+    // 3. Remove from search index
+    try {
+      const searchIndex = await this.getSearchIndex();
+      searchIndex.removeByDocId(id);
+      await this.saveSearchIndex(searchIndex);
+    } catch {
+      // ignore
+    }
+
+    // 4. Remove progress
+    const progressPath = "library/user/progress.json";
+    if (await this.store.exists(progressPath)) {
+      try {
+        const allProgress: Record<string, Progress> = JSON.parse(
+          await this.store.readText(progressPath)
+        );
+        if (allProgress[id]) {
+          delete allProgress[id];
+          await this.store.write(progressPath, JSON.stringify(allProgress, null, 2));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // 5. Remove annotations
+    const annotPath = "library/user/annotations.json";
+    if (await this.store.exists(annotPath)) {
+      try {
+        const allAnn: Annotation[] = JSON.parse(await this.store.readText(annotPath));
+        const filtered = allAnn.filter((a) => a.docId !== id);
+        await this.store.write(annotPath, JSON.stringify(filtered, null, 2));
+      } catch {
+        // ignore
+      }
+    }
+
+    // 6. Remove from collections
+    const collPath = "library/user/collections.json";
+    if (await this.store.exists(collPath)) {
+      try {
+        const allColl: Collection[] = JSON.parse(await this.store.readText(collPath));
+        let changed = false;
+        for (const coll of allColl) {
+          if (coll.docIds.includes(id)) {
+            coll.docIds = coll.docIds.filter((dId) => dId !== id);
+            changed = true;
+          }
+        }
+        if (changed) {
+          await this.store.write(collPath, JSON.stringify(allColl, null, 2));
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // 7. Remove from manifest
+    manifest.docs.splice(docIdx, 1);
+    manifest.updatedAt = new Date().toISOString();
+    await this.store.write(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
   }
 
   /**
@@ -198,12 +384,184 @@ export class LibraryManager {
     const progressPath = "library/user/progress.json";
     if (await this.store.exists(progressPath)) {
       try {
-        const allProgress: Record<string, Progress> = JSON.parse(await this.store.readText(progressPath));
+        const allProgress: Record<string, Progress> = JSON.parse(
+          await this.store.readText(progressPath)
+        );
         return allProgress[docId];
       } catch {
         return undefined;
       }
     }
     return undefined;
+  }
+
+  /**
+   * Retrieves all progress.
+   */
+  async getAllProgress(): Promise<Record<string, Progress>> {
+    const progressPath = "library/user/progress.json";
+    if (await this.store.exists(progressPath)) {
+      try {
+        return JSON.parse(await this.store.readText(progressPath));
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  // --- Annotations (Section 4 & Section 7) ---
+
+  async getAnnotations(docId?: string): Promise<Annotation[]> {
+    const annotPath = "library/user/annotations.json";
+    if (!(await this.store.exists(annotPath))) return [];
+    try {
+      const items: Annotation[] = JSON.parse(await this.store.readText(annotPath));
+      return docId ? items.filter((a) => a.docId === docId) : items;
+    } catch {
+      return [];
+    }
+  }
+
+  async addAnnotation(annotation: Annotation): Promise<void> {
+    const annotPath = "library/user/annotations.json";
+    const items = await this.getAnnotations();
+    items.push(annotation);
+    await this.store.write(annotPath, JSON.stringify(items, null, 2));
+  }
+
+  async updateAnnotation(annotation: Annotation): Promise<void> {
+    const annotPath = "library/user/annotations.json";
+    const items = await this.getAnnotations();
+    const idx = items.findIndex((a) => a.id === annotation.id);
+    if (idx !== -1) {
+      items[idx] = annotation;
+    } else {
+      items.push(annotation);
+    }
+    await this.store.write(annotPath, JSON.stringify(items, null, 2));
+  }
+
+  async deleteAnnotation(id: string): Promise<void> {
+    const annotPath = "library/user/annotations.json";
+    const items = await this.getAnnotations();
+    const filtered = items.filter((a) => a.id !== id);
+    await this.store.write(annotPath, JSON.stringify(filtered, null, 2));
+  }
+
+  // --- Collections (Section 4 & Section 5) ---
+
+  async getCollections(): Promise<Collection[]> {
+    const collPath = "library/user/collections.json";
+    if (!(await this.store.exists(collPath))) return [];
+    try {
+      return JSON.parse(await this.store.readText(collPath));
+    } catch {
+      return [];
+    }
+  }
+
+  async createCollection(name: string): Promise<Collection> {
+    const collPath = "library/user/collections.json";
+    const collections = await this.getCollections();
+    const newColl: Collection = {
+      id: crypto.randomUUID(),
+      name,
+      docIds: [],
+      createdAt: new Date().toISOString()
+    };
+    collections.push(newColl);
+    await this.store.write(collPath, JSON.stringify(collections, null, 2));
+    return newColl;
+  }
+
+  async renameCollection(id: string, name: string): Promise<Collection> {
+    const collPath = "library/user/collections.json";
+    const collections = await this.getCollections();
+    const coll = collections.find((c) => c.id === id);
+    if (!coll) throw new Error(`Collection not found: ${id}`);
+    coll.name = name;
+    await this.store.write(collPath, JSON.stringify(collections, null, 2));
+    return coll;
+  }
+
+  async deleteCollection(id: string): Promise<void> {
+    const collPath = "library/user/collections.json";
+    const collections = await this.getCollections();
+    const filtered = collections.filter((c) => c.id !== id);
+    await this.store.write(collPath, JSON.stringify(filtered, null, 2));
+  }
+
+  async setDocCollections(docId: string, collectionIds: string[]): Promise<void> {
+    const collPath = "library/user/collections.json";
+    const collections = await this.getCollections();
+    for (const coll of collections) {
+      const hasDoc = coll.docIds.includes(docId);
+      const shouldHave = collectionIds.includes(coll.id);
+      if (shouldHave && !hasDoc) {
+        coll.docIds.push(docId);
+      } else if (!shouldHave && hasDoc) {
+        coll.docIds = coll.docIds.filter((d) => d !== docId);
+      }
+    }
+    await this.store.write(collPath, JSON.stringify(collections, null, 2));
+    await this.updateDocMeta(docId, { collectionIds });
+  }
+
+  // --- Search Index & Text (Section 7) ---
+
+  async getSearchIndex(): Promise<SearchIndex> {
+    const indexPath = "library/index/search.json";
+    if (await this.store.exists(indexPath)) {
+      try {
+        const text = await this.store.readText(indexPath);
+        return SearchIndex.loadJSON(text);
+      } catch (err) {
+        console.warn("Failed to load search index, rebuilding:", err);
+      }
+    }
+    return this.rebuildSearchIndex();
+  }
+
+  async saveSearchIndex(index: SearchIndex): Promise<void> {
+    const indexPath = "library/index/search.json";
+    await this.store.write(indexPath, index.toJSON());
+  }
+
+  async getSearchText(
+    docId: string
+  ): Promise<{ chapterId: string; title: string; text: string }[]> {
+    const textPath = `library/index/text/${docId}.json`;
+    if (await this.store.exists(textPath)) {
+      try {
+        return JSON.parse(await this.store.readText(textPath));
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
+  async rebuildSearchIndex(): Promise<SearchIndex> {
+    const index = new SearchIndex();
+    const docs = await this.listDocuments();
+    for (const doc of docs) {
+      const searchTexts = await this.getSearchText(doc.id);
+      if (searchTexts && searchTexts.length > 0) {
+        const entries: SearchDocEntry[] = searchTexts.map((st) => ({
+          id: `${doc.id}:${st.chapterId}`,
+          docId: doc.id,
+          chapterId: st.chapterId,
+          title: doc.title,
+          chapterTitle: st.title,
+          author: doc.author || "",
+          tags: doc.tags,
+          text: st.text
+        }));
+        index.addAll(entries);
+      }
+    }
+    await this.saveSearchIndex(index);
+    return index;
   }
 }

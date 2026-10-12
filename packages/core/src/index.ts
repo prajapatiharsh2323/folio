@@ -10,3 +10,6 @@ export * from "./import/txt.js";
 export * from "./clip/sanitize.js";
 export * from "./clip/build-epub.js";
 export * from "./library/library-manager.js";
+export * from "./import/pdf.js";
+export * from "./search/normalise.js";
+export * from "./search/index.js";

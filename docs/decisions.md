@@ -28,3 +28,26 @@ Running log of architectural and technical choices made during the development o
 - **EPUB 3 Packaging**: Formats each article into an EPUB 3 archive using `fflate` with uncompressed `mimetype` as the first entry, strict XHTML void-tag self-closing formatting, and package metadata.
 - **File Format Detection**: Content-based detection inspecting magic bytes (`%PDF-`, ZIP mimetype `application/epub+zip`, HTML declarations, and UTF-8 with BOM) rather than file extensions.
 - **Clip Bridge**: Secure inter-window communication utilizing origin verification (`event.origin === location.origin`), source check (`event.source === window`), and single-use cryptographically random nonce verification.
+
+## Phase 3: Library, Search & Annotations
+
+- **Multilingual Search Normalization**:
+  - Implemented Unicode NFC normalization, zero-width non-joiner/joiner (U+200C, U+200D) removal, and Latin-only accent folding (`[\u0041-\u005A\u0061-\u007A][\u0300-\u036F]+`).
+  - Critical rule strictly preserved: Combining vowel marks and viramas in Devanagari (`\u0900-\u097F`) are never stripped, as they are phonemic characters.
+  - Tokenizer regex uses `/[^\p{L}\p{M}\p{N}]+/u` to retain all combining marks within words.
+  - Added Hindi inflection stemming (`stemHindi`) mapping `-यों/-ियों` to `-ी` to guarantee inflection recall (e.g. `विद्यार्थी` matches `विद्यार्थियों`).
+- **Search Architecture**:
+  - MiniSearch instance wrapped in `SearchIndex` with field boosts: title 4, author 3, tags 3, text 1.
+  - Prefix matching enabled with AND conjunction. Fuzzy matching (0.2) restricted strictly to Latin terms longer than 4 characters.
+  - Offline Web Worker (`apps/web/src/search/search.worker.ts`) offloads search indexing and query processing so typing never blocks the UI thread.
+  - Snippets generated with ~80 characters context on either side of first hit with `<mark>` tag highlighting.
+  - Debounced at 120 ms as specified in Section 7.
+- **PDF Reading Engine**:
+  - Built `PdfEngine` adapter conforming to `ReaderEngine` using `pdfjs-dist` canvas rendering plus an interactive HTML text layer for selection and highlighting.
+  - Searchable indicator checks character density (average >= 50 characters per page), setting `searchable: false` for scanned PDFs without an OCR layer.
+- **Annotations & Notes**:
+  - Highlights and notes anchored using authoritative `{ quote, prefix, suffix }` (32 characters each side).
+  - Floating selection toolbar supporting 4 highlight colors (yellow, green, blue, pink), custom notes, and copy action.
+  - `NotesScreen` provides filtering by document, color, and kind, with Markdown export (`folio-notes-YYYYMMDD.md`).
+- **Metadata & Library Management**:
+  - `DocumentSheet` bottom sheet (Vaul) provides in-place editing of title, author, tags, and collections, as well as complete cascaded deletion (removing files, search index, annotations, progress, and updating manifest).
