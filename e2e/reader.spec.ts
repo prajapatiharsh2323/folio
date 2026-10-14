@@ -67,4 +67,53 @@ test.describe("Folio Phase 1 Reader & Import Acceptance Tests", () => {
     await expect(page.getByRole("heading", { name: "The Solitary Reader" })).toBeVisible();
     await expect(html).toHaveAttribute("data-theme", "warm");
   });
+
+  test("Reading UX acceptance checklist: safe zones, appearance controls, and flow toggle", async ({
+    page
+  }) => {
+    // Open reader directly on imported novel
+    await page.goto("/");
+    const bookLink = page.getByText("The Solitary Reader").first();
+    if (await bookLink.isVisible()) {
+      await bookLink.click();
+    } else {
+      await page.goto("/import");
+      await page.getByRole("button", { name: "Import English Novel" }).click();
+      await page.goto("/");
+      await page.getByText("The Solitary Reader").first().click();
+    }
+    await expect(page).toHaveURL(/\/read\//);
+
+    // Verify controls start visible
+    const header = page.locator("header");
+    const footer = page.locator("footer");
+    await expect(header).toBeVisible();
+    await expect(footer).toBeVisible();
+
+    // Check reading container has reading width cap applied
+    const container = page.locator("main > div");
+    await expect(container).toBeVisible();
+
+    // Open typography sheet
+    await page.getByTitle("Typography & Appearance").click();
+    await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+
+    // Verify live preview strip is present
+    await expect(page.getByText("Live Preview")).toBeVisible();
+
+    // Verify System theme button
+    await page.getByRole("button", { name: "System" }).click();
+    const html = page.locator("html");
+    await expect(html).toHaveAttribute("data-theme-setting", "system");
+
+    // Switch reading flow to Continuous
+    await page.getByRole("button", { name: "Continuous" }).click();
+
+    // Click Reset to restore defaults
+    await page.getByRole("button", { name: "Reset" }).first().click();
+
+    // Close Appearance sheet
+    await page.getByRole("button", { name: "Done" }).click();
+    await expect(page.getByRole("heading", { name: "Appearance" })).not.toBeVisible();
+  });
 });

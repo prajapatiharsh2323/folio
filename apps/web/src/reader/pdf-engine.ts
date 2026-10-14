@@ -1,6 +1,11 @@
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import pdfjsWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import type { Annotation, DocMeta, ReadingPrefs } from "@folio/core";
 import type { ReaderEngine } from "./reader-engine.js";
+
+if (typeof window !== "undefined" && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+}
 
 export class PdfEngine implements ReaderEngine {
   private pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
@@ -10,7 +15,12 @@ export class PdfEngine implements ReaderEngine {
   private currentPage = 1;
   private numPages = 1;
   private currentPrefs: ReadingPrefs | null = null;
-  private relocateListeners: ((r: { location: string; percent: number; chapterId?: string }) => void)[] = [];
+  private relocateListeners: ((r: {
+    location: string;
+    percent: number;
+    chapterId?: string;
+    chapterTitle?: string;
+  }) => void)[] = [];
   private selectionListeners: ((s: {
     quote: string;
     prefix: string;
@@ -20,6 +30,30 @@ export class PdfEngine implements ReaderEngine {
   }) => void)[] = [];
   private highlights: Annotation[] = [];
   private isRendering = false;
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private observeContainerResize(el: HTMLElement): void {
+    this.resizeObserver?.disconnect();
+    if (typeof ResizeObserver === "undefined") return;
+
+    this.resizeObserver = new ResizeObserver((entries) => {
+      if (!this.pdfDoc || !this.containerEl) return;
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+
+      if (this.resizeTimer) clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => {
+        if (this.pdfDoc && this.containerEl) {
+          this.renderCurrentPage().catch(() => {});
+        }
+      }, 100);
+    });
+
+    this.resizeObserver.observe(el);
+  }
 
   async open(
     _doc: DocMeta,
@@ -67,6 +101,7 @@ export class PdfEngine implements ReaderEngine {
     pageWrapper.className = "pdf-page-wrapper relative mx-auto my-auto shadow-md";
     pageWrapper.style.position = "relative";
     pageWrapper.style.transformOrigin = "top center";
+    pageWrapper.style.margin = "12px auto";
 
     const canvas = document.createElement("canvas");
     canvas.className = "pdf-canvas block";
@@ -89,6 +124,7 @@ export class PdfEngine implements ReaderEngine {
     pageWrapper.appendChild(textLayer);
     el.appendChild(pageWrapper);
 
+    this.observeContainerResize(el);
     await this.renderCurrentPage();
   }
 
@@ -119,13 +155,26 @@ export class PdfEngine implements ReaderEngine {
 
     try {
       const page = await this.pdfDoc.getPage(this.currentPage);
-      const containerWidth = this.containerEl.clientWidth || 800;
+      const containerWidth = Math.max(280, (this.containerEl.clientWidth || 800) - 24);
+      const containerHeight = Math.max(320, (this.containerEl.clientHeight || 600) - 24);
       const unscaledViewport = page.getViewport({ scale: 1.0 });
 
-      // Default fit-width with padding
-      const targetWidth = Math.min(containerWidth - 32, 900);
-      const scale = targetWidth / unscaledViewport.width;
-      const viewport = page.getViewport({ scale: Math.max(scale, 0.75) });
+      const zoomPref = this.currentPrefs?.pdfZoom ?? "fit-width";
+      let scale: number;
+      if (zoomPref === "fit-page") {
+        scale = Math.min(
+          containerWidth / unscaledViewport.width,
+          containerHeight / unscaledViewport.height
+        );
+      } else if (typeof zoomPref === "number") {
+        scale = (containerWidth / unscaledViewport.width) * zoomPref;
+      } else {
+        // Default fit-width capped to reading maxWidth
+        const maxW = Math.min(containerWidth, this.currentPrefs?.maxWidth ?? 860);
+        scale = maxW / unscaledViewport.width;
+      }
+
+      const viewport = page.getViewport({ scale: Math.max(scale, 0.4) });
 
       const canvas = this.canvasEl;
       const context = canvas.getContext("2d");
@@ -139,14 +188,26 @@ export class PdfEngine implements ReaderEngine {
 
       context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
 
-      // Apply theme background
-      if (this.currentPrefs?.theme === "dark") {
-        context.fillStyle = "#1e1e1e";
+      // Apply theme background and canvas CSS filter
+      let effectiveTheme = this.currentPrefs?.theme || "light";
+      if (effectiveTheme === "system") {
+        effectiveTheme =
+          typeof window !== "undefined" &&
+          window.matchMedia?.("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+      }
+
+      if (effectiveTheme === "dark") {
+        this.canvasEl.style.filter = "invert(0.92) hue-rotate(180deg) contrast(0.95)";
+        context.fillStyle = "#121214";
         context.fillRect(0, 0, viewport.width, viewport.height);
-      } else if (this.currentPrefs?.theme === "warm") {
+      } else if (effectiveTheme === "warm") {
+        this.canvasEl.style.filter = "sepia(0.28) brightness(0.97)";
         context.fillStyle = "#fbf0d9";
         context.fillRect(0, 0, viewport.width, viewport.height);
       } else {
+        this.canvasEl.style.filter = "none";
         context.fillStyle = "#ffffff";
         context.fillRect(0, 0, viewport.width, viewport.height);
       }
@@ -191,10 +252,11 @@ export class PdfEngine implements ReaderEngine {
       }
 
       // Notify relocate listeners
-      const percent = Math.round((this.currentPage / this.numPages) * 100);
+      const percent = Math.round((this.currentPage / this.numPages) * 1000) / 10;
       const location = `page-${this.currentPage}`;
+      const chapterTitle = `Page ${this.currentPage} of ${this.numPages}`;
       for (const listener of this.relocateListeners) {
-        listener({ location, percent, chapterId: location });
+        listener({ location, percent, chapterId: location, chapterTitle });
       }
     } catch (err) {
       console.error("Error rendering PDF page:", err);
@@ -248,7 +310,7 @@ export class PdfEngine implements ReaderEngine {
     }
   }
 
-  async getToc(): Promise<{ title: string; location: string; depth: number }[]> {
+  async getToc(): Promise<{ title: string; location: string; depth: number; percent?: number }[]> {
     if (!this.pdfDoc) return [];
     try {
       const outline = await this.pdfDoc.getOutline();
@@ -256,7 +318,8 @@ export class PdfEngine implements ReaderEngine {
         return outline.map((item, index) => ({
           title: item.title,
           location: `page-${index + 1}`,
-          depth: 0
+          depth: 0,
+          percent: Math.round((index / Math.max(1, outline.length - 1)) * 1000) / 10
         }));
       }
     } catch {
@@ -269,7 +332,8 @@ export class PdfEngine implements ReaderEngine {
       toc.push({
         title: `Page ${p}`,
         location: `page-${p}`,
-        depth: 0
+        depth: 0,
+        percent: Math.round(((p - 1) / Math.max(1, this.numPages - 1)) * 1000) / 10
       });
     }
     return toc;
@@ -278,12 +342,18 @@ export class PdfEngine implements ReaderEngine {
   applyPrefs(p: ReadingPrefs): void {
     this.currentPrefs = p;
     if (this.containerEl) {
-      this.renderCurrentPage();
+      this.renderCurrentPage().catch(() => {});
     }
   }
 
+  async goToPercent(percent: number): Promise<void> {
+    const fraction = Math.max(0, Math.min(1, percent / 100));
+    const targetPage = Math.max(1, Math.min(this.numPages, Math.round(fraction * this.numPages) || 1));
+    await this.goTo(`page-${targetPage}`);
+  }
+
   onRelocate(
-    cb: (r: { location: string; percent: number; chapterId?: string }) => void
+    cb: (r: { location: string; percent: number; chapterId?: string; chapterTitle?: string }) => void
   ): void {
     this.relocateListeners.push(cb);
   }
@@ -339,6 +409,9 @@ export class PdfEngine implements ReaderEngine {
   }
 
   destroy(): void {
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.pdfDoc = null;
     this.relocateListeners = [];
     this.selectionListeners = [];

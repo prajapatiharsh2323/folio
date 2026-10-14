@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import ePub, { Book, Rendition } from "epubjs";
+import { sanitizeSectionDoc, sanitizeSerializedHtml } from "../reader/epub-engine.js";
 
 export const EpubSpikeScreen: React.FC = () => {
   const [selectedBook, setSelectedBook] = useState<string>("/fixtures/english-novel.epub");
@@ -26,11 +27,19 @@ export const EpubSpikeScreen: React.FC = () => {
       const book = ePub(selectedBook);
       bookRef.current = book;
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const spineHooks = (book.spine as any)?.hooks;
+      if (spineHooks) {
+        if (spineHooks.content?.register) spineHooks.content.register(sanitizeSectionDoc);
+        if (spineHooks.serialize?.register) spineHooks.serialize.register(sanitizeSerializedHtml);
+      }
+
       const rendition = book.renderTo(containerRef.current, {
         width: "100%",
         height: "100%",
         flow: "paginated",
-        spread: "none"
+        spread: "none",
+        allowScriptedContent: false
       });
       renditionRef.current = rendition;
 

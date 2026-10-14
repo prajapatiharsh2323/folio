@@ -7,12 +7,13 @@ export interface ReaderEngine {
     o: { location?: string; prefs: ReadingPrefs; epubBytes?: Uint8Array; url?: string }
   ): Promise<void>;
   goTo(location: string): Promise<void>;
+  goToPercent?(percent: number): Promise<void>;
   next(): Promise<void>;
   prev(): Promise<void>;
-  getToc(): Promise<{ title: string; location: string; depth: number }[]>;
+  getToc(): Promise<{ title: string; location: string; depth: number; percent?: number }[]>;
   applyPrefs(p: ReadingPrefs): void;
   onRelocate(
-    cb: (r: { location: string; percent: number; chapterId?: string }) => void
+    cb: (r: { location: string; percent: number; chapterId?: string; chapterTitle?: string }) => void
   ): void;
   onSelection(
     cb: (s: {
