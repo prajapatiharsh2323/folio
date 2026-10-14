@@ -7,7 +7,8 @@ import {
   BookMarked,
   User,
   MoreVertical,
-  Tag
+  Tag,
+  FolderOpen
 } from "lucide-react";
 import { useLibraryStore, libraryManager } from "../state/library-store.js";
 import type { DocMeta, Collection, Progress } from "@folio/core";
@@ -15,8 +16,18 @@ import { DocumentSheet } from "../components/DocumentSheet.js";
 
 export const LibraryScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { docs, recentDoc, loading, loadLibrary, sortBy, setSortBy, filterKind, setFilterKind } =
-    useLibraryStore();
+  const {
+    docs,
+    recentDoc,
+    loading,
+    folderNeedsPermission,
+    reconnectFolder,
+    loadLibrary,
+    sortBy,
+    setSortBy,
+    filterKind,
+    setFilterKind
+  } = useLibraryStore();
 
   const [collections, setCollections] = useState<Collection[]>([]);
   const [selectedCollection, setSelectedCollection] = useState<string>("all");
@@ -93,6 +104,27 @@ export const LibraryScreen: React.FC = () => {
           </Link>
         </div>
       </header>
+
+      {/* Folder mode permission prompt banner */}
+      {folderNeedsPermission && (
+        <div className="mb-6 p-4 rounded-xl border border-accent/40 bg-accent/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-text">
+          <div className="flex items-center gap-3">
+            <FolderOpen className="w-5 h-5 text-accent flex-shrink-0" />
+            <div>
+              <h4 className="text-sm font-semibold text-text">Reconnect Folder Library</h4>
+              <p className="text-xs text-muted">
+                Folio is configured to use a local folder library. Browser security requires a quick click to re-grant folder access after restart.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => reconnectFolder()}
+            className="px-3.5 py-1.5 bg-accent text-white font-medium text-xs rounded-lg hover:opacity-90 transition-opacity shrink-0 shadow-sm"
+          >
+            Grant Access
+          </button>
+        </div>
+      )}
 
       {/* Filter Chips Bar */}
       <div className="flex flex-wrap items-center gap-2 mb-6 text-xs">
@@ -214,7 +246,9 @@ export const LibraryScreen: React.FC = () => {
           <div className="w-16 h-16 rounded-2xl bg-accent/10 text-accent flex items-center justify-center mb-4">
             <BookOpen className="w-8 h-8" />
           </div>
-          <h3 className="text-lg font-semibold text-text mb-2">No documents found</h3>
+          <h3 className="text-lg font-semibold text-text mb-2">
+            {docs.length === 0 ? "Your library is empty" : "No documents found"}
+          </h3>
           <p className="text-sm text-muted max-w-sm mb-6">
             {docs.length === 0
               ? "Import EPUB books, PDF files, HTML pages, or TXT documents to start reading offline."

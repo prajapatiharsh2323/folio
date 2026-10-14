@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Inbox,
@@ -7,77 +7,127 @@ import {
   ExternalLink,
   User,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  RefreshCw
 } from "lucide-react";
-import type { ClipPayload, ProcessedClip } from "@folio/core";
+import type { ClipPayload, ProcessedClip, ManifestDoc } from "@folio/core";
 import { processClip } from "@folio/core";
-import { libraryManager } from "../state/library-store.js";
+import { libraryManager, useLibraryStore } from "../state/library-store.js";
+import { searchClient } from "../search/search-client.js";
 
 interface PendingClip extends ProcessedClip {
   id: string;
   tags: string[];
 }
 
+function extractCleanSearchText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export const ClipInboxScreen: React.FC = () => {
   const navigate = useNavigate();
-  const [pendingClips, setPendingClips] = useState<PendingClip[]>([]);
+  const [pendingClips, setPendingClips] = useState<PendingClip[]>(() => {
+    try {
+      const stored = sessionStorage.getItem("folio:pending-clips");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [duplicateDoc, setDuplicateDoc] = useState<ManifestDoc | null>(null);
 
-  // Section 6 bridge listener:
-  // Receives articles from clipper with event.source === window, event.origin === location.origin, and nonce check
+  // Sync pending clips to sessionStorage so they persist across screen changes
   useEffect(() => {
-    // Generate one-time bridge nonce and publish on window
-    const bridgeNonce = crypto.randomUUID();
-    (window as unknown as { __FOLIO_CLIP_NONCE__?: string }).__FOLIO_CLIP_NONCE__ = bridgeNonce;
+    try {
+      sessionStorage.setItem("folio:pending-clips", JSON.stringify(pendingClips));
+    } catch {
+      // storage limit or quota
+    }
+  }, [pendingClips]);
 
-    const handleMessage = async (event: MessageEvent) => {
-      if (event.source !== window || event.origin !== window.location.origin) {
-        return;
-      }
-      if (!event.data || event.data.type !== "FOLIO_CLIP_DELIVERY") {
-        return;
-      }
-      if (event.data.nonce !== bridgeNonce) {
-        console.warn("Clip delivery rejected: nonce mismatch");
-        return;
-      }
+  const handleIncomingPayload = useCallback(async (payload: ClipPayload) => {
+    if (!payload || !payload.contentHtml) return;
+    try {
+      const processed = await processClip(payload);
+      const newClip: PendingClip = {
+        ...processed,
+        id: crypto.randomUUID(),
+        tags: []
+      };
+      setPendingClips((prev) => [newClip, ...prev]);
+      setSelectedClipId(newClip.id);
 
-      const payload = event.data.payload as ClipPayload;
-      if (payload && payload.contentHtml) {
-        try {
-          const processed = await processClip(payload);
-          const newClip: PendingClip = {
-            ...processed,
-            id: crypto.randomUUID(),
-            tags: []
-          };
-          setPendingClips((prev) => [newClip, ...prev]);
-          setSelectedClipId(newClip.id);
+      // Check if duplicate exists
+      const existing = await libraryManager.findDuplicate(processed.contentHash);
+      if (existing) {
+        setDuplicateDoc(existing);
+      } else {
+        setDuplicateDoc(null);
+      }
+    } catch (err) {
+      console.error("Failed to process incoming clip:", err);
+    }
+  }, []);
 
-          // Check if hash already exists
-          const existing = await libraryManager.findDuplicate(processed.contentHash);
-          if (existing) {
-            setDuplicateWarning(`A document with matching content already exists: "${existing.title}".`);
-          } else {
-            setDuplicateWarning(null);
-          }
-        } catch (err) {
-          console.error("Failed to process incoming clip:", err);
+  // Section 6 clip receiving:
+  // main.tsx manages the global window.__FOLIO_CLIP_NONCE__ and delivers verified clips via
+  // sessionStorage ("folio:raw-clips") and "folio:clip-received" CustomEvent.
+  useEffect(() => {
+    // Drain any raw clips queued while inbox was not mounted
+    try {
+      const rawQueue = JSON.parse(sessionStorage.getItem("folio:raw-clips") || "[]") as ClipPayload[];
+      if (rawQueue.length > 0) {
+        sessionStorage.removeItem("folio:raw-clips");
+        for (const queued of rawQueue) {
+          handleIncomingPayload(queued);
         }
+      }
+    } catch {
+      // ignore
+    }
+
+    const handleCustomClip = (e: Event) => {
+      const custom = e as CustomEvent<ClipPayload>;
+      if (custom.detail) {
+        handleIncomingPayload(custom.detail);
       }
     };
 
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
+    window.addEventListener("folio:clip-received", handleCustomClip);
+    return () => {
+      window.removeEventListener("folio:clip-received", handleCustomClip);
+    };
+  }, [handleIncomingPayload]);
 
   const activeClip = pendingClips.find((c) => c.id === selectedClipId) || pendingClips[0];
+
+  // Re-check duplicate status when active clip changes
+  useEffect(() => {
+    if (!activeClip) {
+      setDuplicateDoc(null);
+      return;
+    }
+    libraryManager.findDuplicate(activeClip.contentHash).then((existing) => {
+      setDuplicateDoc(existing || null);
+    });
+  }, [activeClip]);
 
   const handleSaveActiveClip = async () => {
     if (!activeClip) return;
 
     try {
+      const cleanSearchText = extractCleanSearchText(activeClip.cleanHtml);
+
       // Add document via libraryManager following Section 4 write order rules
       const doc = await libraryManager.addDocument({
         meta: {
@@ -119,16 +169,47 @@ export const ClipInboxScreen: React.FC = () => {
           {
             chapterId: "ch-1",
             title: activeClip.title,
-            text: activeClip.cleanHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+            text: cleanSearchText
           }
         ]
       });
+
+      // Index document in search worker
+      try {
+        await searchClient.indexDocs([
+          {
+            id: `${doc.id}:ch-1`,
+            docId: doc.id,
+            chapterId: "ch-1",
+            title: doc.title,
+            chapterTitle: doc.title,
+            author: doc.author || "",
+            tags: doc.tags || [],
+            text: cleanSearchText
+          }
+        ]);
+      } catch (err) {
+        console.warn("Failed to index saved clip:", err);
+      }
+
+      // Update library store
+      await useLibraryStore.getState().loadLibrary();
 
       // Remove from inbox
       setPendingClips((prev) => prev.filter((c) => c.id !== activeClip.id));
       navigate(`/read/${doc.slug}`);
     } catch (err) {
       console.error("Failed to save clip:", err);
+    }
+  };
+
+  const handleReplaceExisting = async () => {
+    if (!activeClip || !duplicateDoc) return;
+    try {
+      await libraryManager.deleteDocument(duplicateDoc.id);
+      await handleSaveActiveClip();
+    } catch (err) {
+      console.error("Failed to replace existing document:", err);
     }
   };
 
@@ -156,14 +237,7 @@ export const ClipInboxScreen: React.FC = () => {
       images: []
     };
 
-    const processed = await processClip(demoPayload);
-    const newClip: PendingClip = {
-      ...processed,
-      id: crypto.randomUUID(),
-      tags: ["reading", "calm"]
-    };
-    setPendingClips((prev) => [newClip, ...prev]);
-    setSelectedClipId(newClip.id);
+    handleIncomingPayload(demoPayload);
   };
 
   return (
@@ -183,10 +257,29 @@ export const ClipInboxScreen: React.FC = () => {
         </button>
       </header>
 
-      {duplicateWarning && (
-        <div className="mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{duplicateWarning}</span>
+      {duplicateDoc && (
+        <div className="mb-4 p-3.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>
+              A document with matching content already exists in your library: <strong>&ldquo;{duplicateDoc.title}&rdquo;</strong>.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => activeClip && handleDiscard(activeClip.id)}
+              className="px-2.5 py-1 rounded bg-surface border border-border text-muted hover:text-text font-medium text-[11px]"
+            >
+              Skip / Discard
+            </button>
+            <button
+              onClick={handleReplaceExisting}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-amber-600 text-white font-medium hover:bg-amber-700 text-[11px]"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Replace Existing</span>
+            </button>
+          </div>
         </div>
       )}
 

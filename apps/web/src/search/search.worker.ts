@@ -30,9 +30,13 @@ self.onmessage = (e: MessageEvent<WorkerMessageIn>) => {
     }
 
     case "INDEX_DOCS": {
-      searchIndex.addAll(msg.entries);
-      const jsonIndex = searchIndex.toJSON();
-      self.postMessage({ type: "INDEXED", count: msg.entries.length, jsonIndex });
+      try {
+        searchIndex.addAll(msg.entries);
+        const jsonIndex = searchIndex.toJSON();
+        self.postMessage({ type: "INDEXED", count: msg.entries.length, jsonIndex });
+      } catch (err) {
+        console.warn("Failed to index docs in worker:", err);
+      }
       break;
     }
 

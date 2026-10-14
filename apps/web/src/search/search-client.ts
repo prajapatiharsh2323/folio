@@ -112,6 +112,19 @@ class SearchClient {
     const msg: WorkerMessageIn = { type: "REMOVE_DOC", docId };
     this.worker?.postMessage(msg);
   }
+
+  async reloadIndex(): Promise<void> {
+    await this.initWorker();
+    this.rawTextsCache.clear();
+    let jsonIndex: string | undefined;
+    try {
+      const loadedIndex = await libraryManager.getSearchIndex();
+      jsonIndex = loadedIndex.toJSON();
+    } catch {
+      // If no index exists, worker starts fresh
+    }
+    this.worker?.postMessage({ type: "INIT", jsonIndex });
+  }
 }
 
 export const searchClient = new SearchClient();

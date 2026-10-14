@@ -836,6 +836,7 @@ export const SettingsScreen: React.FC = () => {
                 onClick={handleExecuteRestore}
                 disabled={
                   isRestoring ||
+                  !verificationResult.valid ||
                   (restoreMode === "replace" &&
                     replaceConfirmInput.trim().toUpperCase() !== "REPLACE")
                 }

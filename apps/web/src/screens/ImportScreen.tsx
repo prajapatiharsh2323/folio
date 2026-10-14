@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { UploadCloud, CheckCircle2, AlertCircle, FileText, ArrowLeft } from "lucide-react";
 import {
@@ -24,6 +24,51 @@ export const ImportScreen: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const addDocumentToState = useLibraryStore((state) => state.addDocument);
+
+  useEffect(() => {
+    // Check Cache Storage for files queued by PWA share-target
+    if (typeof caches !== "undefined") {
+      caches
+        .open("folio-share-target")
+        .then(async (cache) => {
+          const requests = await cache.keys();
+          if (requests.length === 0) return;
+          const sharedFiles: File[] = [];
+          for (const req of requests) {
+            const res = await cache.match(req);
+            if (res) {
+              const blob = await res.blob();
+              const rawName = res.headers.get("X-Filename") || "shared-file";
+              const filename = decodeURIComponent(rawName);
+              sharedFiles.push(new File([blob], filename, { type: blob.type }));
+              await cache.delete(req);
+            }
+          }
+          if (sharedFiles.length > 0) {
+            processFiles(sharedFiles);
+          }
+        })
+        .catch(console.error);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const queued = (window as any).__FOLIO_QUEUED_FILES__ as File[] | undefined;
+    if (queued && queued.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__FOLIO_QUEUED_FILES__ = undefined;
+      processFiles(queued);
+    }
+
+    const handleQueuedEvent = (e: Event) => {
+      const custom = e as CustomEvent<File[]>;
+      if (custom.detail && custom.detail.length > 0) {
+        processFiles(custom.detail);
+      }
+    };
+
+    window.addEventListener("folio:files-queued", handleQueuedEvent);
+    return () => window.removeEventListener("folio:files-queued", handleQueuedEvent);
+  }, []);
 
   const processFiles = async (files: FileList | File[]) => {
     const fileList = Array.from(files);
