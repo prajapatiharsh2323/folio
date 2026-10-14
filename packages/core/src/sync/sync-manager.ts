@@ -123,10 +123,21 @@ export class SyncManager {
     const localDocsByHash = new Map(localManifest.docs.map((d) => [d.contentHash, d]));
     const localDocsById = new Map(localManifest.docs.map((d) => [d.id, d]));
 
-    const remoteDocsByHash = new Map(remoteManifest ? remoteManifest.docs.map((d) => [d.contentHash, d]) : []);
+    const remoteDocsByHash = new Map<string, ManifestDoc>();
+    if (remoteManifest) {
+      for (const d of remoteManifest.docs) {
+        if (remoteDocsByHash.has(d.contentHash)) {
+          console.warn(
+            `SyncManager: duplicate remote contentHash ${d.contentHash} between docs ${d.id} and ${remoteDocsByHash.get(d.contentHash)?.id}`
+          );
+        }
+        remoteDocsByHash.set(d.contentHash, d);
+      }
+    }
     const remoteDocsById = new Map(remoteManifest ? remoteManifest.docs.map((d) => [d.id, d]) : []);
 
-    // 5. Calculate diffs
+    // 5. Calculate diffs and establish docId remapping for identical content hashes
+    const docIdRemap = new Map<string, string>(); // remoteDocId -> localDocId
     const docsToUpload: ManifestDoc[] = [];
     const docMetasToUpload: ManifestDoc[] = [];
 
@@ -136,6 +147,9 @@ export class SyncManager {
         // Present only locally -> upload
         docsToUpload.push(lDoc);
       } else {
+        if (match.id !== lDoc.id) {
+          docIdRemap.set(match.id, lDoc.id);
+        }
         // Present on both sides -> compare updatedAt
         const localTime = new Date(lDoc.updatedAt).getTime();
         const remoteTime = new Date(match.updatedAt).getTime();
@@ -155,6 +169,9 @@ export class SyncManager {
           // Present only remotely -> download
           docsToDownload.push(rDoc);
         } else {
+          if (match.id !== rDoc.id) {
+            docIdRemap.set(rDoc.id, match.id);
+          }
           // Present on both sides -> compare updatedAt
           const localTime = new Date(match.updatedAt).getTime();
           const remoteTime = new Date(rDoc.updatedAt).getTime();
@@ -316,25 +333,31 @@ export class SyncManager {
     });
 
     // Reconcile Annotations
-    await this.reconcileAnnotations(remoteFileMap, syncState, result);
+    await this.reconcileAnnotations(remoteFileMap, syncState, result, docIdRemap);
 
     // Reconcile Progress
-    await this.reconcileProgress(remoteFileMap, syncState, result);
+    await this.reconcileProgress(remoteFileMap, syncState, result, docIdRemap);
 
     // Reconcile Collections
-    await this.reconcileCollections(remoteFileMap, syncState, result);
+    await this.reconcileCollections(remoteFileMap, syncState, result, docIdRemap);
 
     // 9. Merge and Finalize Manifest
-    // Combine local docs and downloaded remote docs into unified manifest
-    const mergedDocsMap = new Map<string, ManifestDoc>();
+    // Combine local docs and downloaded remote docs into unified manifest, deduplicating by contentHash
+    const mergedDocsByHash = new Map<string, ManifestDoc>();
     for (const d of localManifest.docs) {
-      mergedDocsMap.set(d.id, d);
+      mergedDocsByHash.set(d.contentHash, d);
     }
     for (const d of docsToDownload) {
-      mergedDocsMap.set(d.id, d);
+      if (!mergedDocsByHash.has(d.contentHash)) {
+        mergedDocsByHash.set(d.contentHash, d);
+      }
     }
     for (const d of docMetasToDownload) {
-      mergedDocsMap.set(d.id, d);
+      const existing = mergedDocsByHash.get(d.contentHash);
+      if (existing) {
+        existing.title = d.title;
+        existing.updatedAt = d.updatedAt;
+      }
     }
 
     const finalManifest: Manifest = {
@@ -342,7 +365,7 @@ export class SyncManager {
       app: "folio",
       libraryId: localManifest.libraryId || remoteManifest?.libraryId || crypto.randomUUID(),
       updatedAt: new Date().toISOString(),
-      docs: Array.from(mergedDocsMap.values())
+      docs: Array.from(mergedDocsByHash.values())
     };
 
     // Save final manifest locally
@@ -389,7 +412,8 @@ export class SyncManager {
   private async reconcileAnnotations(
     remoteFileMap: Map<string, SyncFileEntry>,
     syncState: SyncState,
-    result: SyncResult
+    result: SyncResult,
+    docIdRemap: Map<string, string>
   ): Promise<void> {
     const hasRemote = remoteFileMap.has(ANNOTATIONS_PATH);
     const hasLocal = await this.fileStore.exists(ANNOTATIONS_PATH);
@@ -410,9 +434,11 @@ export class SyncManager {
     const map = new Map<string, Annotation>(currentAnnots.map((a) => [a.id, a]));
 
     for (const rAnn of remoteAnnots) {
-      const curr = map.get(rAnn.id);
-      if (!curr || new Date(rAnn.updatedAt).getTime() > new Date(curr.updatedAt).getTime()) {
-        map.set(rAnn.id, rAnn);
+      const canonicalDocId = docIdRemap.get(rAnn.docId) || rAnn.docId;
+      const normalizedAnn = { ...rAnn, docId: canonicalDocId };
+      const curr = map.get(normalizedAnn.id);
+      if (!curr || new Date(normalizedAnn.updatedAt).getTime() > new Date(curr.updatedAt).getTime()) {
+        map.set(normalizedAnn.id, normalizedAnn);
       }
     }
 
@@ -420,21 +446,25 @@ export class SyncManager {
     const mergedBytes = new TextEncoder().encode(JSON.stringify(merged, null, 2));
     await this.fileStore.write(ANNOTATIONS_PATH, mergedBytes);
 
-    // Upload merged annotations to remote
+    // Upload merged annotations to remote only if changed
     const hash = await sha256Hex(mergedBytes);
-    const res = await this.provider.upload(ANNOTATIONS_PATH, mergedBytes, hash);
-    syncState.files[ANNOTATIONS_PATH] = {
-      driveId: res?.id || "",
-      sha256: hash,
-      remoteModifiedAt: new Date().toISOString()
-    };
-    result.mergedUserFiles++;
+    const remoteEntry = remoteFileMap.get(ANNOTATIONS_PATH);
+    if (!remoteEntry || remoteEntry.sha256 !== hash) {
+      const res = await this.provider.upload(ANNOTATIONS_PATH, mergedBytes, hash);
+      syncState.files[ANNOTATIONS_PATH] = {
+        driveId: res?.id || "",
+        sha256: hash,
+        remoteModifiedAt: new Date().toISOString()
+      };
+      result.mergedUserFiles++;
+    }
   }
 
   private async reconcileProgress(
     remoteFileMap: Map<string, SyncFileEntry>,
     syncState: SyncState,
-    result: SyncResult
+    result: SyncResult,
+    docIdRemap: Map<string, string>
   ): Promise<void> {
     const hasRemote = remoteFileMap.has(PROGRESS_PATH);
     const hasLocal = await this.fileStore.exists(PROGRESS_PATH);
@@ -452,31 +482,37 @@ export class SyncManager {
     }
 
     const currentProg = await this.libraryManager.getAllProgress();
-    for (const [docId, p] of Object.entries(remoteProg)) {
-      const curr = currentProg[docId];
-      if (!curr || new Date(p.updatedAt).getTime() > new Date(curr.updatedAt).getTime()) {
-        currentProg[docId] = p;
+    for (const [rawDocId, p] of Object.entries(remoteProg)) {
+      const canonicalDocId = docIdRemap.get(rawDocId) || rawDocId;
+      const normalizedProg = { ...p, docId: canonicalDocId };
+      const curr = currentProg[canonicalDocId];
+      if (!curr || new Date(normalizedProg.updatedAt).getTime() > new Date(curr.updatedAt).getTime()) {
+        currentProg[canonicalDocId] = normalizedProg;
       }
     }
 
     const mergedBytes = new TextEncoder().encode(JSON.stringify(currentProg, null, 2));
     await this.fileStore.write(PROGRESS_PATH, mergedBytes);
 
-    // Upload merged progress
+    // Upload merged progress only if changed
     const hash = await sha256Hex(mergedBytes);
-    const res = await this.provider.upload(PROGRESS_PATH, mergedBytes, hash);
-    syncState.files[PROGRESS_PATH] = {
-      driveId: res?.id || "",
-      sha256: hash,
-      remoteModifiedAt: new Date().toISOString()
-    };
-    result.mergedUserFiles++;
+    const remoteEntry = remoteFileMap.get(PROGRESS_PATH);
+    if (!remoteEntry || remoteEntry.sha256 !== hash) {
+      const res = await this.provider.upload(PROGRESS_PATH, mergedBytes, hash);
+      syncState.files[PROGRESS_PATH] = {
+        driveId: res?.id || "",
+        sha256: hash,
+        remoteModifiedAt: new Date().toISOString()
+      };
+      result.mergedUserFiles++;
+    }
   }
 
   private async reconcileCollections(
     remoteFileMap: Map<string, SyncFileEntry>,
     syncState: SyncState,
-    result: SyncResult
+    result: SyncResult,
+    docIdRemap: Map<string, string>
   ): Promise<void> {
     const hasRemote = remoteFileMap.has(COLLECTIONS_PATH);
     const hasLocal = await this.fileStore.exists(COLLECTIONS_PATH);
@@ -497,11 +533,15 @@ export class SyncManager {
     const map = new Map<string, Collection>(currentColls.map((c) => [c.id, c]));
 
     for (const rColl of remoteColls) {
+      const remappedRemoteDocs = rColl.docIds.map((id) => docIdRemap.get(id) || id);
       const curr = map.get(rColl.id);
       if (!curr) {
-        map.set(rColl.id, rColl);
+        map.set(rColl.id, {
+          ...rColl,
+          docIds: remappedRemoteDocs
+        });
       } else {
-        const combinedDocIds = Array.from(new Set([...curr.docIds, ...rColl.docIds]));
+        const combinedDocIds = Array.from(new Set([...curr.docIds, ...remappedRemoteDocs]));
         map.set(rColl.id, {
           id: curr.id,
           name: curr.name || rColl.name,
@@ -515,14 +555,17 @@ export class SyncManager {
     const mergedBytes = new TextEncoder().encode(JSON.stringify(merged, null, 2));
     await this.fileStore.write(COLLECTIONS_PATH, mergedBytes);
 
-    // Upload merged collections
+    // Upload merged collections only if changed
     const hash = await sha256Hex(mergedBytes);
-    const res = await this.provider.upload(COLLECTIONS_PATH, mergedBytes, hash);
-    syncState.files[COLLECTIONS_PATH] = {
-      driveId: res?.id || "",
-      sha256: hash,
-      remoteModifiedAt: new Date().toISOString()
-    };
-    result.mergedUserFiles++;
+    const remoteCollEntry = remoteFileMap.get(COLLECTIONS_PATH);
+    if (!remoteCollEntry || remoteCollEntry.sha256 !== hash) {
+      const res = await this.provider.upload(COLLECTIONS_PATH, mergedBytes, hash);
+      syncState.files[COLLECTIONS_PATH] = {
+        driveId: res?.id || "",
+        sha256: hash,
+        remoteModifiedAt: new Date().toISOString()
+      };
+      result.mergedUserFiles++;
+    }
   }
 }

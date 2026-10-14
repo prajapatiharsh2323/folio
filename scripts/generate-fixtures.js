@@ -1,4 +1,4 @@
-import * as fflate from "../node_modules/.pnpm/fflate@0.8.3/node_modules/fflate/esm/browser.js";
+import * as fflate from "fflate";
 import fs from "node:fs";
 import path from "node:path";
 

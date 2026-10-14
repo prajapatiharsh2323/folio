@@ -200,4 +200,41 @@ describe("Phase 4 Backup & Restore Acceptance Tests", () => {
     expect(verification.valid).toBe(false);
     expect(verification.issues.some((i) => i.reason === "checksum_mismatch")).toBe(true);
   });
+
+  it("does not wipe existing library when replace-restore encounters a bad ZIP archive", async () => {
+    // Add existing doc to library
+    const added = await manager.addDocument(sampleDoc);
+    const docsBefore = await manager.listDocuments();
+    expect(docsBefore).toHaveLength(1);
+
+    // Corrupted zip
+    const badZip = new Uint8Array([0, 1, 2, 3]);
+
+    await expect(
+      restoreBackupZip(store, manager, badZip, { mode: "replace" })
+    ).rejects.toThrow();
+
+    // Verify existing library remains intact
+    const docsAfter = await manager.listDocuments();
+    expect(docsAfter).toHaveLength(1);
+    expect(docsAfter[0]?.id).toBe(added.id);
+  });
+
+  it("does not wipe existing library when zip is missing manifest.json", async () => {
+    const added = await manager.addDocument(sampleDoc);
+
+    // Zip with no manifest
+    const zipNoManifest = fflate.zipSync({
+      "backup.json": fflate.strToU8(JSON.stringify({ schema: 1 })),
+      "other.txt": fflate.strToU8("data")
+    });
+
+    await expect(
+      restoreBackupZip(store, manager, zipNoManifest, { mode: "replace" })
+    ).rejects.toThrow();
+
+    const docsAfter = await manager.listDocuments();
+    expect(docsAfter).toHaveLength(1);
+    expect(docsAfter[0]?.id).toBe(added.id);
+  });
 });

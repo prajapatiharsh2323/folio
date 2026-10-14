@@ -483,15 +483,54 @@ describe("Phase 6: Google Drive Sync & Reconciliation", () => {
       expect(driveHasDocOriginal).toBe(true);
     });
 
-    it("verifies state.json is saved locally with file metadata", async () => {
-      await managerA.addDocument(sampleDoc1);
+    it("remaps docId and reconciles user data when devices import same book independently", async () => {
+      // Device A imports book
+      const docA = await managerA.addDocument(sampleDoc1);
       await syncManagerA.sync();
 
-      expect(await storeA.exists("sync/state.json")).toBe(true);
-      const stateText = await storeA.readText("sync/state.json");
-      const state = JSON.parse(stateText);
-      expect(state.version).toBe(1);
-      expect(Object.keys(state.files).length).toBeGreaterThan(0);
+      // Device B imports the same book independently (giving it a different ID but same contentHash)
+      const docB = await managerB.addDocument(sampleDoc1);
+      expect(docB.id).not.toBe(docA.id);
+      expect(docB.contentHash).toBe(docA.contentHash);
+
+      // Device B adds an annotation and progress under docB.id
+      const annotB: Annotation = {
+        id: "annot-b-1",
+        docId: docB.id,
+        quote: "Curiosity",
+        prefix: "",
+        suffix: "",
+        kind: "highlight",
+        color: "yellow",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await managerB.addAnnotation(annotB);
+      await managerB.saveProgress({
+        docId: docB.id,
+        location: "epubcfi(/6/4)",
+        percent: 60,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Device B syncs to Drive
+      await syncManagerB.sync();
+
+      // Device A syncs and receives the annotation and progress mapped to docA.id
+      await syncManagerA.sync();
+
+      const manifestA = await managerA.getManifest();
+      // Must not have duplicate docs with the same contentHash
+      const matchingDocs = manifestA.docs.filter((d) => d.contentHash === docA.contentHash);
+      expect(matchingDocs.length).toBe(1);
+
+      // Verify annotation is remapped to docA.id on Device A
+      const annotsA = await managerA.getAnnotations(docA.id);
+      expect(annotsA.some((a) => a.id === "annot-b-1" && a.docId === docA.id)).toBe(true);
+
+      // Verify progress is remapped to docA.id on Device A
+      const progA = await managerA.getProgress(docA.id);
+      expect(progA?.percent).toBe(60);
     });
   });
 });

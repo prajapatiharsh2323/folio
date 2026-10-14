@@ -89,8 +89,8 @@ export function sanitizeArticleHtml(dirtyHtml: string, windowObj?: Window): stri
           // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { JSDOM } = require("jsdom");
           nodeFallbackWindow = new JSDOM("").window as unknown as Window;
-        } catch {
-          // Fallback if jsdom is not synchronously available
+        } catch (err) {
+          console.warn("sanitizeArticleHtml: failed to load jsdom fallback window:", err);
         }
       }
       win = nodeFallbackWindow;
@@ -100,9 +100,15 @@ export function sanitizeArticleHtml(dirtyHtml: string, windowObj?: Window): stri
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const purifier = typeof DOMPurify === "function" ? (DOMPurify as any)(win) : DOMPurify;
 
-  if (!purifier || typeof purifier.sanitize !== "function") {
-    // If no DOM window is available at all, return basic stripped string
-    return dirtyHtml.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<[^>]+>/g, "");
+  if (!purifier || !purifier.isSupported || typeof purifier.sanitize !== "function") {
+    // Fail-safe: Never fail open if DOM/DOMPurify is unsupported.
+    // HTML-escape everything to guarantee no dangerous payloads or bypasses survive.
+    return dirtyHtml
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   // Add hook to enforce rel="noopener noreferrer" on all links if hooks are supported

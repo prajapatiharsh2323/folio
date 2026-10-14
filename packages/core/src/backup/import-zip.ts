@@ -34,17 +34,37 @@ export async function restoreBackupZip(
   zipBytes: Uint8Array,
   opts: RestoreOptions
 ): Promise<{ summary: RestoreSummary; verification: VerificationResult }> {
-  // First, verify archive
+  // First, verify archive thoroughly
   const verification = await verifyBackupZip(zipBytes);
-  if (!verification.valid && verification.issues.some((i) => i.reason === "unsafe_path" || i.reason === "corrupted")) {
-    throw new Error(`Backup archive failed safety verification: ${verification.issues[0]?.message}`);
+  const fatalIssues = verification.issues.filter(
+    (i) =>
+      i.reason === "unsafe_path" ||
+      i.reason === "corrupted" ||
+      i.path === "library/manifest.json"
+  );
+  if (fatalIssues.length > 0) {
+    const errorMsg = fatalIssues.map((i) => i.message).join("; ");
+    throw new Error(`Backup archive failed verification: ${errorMsg || "Invalid archive"}`);
   }
 
-  const unzipped = fflate.unzipSync(zipBytes);
+  const unzipped = verification.unzipped || fflate.unzipSync(zipBytes);
+
+  // Read and validate backup manifest before any modifications
+  const backupManifestBytes = unzipped["library/manifest.json"];
+  if (!backupManifestBytes) {
+    throw new Error("Missing library/manifest.json in backup archive");
+  }
+
+  let backupManifest: Manifest;
+  try {
+    backupManifest = JSON.parse(fflate.strFromU8(backupManifestBytes));
+  } catch {
+    throw new Error("Corrupted library/manifest.json in backup archive");
+  }
 
   const summary: RestoreSummary = {
     mode: opts.mode,
-    totalDocsInBackup: 0,
+    totalDocsInBackup: backupManifest.docs.length,
     newDocsAdded: 0,
     duplicatesSkipped: 0,
     metadataUpdated: 0,
@@ -53,7 +73,7 @@ export async function restoreBackupZip(
     collectionsMerged: 0
   };
 
-  // 1. If REPLACE mode, wipe existing library first
+  // If REPLACE mode, wipe existing library only AFTER backup is verified and parsed successfully
   if (opts.mode === "replace") {
     opts.onProgress?.({ current: 0, total: 100, message: "Wiping existing library for replace..." });
 
@@ -75,21 +95,13 @@ export async function restoreBackupZip(
     }
   }
 
-  // Read backup manifest
-  const backupManifestBytes = unzipped["library/manifest.json"];
-  if (!backupManifestBytes) {
-    throw new Error("Missing library/manifest.json in backup archive");
-  }
-
-  const backupManifest: Manifest = JSON.parse(fflate.strFromU8(backupManifestBytes));
-  summary.totalDocsInBackup = backupManifest.docs.length;
-
   // Read current manifest (if exists)
   let currentManifest: Manifest;
   if (await store.exists(MANIFEST_PATH)) {
     try {
       currentManifest = JSON.parse(await store.readText(MANIFEST_PATH));
-    } catch {
+    } catch (err) {
+      console.warn("restoreBackupZip: corrupted local manifest, initializing clean manifest:", err);
       currentManifest = {
         schema: 1,
         app: "folio",

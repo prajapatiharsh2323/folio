@@ -57,30 +57,46 @@ export async function* streamBackupZip(
 
   const manifestText = await store.readText(manifestPath);
   const manifest: Manifest = JSON.parse(manifestText);
-  const manifestSha256 = await sha256Hex(new TextEncoder().encode(manifestText));
-
-  // Determine files to include
-  const filesToInclude: string[] = [];
-  filesToInclude.push(manifestPath);
 
   // Filter docs if scope is restricted
   const targetDocs = opts.scope && opts.scope !== "all"
     ? manifest.docs.filter((d) => opts.scope!.includes(d.id))
     : manifest.docs;
 
+  // Determine files to include using Set to prevent duplicate file entries (e.g. meta.json)
+  const filesSet = new Set<string>();
+  const sanitizedDocs = [];
+
   for (const d of targetDocs) {
-    // Add meta.json
-    const metaPath = `library/docs/${d.slug}/meta.json`;
-    if (await store.exists(metaPath)) {
-      filesToInclude.push(metaPath);
-    }
-    // Add all registered files in manifest for this document
+    const existingDocFiles = [];
     for (const f of d.files) {
       if (await store.exists(f.path)) {
-        filesToInclude.push(f.path);
+        filesSet.add(f.path);
+        existingDocFiles.push(f);
+      } else {
+        console.warn(
+          `exportBackup: file listed in document "${d.title}" (${d.id}) is missing from store: ${f.path}`
+        );
       }
     }
+    const metaPath = `library/docs/${d.slug}/meta.json`;
+    if (await store.exists(metaPath)) {
+      filesSet.add(metaPath);
+    }
+    sanitizedDocs.push({
+      ...d,
+      files: existingDocFiles
+    });
   }
+
+  // Build scoped manifest so exported manifest exactly matches archived docs and existing files
+  const exportManifest: Manifest = {
+    ...manifest,
+    docs: sanitizedDocs,
+    updatedAt: new Date().toISOString()
+  };
+  const exportManifestBytes = new TextEncoder().encode(JSON.stringify(exportManifest, null, 2));
+  const manifestSha256 = await sha256Hex(exportManifestBytes);
 
   // User data (annotations, progress, collections, settings)
   const userFiles = [
@@ -91,9 +107,11 @@ export async function* streamBackupZip(
   ];
   for (const uf of userFiles) {
     if (await store.exists(uf)) {
-      filesToInclude.push(uf);
+      filesSet.add(uf);
     }
   }
+
+  const filesToInclude = Array.from(filesSet);
 
   const backupMeta: BackupMeta = {
     schema: 1,
@@ -118,16 +136,20 @@ export async function* streamBackupZip(
   zip.add(backupJsonFile);
   backupJsonFile.push(backupJsonBytes, true);
 
-  // 2. Stream all files in library
+  // 2. Add library/manifest.json
+  const manifestZipFile = new fflate.ZipDeflate("library/manifest.json", { level: 6 });
+  zip.add(manifestZipFile);
+  manifestZipFile.push(exportManifestBytes, true);
+
+  // 3. Stream all document and user files in library
   let count = 0;
   for (const filePath of filesToInclude) {
     count++;
-    opts.onProgress?.({ current: count, total: filesToInclude.length, filename: filePath });
+    opts.onProgress?.({ current: count, total: filesToInclude.length + 1, filename: filePath });
 
     const fileBytes = await store.read(filePath);
     const level = getCompressionLevel(filePath);
 
-    // Archive path: strip leading "library/" so structure is clean
     const archivePath = filePath.startsWith("library/")
       ? filePath
       : `library/${filePath}`;

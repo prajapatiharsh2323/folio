@@ -34,7 +34,7 @@ function findOpfPath(zip: Record<string, Uint8Array>): string {
 }
 
 /**
- * Strips XML/HTML tags and decodes common entities to obtain clean text.
+ * Strips XML/HTML tags and decodes common and numeric entities to obtain clean text.
  */
 function extractPlainText(xml: string): string {
   return xml
@@ -45,8 +45,40 @@ function extractPlainText(xml: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try {
+        return String.fromCodePoint(parseInt(dec, 10));
+      } catch {
+        return "";
+      }
+    })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      try {
+        return String.fromCodePoint(parseInt(hex, 16));
+      } catch {
+        return "";
+      }
+    })
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Resolves a relative path against an OPF directory handling ".." and ".".
+ */
+function resolvePath(baseDir: string, relativePath: string): string {
+  const combined = baseDir ? `${baseDir}${relativePath}` : relativePath;
+  const parts = combined.split("/");
+  const resolved: string[] = [];
+  for (const p of parts) {
+    if (p === "." || p === "") continue;
+    if (p === "..") {
+      resolved.pop();
+    } else {
+      resolved.push(p);
+    }
+  }
+  return resolved.join("/");
 }
 
 /**
@@ -56,55 +88,86 @@ export async function importEpub(bytes: Uint8Array, originalName = "book.epub"):
   const unzipped = fflate.unzipSync(bytes);
 
   // Check DRM (Section 6 & 10)
-  // If META-INF/encryption.xml lists anything other than font obfuscation, or META-INF/rights.xml exists:
+  // If META-INF/rights.xml exists or encryption.xml lists anything other than font obfuscation:
   if (unzipped["META-INF/rights.xml"]) {
     throw new DrmProtectedError();
   }
   if (unzipped["META-INF/encryption.xml"]) {
     const encText = fflate.strFromU8(unzipped["META-INF/encryption.xml"]);
-    // Allowed font obfuscation URIs
-    const fontObfuscation1 = "http://www.idpf.org/2008/embedding";
-    const fontObfuscation2 = "http://ns.adobe.com/pdf/enc/digital/book/2008/font";
-    const hasOtherEncryption = encText.includes("CipherData") &&
-      !encText.includes(fontObfuscation1) &&
-      !encText.includes(fontObfuscation2);
+    // Allowed standard font obfuscation URIs (IDPF and Adobe font mangling)
+    const allowedFontAlgos = [
+      "http://www.idpf.org/2008/embedding",
+      "http://ns.adobe.com/pdf/enc#RC"
+    ];
 
-    if (hasOtherEncryption) {
+    const algoMatches = Array.from(
+      encText.matchAll(/<(?:\w+:)?EncryptionMethod\s+[^>]*Algorithm=["']([^"']+)["']/gi)
+    );
+    if (algoMatches.length > 0) {
+      for (const m of algoMatches) {
+        if (!allowedFontAlgos.includes(m[1]!)) {
+          throw new DrmProtectedError();
+        }
+      }
+    } else if (encText.includes("CipherData")) {
       throw new DrmProtectedError();
     }
   }
 
   // Find and read OPF
   const opfPath = findOpfPath(unzipped);
-  const opfBytes = unzipped[opfPath];
+  let opfBytes = unzipped[opfPath];
+  if (!opfBytes) {
+    try {
+      opfBytes = unzipped[decodeURIComponent(opfPath)];
+    } catch {
+      // ignore
+    }
+  }
+  if (!opfBytes) {
+    const lower = opfPath.toLowerCase();
+    const foundKey = Object.keys(unzipped).find((k) => k.toLowerCase() === lower);
+    if (foundKey) {
+      opfBytes = unzipped[foundKey];
+    }
+  }
   if (!opfBytes) {
     throw new Error(`Invalid EPUB: OPF package file not found at ${opfPath}`);
   }
   const opfText = fflate.strFromU8(opfBytes);
 
-  // Extract title
-  const titleMatch = opfText.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/i);
-  const title = titleMatch && titleMatch[1] ? titleMatch[1].trim() : "Untitled Book";
+  // Extract title (handles default xmlns without prefix, prefixes like dcterms:, multiline content)
+  const titleMatch = opfText.match(/<(?:\w+:)?title\b[^>]*>([\s\S]*?)<\/(?:\w+:)?title>/i);
+  const title = (titleMatch?.[1] ? extractPlainText(titleMatch[1]) : "").trim() || "Untitled Book";
 
   // Extract author / creator
-  const authorMatch = opfText.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i);
-  const author = authorMatch && authorMatch[1] ? authorMatch[1].trim() : undefined;
+  const authorMatch = opfText.match(/<(?:\w+:)?creator\b[^>]*>([\s\S]*?)<\/(?:\w+:)?creator>/i);
+  const author = (authorMatch?.[1] ? extractPlainText(authorMatch[1]) : "").trim() || undefined;
 
   // Extract language
-  const langMatch = opfText.match(/<dc:language[^>]*>([^<]+)<\/dc:language>/i);
-  const language = langMatch && langMatch[1] ? langMatch[1].trim() : "en";
+  const langMatch = opfText.match(/<(?:\w+:)?language\b[^>]*>([\s\S]*?)<\/(?:\w+:)?language>/i);
+  const language = (langMatch?.[1] ? extractPlainText(langMatch[1]) : "").trim() || "en";
 
   // Base directory of the OPF file
   const opfDir = opfPath.includes("/") ? opfPath.substring(0, opfPath.lastIndexOf("/") + 1) : "";
 
-  // Parse manifest items: id -> href
+  // Parse manifest items flexibly without assuming attribute order
   const manifestMap = new Map<string, string>();
-  const itemRegex = /<item\s+[^>]*id\s*=\s*["']([^"']+)["'][^>]*href\s*=\s*["']([^"']+)["'][^>]*\/?>/gi;
+  const itemTagRegex = /<item\b([^>]*)\/?>/gi;
   let itemMatch: RegExpExecArray | null;
-  while ((itemMatch = itemRegex.exec(opfText)) !== null) {
-    const id = itemMatch[1]!;
-    const href = itemMatch[2]!;
-    manifestMap.set(id, href);
+  while ((itemMatch = itemTagRegex.exec(opfText)) !== null) {
+    const attrs = itemMatch[1]!;
+    const idMatch = attrs.match(/\bid\s*=\s*["']([^"']+)["']/i);
+    const hrefMatch = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i);
+    if (idMatch && hrefMatch) {
+      const id = idMatch[1]!;
+      const rawHref = hrefMatch[1]!;
+      try {
+        manifestMap.set(id, decodeURIComponent(rawHref));
+      } catch {
+        manifestMap.set(id, rawHref);
+      }
+    }
   }
 
   // Parse spine itemrefs to follow reading order
@@ -124,8 +187,24 @@ export async function importEpub(bytes: Uint8Array, originalName = "book.epub"):
     const href = manifestMap.get(itemId);
     if (!href) continue;
 
-    const fullHref = `${opfDir}${href}`;
-    const chapterBytes = unzipped[fullHref];
+    const fullHref = resolvePath(opfDir, href);
+    let chapterBytes = unzipped[fullHref] || unzipped[`${opfDir}${href}`] || unzipped[href];
+    if (!chapterBytes) {
+      try {
+        const decodedFull = decodeURIComponent(fullHref);
+        const decodedHref = decodeURIComponent(href);
+        chapterBytes = unzipped[decodedFull] || unzipped[`${opfDir}${decodedHref}`] || unzipped[decodedHref];
+      } catch {
+        // ignore
+      }
+    }
+    if (!chapterBytes) {
+      const lowerFull = fullHref.toLowerCase();
+      const foundKey = Object.keys(unzipped).find((k) => k.toLowerCase() === lowerFull);
+      if (foundKey) {
+        chapterBytes = unzipped[foundKey];
+      }
+    }
     let chTitle = `Chapter ${i + 1}`;
     let plainText = "";
 

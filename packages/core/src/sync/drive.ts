@@ -62,7 +62,8 @@ export class GoogleDriveSyncProvider implements SyncProvider {
     const win = typeof window !== "undefined" ? (window as unknown as WindowWithGoogle) : undefined;
     if (win?.google?.accounts?.oauth2) {
       return new Promise((resolve, reject) => {
-        const client = win.google!.accounts!.oauth2!.initTokenClient({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const client = (win.google!.accounts!.oauth2! as any).initTokenClient({
           client_id: this.config.clientId,
           scope: SCOPE,
           callback: (response: GoogleTokenResponse) => {
@@ -74,6 +75,9 @@ export class GoogleDriveSyncProvider implements SyncProvider {
             } else {
               reject(new Error("Failed to receive Google Drive access token"));
             }
+          },
+          error_callback: (error: { message?: string; type?: string }) => {
+            reject(new Error(error?.message || "Google OAuth sign-in popup closed or failed"));
           }
         });
         client.requestAccessToken();
@@ -160,18 +164,9 @@ export class GoogleDriveSyncProvider implements SyncProvider {
     const headers = await this.getHeaders();
 
     const q = `'${rootId}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
-    const res = await this.fetchFn(
-      `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,size,modifiedTime,appProperties)&pageSize=1000`,
-      { headers }
-    );
-
-    if (!res.ok) {
-      throw new Error(`Failed to list files from Drive: ${res.statusText}`);
-    }
-
-    const data = await res.json();
     const entries: SyncFileEntry[] = [];
     this.fileCache.clear();
+    let pageToken: string | undefined = undefined;
 
     interface DriveApiFile {
       id: string;
@@ -184,16 +179,31 @@ export class GoogleDriveSyncProvider implements SyncProvider {
       };
     }
 
-    const files = (data.files || []) as DriveApiFile[];
-    for (const f of files) {
-      const sha256 = f.appProperties?.sha256 || "";
-      const path = f.appProperties?.relPath || f.name;
-      const size = parseInt(f.size || "0", 10);
-      const modifiedAt = f.modifiedTime || new Date().toISOString();
+    do {
+      const pageParam: string = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+      const res: any = await this.fetchFn(
+        `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,size,modifiedTime,appProperties)&pageSize=1000${pageParam}`,
+        { headers }
+      );
 
-      this.fileCache.set(path, { id: f.id, sha256, size, modifiedAt });
-      entries.push({ id: f.id, path, size, sha256, modifiedAt });
-    }
+      if (!res.ok) {
+        throw new Error(`Failed to list files from Drive: ${res.statusText}`);
+      }
+
+      const data: any = await res.json();
+      const files: DriveApiFile[] = (data.files || []) as DriveApiFile[];
+      for (const f of files) {
+        const sha256 = f.appProperties?.sha256 || "";
+        const path = f.appProperties?.relPath || f.name;
+        const size = parseInt(f.size || "0", 10);
+        const modifiedAt = f.modifiedTime || new Date().toISOString();
+
+        this.fileCache.set(path, { id: f.id, sha256, size, modifiedAt });
+        entries.push({ id: f.id, path, size, sha256, modifiedAt });
+      }
+
+      pageToken = data.nextPageToken || undefined;
+    } while (pageToken);
 
     return entries;
   }
@@ -352,7 +362,17 @@ export class GoogleDriveSyncProvider implements SyncProvider {
 
         if (res.status === 308) {
           success = true;
-          offset = end;
+          const rangeHeader = res.headers.get("Range");
+          if (rangeHeader) {
+            const match = rangeHeader.match(/bytes=0-(\d+)/);
+            if (match && match[1]) {
+              offset = parseInt(match[1], 10) + 1;
+            } else {
+              offset = end;
+            }
+          } else {
+            offset = end;
+          }
         } else if (res.ok) {
           success = true;
           offset = end;
@@ -369,6 +389,10 @@ export class GoogleDriveSyncProvider implements SyncProvider {
         } else {
           throw new Error(`Resumable upload chunk failed: ${res.statusText}`);
         }
+      }
+
+      if (!success) {
+        throw new Error(`Resumable upload failed after ${attempts} retry attempts`);
       }
     }
 

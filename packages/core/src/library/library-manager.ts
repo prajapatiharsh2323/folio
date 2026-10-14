@@ -17,23 +17,45 @@ export const MANIFEST_PATH = "library/manifest.json";
 export class LibraryManager {
   constructor(private store: FileStore) {}
 
+  private manifestInitPromise: Promise<Manifest> | null = null;
+
   /**
    * Reads the current library manifest or initializes a new one.
    */
   async getManifest(): Promise<Manifest> {
     if (await this.store.exists(MANIFEST_PATH)) {
-      const text = await this.store.readText(MANIFEST_PATH);
-      return JSON.parse(text) as Manifest;
+      try {
+        const text = await this.store.readText(MANIFEST_PATH);
+        return JSON.parse(text) as Manifest;
+      } catch (err) {
+        console.warn("getManifest: corrupted manifest, initializing clean manifest:", err);
+      }
     }
-    const initial: Manifest = {
-      schema: 1,
-      app: "folio",
-      libraryId: crypto.randomUUID(),
-      updatedAt: new Date().toISOString(),
-      docs: []
-    };
-    await this.store.write(MANIFEST_PATH, JSON.stringify(initial, null, 2));
-    return initial;
+    if (this.manifestInitPromise) {
+      return this.manifestInitPromise;
+    }
+    this.manifestInitPromise = (async () => {
+      if (await this.store.exists(MANIFEST_PATH)) {
+        try {
+          const text = await this.store.readText(MANIFEST_PATH);
+          return JSON.parse(text) as Manifest;
+        } catch {
+          // ignore
+        }
+      }
+      const initial: Manifest = {
+        schema: 1,
+        app: "folio",
+        libraryId: crypto.randomUUID(),
+        updatedAt: new Date().toISOString(),
+        docs: []
+      };
+      await this.store.write(MANIFEST_PATH, JSON.stringify(initial, null, 2));
+      return initial;
+    })().finally(() => {
+      this.manifestInitPromise = null;
+    });
+    return this.manifestInitPromise;
   }
 
   /**
@@ -234,9 +256,9 @@ export class LibraryManager {
     // Update search index
     try {
       const searchTexts = await this.getSearchText(id);
+      const searchIndex = await this.getSearchIndex();
+      searchIndex.removeByDocId(id);
       if (searchTexts && searchTexts.length > 0) {
-        const searchIndex = await this.getSearchIndex();
-        searchIndex.removeByDocId(id);
         const entries: SearchDocEntry[] = searchTexts.map((st) => ({
           id: `${id}:${st.chapterId}`,
           docId: id,
@@ -248,8 +270,19 @@ export class LibraryManager {
           text: st.text
         }));
         searchIndex.addAll(entries);
-        await this.saveSearchIndex(searchIndex);
+      } else {
+        searchIndex.add({
+          id: `${id}:meta`,
+          docId: id,
+          chapterId: "",
+          title: updatedMeta.title,
+          chapterTitle: "",
+          author: updatedMeta.author || "",
+          tags: updatedMeta.tags || [],
+          text: ""
+        });
       }
+      await this.saveSearchIndex(searchIndex);
     } catch {
       // Rebuildable on demand
     }
@@ -550,11 +583,96 @@ export class LibraryManager {
     return [];
   }
 
+  /**
+   * Re-extracts search text from stored document files if index/text was excluded from backup or sync.
+   */
+  async extractDocSearchText(
+    doc: DocMeta
+  ): Promise<{ chapterId: string; title: string; text: string }[]> {
+    try {
+      // 1. Article / clip with clean/index.html
+      const cleanPath = doc.files.clean
+        ? `library/docs/${doc.slug}/${doc.files.clean}`
+        : `library/docs/${doc.slug}/clean/index.html`;
+
+      if (await this.store.exists(cleanPath)) {
+        const html = await this.store.readText(cleanPath);
+        const text = html
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&nbsp;/g, " ")
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/\s+/g, " ")
+          .trim();
+        return [{ chapterId: "ch-1", title: doc.title, text }];
+      }
+
+      // 2. Text file
+      if (doc.sourceFormat === "txt" && doc.files.original) {
+        const origPath = `library/docs/${doc.slug}/${doc.files.original}`;
+        if (await this.store.exists(origPath)) {
+          const text = await this.store.readText(origPath);
+          return [{ chapterId: "ch-1", title: doc.title, text: text.trim() }];
+        }
+      }
+
+      // 3. EPUB book
+      if (doc.sourceFormat === "epub" || doc.files.reading?.endsWith(".epub")) {
+        const epubPath = doc.files.reading
+          ? `library/docs/${doc.slug}/${doc.files.reading}`
+          : `library/docs/${doc.slug}/${doc.files.original}`;
+
+        if (epubPath && (await this.store.exists(epubPath))) {
+          const bytes = await this.store.read(epubPath);
+          const { importEpub } = await import("../import/epub.js");
+          const res = await importEpub(bytes, doc.files.original || "book.epub");
+          if (res.searchText && res.searchText.length > 0) {
+            return res.searchText;
+          }
+        }
+      }
+
+      // 4. PDF document
+      if (doc.sourceFormat === "pdf" && doc.files.original) {
+        const pdfPath = `library/docs/${doc.slug}/${doc.files.original}`;
+        if (await this.store.exists(pdfPath)) {
+          const bytes = await this.store.read(pdfPath);
+          const { importPdf } = await import("../import/pdf.js");
+          const res = await importPdf(bytes, doc.files.original);
+          if (res.searchText && res.searchText.length > 0) {
+            return res.searchText;
+          }
+        }
+      }
+    } catch {
+      // Re-extraction failed (corrupted or stub data) - fallback to metadata entry
+    }
+    return [];
+  }
+
   async rebuildSearchIndex(): Promise<SearchIndex> {
     const index = new SearchIndex();
     const docs = await this.listDocuments();
     for (const doc of docs) {
-      const searchTexts = await this.getSearchText(doc.id);
+      let searchTexts = await this.getSearchText(doc.id);
+      if (!searchTexts || searchTexts.length === 0) {
+        // Re-extract from source files if index/text was omitted from backup/sync
+        searchTexts = await this.extractDocSearchText(doc);
+        if (searchTexts && searchTexts.length > 0) {
+          try {
+            await this.store.write(
+              `library/index/text/${doc.id}.json`,
+              JSON.stringify(searchTexts, null, 2)
+            );
+          } catch {
+            // ignore
+          }
+        }
+      }
+
       if (searchTexts && searchTexts.length > 0) {
         const entries: SearchDocEntry[] = searchTexts.map((st) => ({
           id: `${doc.id}:${st.chapterId}`,

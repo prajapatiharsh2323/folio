@@ -43,7 +43,7 @@ export function stemHindi(token: string): string {
   }
   // If token ends with -ों or -ें (e.g. पुस्तकों -> पुस्तक, पुस्तकें -> पुस्तक)
   if (token.endsWith("ों") || token.endsWith("ें")) {
-    return token.replace(/[ोंें]$/, "");
+    return token.replace(/(?:ों|ें)$/, "");
   }
   return token;
 }

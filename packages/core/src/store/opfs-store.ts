@@ -84,7 +84,26 @@ export class OpfsStore implements FileStore {
     return new TextDecoder().decode(bytes);
   }
 
+  private writeQueues = new Map<string, Promise<void>>();
+
   async write(path: string, data: Uint8Array | string): Promise<void> {
+    const prevQueue = this.writeQueues.get(path) || Promise.resolve();
+    let currentOperation: Promise<void>;
+    currentOperation = (async () => {
+      await prevQueue.catch(() => {});
+      await this.doWrite(path, data);
+    })();
+    this.writeQueues.set(path, currentOperation);
+    try {
+      await currentOperation;
+    } finally {
+      if (this.writeQueues.get(path) === currentOperation) {
+        this.writeQueues.delete(path);
+      }
+    }
+  }
+
+  private async doWrite(path: string, data: Uint8Array | string): Promise<void> {
     const segments = normalizePath(path);
     if (segments.length === 0) {
       throw new Error("Cannot write to empty path");
@@ -96,28 +115,16 @@ export class OpfsStore implements FileStore {
       throw new Error(`Failed to create directory structure for: ${path}`);
     }
 
-    // Atomic write pattern: write to a temporary file first, then write or move
-    const tempFilename = `.tmp-${filename}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    const tempFileHandle = await parent.getFileHandle(tempFilename, { create: true });
-    const writable = await tempFileHandle.createWritable();
-
-    const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
-    // Ensure standard ArrayBuffer / Uint8Array view for FileSystemWriteChunkType
-    const payload = new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength);
-    await writable.write(payload);
-    await writable.close();
-
-    // Check if move method exists on FileSystemFileHandle
-    const anyTempHandle = tempFileHandle as unknown as { move?: (name: string) => Promise<void> };
-    if (typeof anyTempHandle.move === "function") {
-      await anyTempHandle.move(filename);
-    } else {
-      // Fallback for browsers without .move(): create target and copy
-      const targetHandle = await parent.getFileHandle(filename, { create: true });
-      const targetWritable = await targetHandle.createWritable();
-      await targetWritable.write(payload);
-      await targetWritable.close();
-      await parent.removeEntry(tempFilename);
+    // In File System Access API & OPFS, createWritable() writes to a browser-managed swap file (.crswap)
+    // and commits atomically when close() is called.
+    const targetHandle = await parent.getFileHandle(filename, { create: true });
+    const writable = await targetHandle.createWritable();
+    try {
+      const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+      const payload = new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength);
+      await writable.write(payload);
+    } finally {
+      await writable.close();
     }
   }
 
@@ -155,7 +162,9 @@ export class OpfsStore implements FileStore {
 
     if (typeof asyncEntries.entries === "function") {
       for await (const [name] of asyncEntries.entries()) {
-        results.push(name);
+        if (!name.startsWith(".tmp-")) {
+          results.push(name);
+        }
       }
     }
     return results;

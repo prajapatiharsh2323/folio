@@ -17,6 +17,9 @@ importers:
       eslint-config-prettier:
         specifier: ^10.0.1
         version: 10.1.8(eslint@9.39.5(jiti@2.7.0))
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       globals:
         specifier: ^15.15.0
         version: 15.15.0
@@ -45,9 +48,6 @@ importers:
       '@types/chrome':
         specifier: ^0.3.5
         version: 0.3.5
-      '@types/mozilla__readability':
-        specifier: ^0.4.2
-        version: 0.4.2
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -139,6 +139,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@mozilla/readability':
+        specifier: ^0.6.0
+        version: 0.6.0
       dompurify:
         specifier: ^3.4.16
         version: 3.4.16
@@ -1548,9 +1551,6 @@ packages:
 
   '@types/minimatch@3.0.5':
     resolution: {integrity: sha512-Klz949h02Gz2uZCMGwDUSDS1YBlTdDDgbWHi+81l29tQALUtvz4rAYi5uoVhE5Lagoq6DeqAUlbrHvW/mXDgdQ==}
-
-  '@types/mozilla__readability@0.4.2':
-    resolution: {integrity: sha512-mXHoZZ/Knps7GABAG9D512yDLCMQNOvQBqzIZpFJnRJveHc528rltnXh6EZTi1RiB1I2Z8yV35Dzs6DhE2WaYw==}
 
   '@types/node@26.6.5':
     resolution: {integrity: sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==}
@@ -5846,8 +5846,6 @@ snapshots:
       localforage: 1.10.0
 
   '@types/minimatch@3.0.5': {}
-
-  '@types/mozilla__readability@0.4.2': {}
 
   '@types/node@26.6.5':
     dependencies:

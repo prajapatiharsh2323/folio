@@ -1,6 +1,9 @@
 import type { ImportResult } from "./epub.js";
 import { sha256Hex } from "../util/hash.js";
 import { processClip, type ClipPayload } from "../clip/build-epub.js";
+import { isDevanagariDominant } from "./txt.js";
+
+import { Readability } from "@mozilla/readability";
 
 /**
  * Imports an HTML or SingleFile document conforming to Section 6.
@@ -15,11 +18,49 @@ export async function importHtml(
 
   // Extract title
   const titleMatch = rawHtml.match(/<title[^>]*>([^<]+)<\/title>/i);
-  const title = titleMatch && titleMatch[1] ? titleMatch[1].trim() : filename.replace(/\.html?$/i, "");
+  let title = titleMatch && titleMatch[1] ? titleMatch[1].trim() : "";
 
   // Extract author if available
   const authorMatch = rawHtml.match(/<meta[^>]*name=["']author["'][^>]*content=["']([^"']+)["']/i);
-  const author = authorMatch && authorMatch[1] ? authorMatch[1].trim() : undefined;
+  let author = authorMatch && authorMatch[1] ? authorMatch[1].trim() : undefined;
+
+  // Extract language: check <html lang="..."> or check if Devanagari is dominant
+  const langMatch = rawHtml.match(/<html[^>]*lang=["']([^"']+)["']/i);
+  let lang = langMatch && langMatch[1] ? langMatch[1].trim() : undefined;
+  if (!lang && isDevanagariDominant(rawHtml)) {
+    lang = "hi";
+  }
+
+  // Extract clean article content via Readability to strip nav, ads, footers
+  let contentHtml = rawHtml;
+  try {
+    let doc: Document | null = null;
+    if (windowObj && "DOMParser" in (windowObj as any)) {
+      doc = new (windowObj as any).DOMParser().parseFromString(rawHtml, "text/html");
+    } else if (typeof window !== "undefined" && typeof DOMParser !== "undefined") {
+      doc = new DOMParser().parseFromString(rawHtml, "text/html");
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { JSDOM } = require("jsdom");
+      doc = new JSDOM(rawHtml).window.document;
+    }
+
+    if (doc) {
+      const reader = new Readability(doc);
+      const parsed = reader.parse();
+      if (parsed && parsed.content) {
+        contentHtml = parsed.content;
+        if (!title && parsed.title) title = parsed.title;
+        if (!author && parsed.byline) author = parsed.byline;
+      }
+    }
+  } catch {
+    // Fallback to rawHtml if DOM/Readability extraction fails
+  }
+
+  if (!title) {
+    title = filename.replace(/\.html?$/i, "");
+  }
 
   // SingleFile pages embed images as data URIs; extract them as files
   const images: { originalUrl: string; mime: string; base64: string }[] = [];
@@ -42,7 +83,8 @@ export async function importHtml(
     url: filename,
     title,
     byline: author,
-    contentHtml: rawHtml,
+    lang,
+    contentHtml,
     images
   };
 
@@ -67,7 +109,7 @@ export async function importHtml(
           id: "ch-1",
           title: processed.title,
           order: 1,
-          href: "clean/index.html"
+          href: "chapter_1.xhtml"
         }
       ]
     },

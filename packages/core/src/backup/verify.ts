@@ -143,34 +143,35 @@ export async function verifyBackupZip(zipBytes: Uint8Array): Promise<Verificatio
       for (const f of doc.files) {
         const fileData = unzipped[f.path];
         if (!fileData) {
-        issues.push({
-          path: f.path,
-          reason: "missing_in_archive",
-          expectedSha256: f.sha256,
-          message: `File listed in manifest is missing from backup: ${f.path}`
-        });
-        continue;
-      }
+          issues.push({
+            path: f.path,
+            reason: "missing_in_archive",
+            expectedSha256: f.sha256,
+            message: `File listed in manifest is missing from backup: ${f.path}`
+          });
+          continue;
+        }
 
-      const actualSha = await sha256Hex(fileData);
-      if (actualSha !== f.sha256) {
-        issues.push({
-          path: f.path,
-          reason: "checksum_mismatch",
-          expectedSha256: f.sha256,
-          actualSha256: actualSha,
-          message: `Checksum mismatch for ${f.path}`
-        });
+        const actualSha = await sha256Hex(fileData);
+        if (actualSha !== f.sha256) {
+          issues.push({
+            path: f.path,
+            reason: "checksum_mismatch",
+            expectedSha256: f.sha256,
+            actualSha256: actualSha,
+            message: `Checksum mismatch for ${f.path}`
+          });
+        }
       }
     }
   }
-}
 
   return {
     valid: issues.length === 0,
     backupMeta,
     issues,
     totalFiles,
-    totalSize
+    totalSize,
+    unzipped
   };
 }

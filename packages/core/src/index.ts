@@ -21,3 +21,4 @@ export * from "./store/fs-access-store.js";
 export * from "./sync/types.js";
 export * from "./sync/drive.js";
 export * from "./sync/sync-manager.js";
+export * from "./import/epub-sanitize.js";

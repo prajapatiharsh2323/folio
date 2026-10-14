@@ -110,4 +110,70 @@ describe("Phase 2 Article Clipper Sanitizer & Input Acceptance Tests", () => {
     expect(processed.images.length).toBe(1);
     expect(processed.readingEpub.byteLength).toBeGreaterThan(100);
   });
+
+  it("detects and imports Hindi HTML documents without multi-byte slicing errors", async () => {
+    // Generate Hindi HTML where Hindi text crosses 4096 byte boundary
+    const hindiRepeated = "जलवायु संकट का समाधान किसके हाथ में है? ".repeat(200);
+    const hindiHtml = `<!DOCTYPE html><html lang="hi"><head><title>जलवायु संकट</title></head><body><h1>जलवायु संकट का समाधान किसके हाथ में है?</h1><p>${hindiRepeated}</p></body></html>`;
+    const hindiBytes = new TextEncoder().encode(hindiHtml);
+
+    expect(detectFileFormat(hindiBytes)).toBe("html");
+
+    const result = await importHtml(hindiBytes, "जलवायु संकट का समाधान किसके हाथ में है_.html", testWindow);
+    expect(result.meta.language).toBe("hi");
+    expect(result.meta.title).toBe("जलवायु संकट");
+    expect(result.reading).toBeDefined();
+    expect(result.reading?.bytes.byteLength).toBeGreaterThan(100);
+  });
+
+  it("produces identical contentHash for the same clip processed twice (Finding 7)", async () => {
+    const clipPayload = {
+      version: 1 as const,
+      url: "https://example.com/identical-article",
+      title: "Consistent Article",
+      byline: "Test Author",
+      siteName: "Example News",
+      contentHtml: "<p>The quick brown fox jumps over the lazy dog.</p>",
+      images: []
+    };
+
+    const first = await processClip(clipPayload, testWindow);
+    // Delay slightly to ensure wall-clock differences would occur if timestamp was embedded
+    await new Promise((r) => setTimeout(r, 20));
+    const second = await processClip(clipPayload, testWindow);
+
+    expect(first.cleanIndexHtml).toBe(second.cleanIndexHtml);
+    expect(first.contentHash).toBe(second.contentHash);
+  });
+
+  it("sanitizer never fails open when window is missing (Finding 5)", () => {
+    const malicious = '<script>evil()</script><p onmouseover="alert(1)">Safe text</p><a href="javascript:steal()">Link</a>';
+    const cleaned = sanitizeArticleHtml(malicious, undefined);
+    expect(cleaned).not.toContain("<script>");
+    expect(cleaned).not.toContain("onmouseover");
+    expect(cleaned).not.toContain("javascript:");
+    expect(cleaned).toContain("Safe text");
+  });
+
+  it("sanitizer safely HTML-escapes all payloads when DOMPurify is unsupported (Finding 6)", () => {
+    const payloads = [
+      "<img src=x/onerror=alert(1)>",
+      "<a href=javascript:alert(1)>Click</a>",
+      "<svg/onload=alert(1)>",
+      "<body onload=alert(1)>"
+    ];
+
+    // Pass a dummy window object that does not support DOMPurify
+    const unsupportedWindow = {} as unknown as Window;
+
+    for (const p of payloads) {
+      const sanitized = sanitizeArticleHtml(p, unsupportedWindow);
+      expect(sanitized).not.toContain("<img");
+      expect(sanitized).not.toContain("<a");
+      expect(sanitized).not.toContain("<svg");
+      expect(sanitized).not.toContain("<body");
+      expect(sanitized).toContain("&lt;");
+      expect(sanitized).toContain("&gt;");
+    }
+  });
 });

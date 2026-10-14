@@ -6,6 +6,8 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "pnpm -r run typecheck",
+    "fixtures": "node scripts/generate-fixtures.js",
+    "pretest": "node scripts/generate-fixtures.js",
     "test": "vitest run",
     "build": "pnpm -r run build",
     "format": "prettier --write ."
@@ -14,6 +16,7 @@
     "@eslint/js": "^9.20.0",
     "eslint": "^9.20.1",
     "eslint-config-prettier": "^10.0.1",
+    "fflate": "^0.8.3",
     "globals": "^15.15.0",
     "prettier": "^3.5.1",
     "typescript": "^5.7.3",

@@ -55,20 +55,27 @@ export function detectFileFormat(bytes: Uint8Array): DetectedFormat {
   // Check Text / HTML
   try {
     const decoder = new TextDecoder("utf-8", { fatal: true });
-    // Decode head up to first 4KB to check HTML declarations
-    const sample = decoder.decode(bytes.subarray(0, Math.min(bytes.length, 4096))).toLowerCase().trim();
+    // Decode entire buffer so multi-byte UTF-8 sequences (e.g. Hindi Devanagari) are never sliced
+    const fullText = decoder.decode(bytes);
 
+    // Strip optional BOM and leading whitespace
+    const cleanHead = fullText.replace(/^\uFEFF/, "").trimStart();
+    const sample = cleanHead.slice(0, 65536).toLowerCase();
+
+    // Check HTML markers per Section 6 (<html, <!doctype, <body, etc.)
     if (
       sample.includes("<html") ||
-      sample.includes("<!doctype html") ||
+      sample.includes("<!doctype") ||
       sample.includes("<body") ||
-      sample.includes("<head")
+      sample.includes("<head") ||
+      sample.includes("<title") ||
+      sample.includes("<article") ||
+      sample.includes("<?xml") ||
+      /<(!doctype|html|head|body|title|article|main|p|h[1-6]|div)[\s>]/i.test(cleanHead.slice(0, 8192))
     ) {
       return "html";
     }
 
-    // Try full decode to ensure valid UTF-8
-    decoder.decode(bytes);
     return "txt";
   } catch {
     return "unknown";

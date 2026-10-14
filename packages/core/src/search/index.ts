@@ -35,6 +35,15 @@ export interface GroupedSearchResult {
   }[];
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 /**
  * Builds an extract snippet of ~80 characters either side of the first hit and wraps matches in <mark>.
  */
@@ -42,10 +51,14 @@ export function buildSnippet(fullText: string, terms: string[]): string {
   if (!fullText) return "";
   const normText = fullText.toLowerCase();
 
+  const validTerms = Array.from(
+    new Set(terms.map((t) => t.trim()).filter((t) => t.length > 0))
+  );
+
   let firstIndex = -1;
   let matchedTerm = "";
 
-  for (const term of terms) {
+  for (const term of validTerms) {
     const idx = normText.indexOf(term.toLowerCase());
     if (idx !== -1 && (firstIndex === -1 || idx < firstIndex)) {
       firstIndex = idx;
@@ -54,21 +67,60 @@ export function buildSnippet(fullText: string, terms: string[]): string {
   }
 
   if (firstIndex === -1) {
-    return fullText.substring(0, 160) + (fullText.length > 160 ? "…" : "");
+    return escapeHtml(fullText.substring(0, 160)) + (fullText.length > 160 ? "…" : "");
   }
 
   const start = Math.max(0, firstIndex - 80);
   const end = Math.min(fullText.length, firstIndex + matchedTerm.length + 80);
-  let snippet = fullText.substring(start, end);
+  const rawSnippet = fullText.substring(start, end);
+
+  // Match all terms on the raw snippet before escaping, sorting longer terms first
+  const sortedTerms = [...validTerms].sort((a, b) => b.length - a.length);
+  const intervals: { start: number; end: number }[] = [];
+
+  if (sortedTerms.length > 0) {
+    const combinedRegex = new RegExp(
+      sortedTerms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+      "gi"
+    );
+    let match: RegExpExecArray | null;
+    while ((match = combinedRegex.exec(rawSnippet)) !== null) {
+      intervals.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+
+  // Merge overlapping or adjacent intervals
+  intervals.sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const int of intervals) {
+    if (merged.length === 0) {
+      merged.push({ ...int });
+    } else {
+      const last = merged[merged.length - 1]!;
+      if (int.start <= last.end) {
+        last.end = Math.max(last.end, int.end);
+      } else {
+        merged.push({ ...int });
+      }
+    }
+  }
+
+  // Assemble snippet escaping text and highlighting merged matches
+  let snippet = "";
+  let currIdx = 0;
+  for (const int of merged) {
+    if (int.start > currIdx) {
+      snippet += escapeHtml(rawSnippet.substring(currIdx, int.start));
+    }
+    snippet += `<mark>${escapeHtml(rawSnippet.substring(int.start, int.end))}</mark>`;
+    currIdx = int.end;
+  }
+  if (currIdx < rawSnippet.length) {
+    snippet += escapeHtml(rawSnippet.substring(currIdx));
+  }
 
   if (start > 0) snippet = "…" + snippet;
   if (end < fullText.length) snippet = snippet + "…";
-
-  // Wrap matched terms in <mark>
-  for (const term of terms) {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    snippet = snippet.replace(new RegExp(`(${escaped})`, "gi"), "<mark>$1</mark>");
-  }
 
   return snippet;
 }
@@ -79,6 +131,7 @@ export function buildSnippet(fullText: string, terms: string[]): string {
 export class SearchIndex {
   private miniSearch: MiniSearch<SearchDocEntry>;
   private docChaptersMap: Map<string, string[]> = new Map();
+  private rawTextsMap: Map<string, string> = new Map();
 
   constructor() {
     this.miniSearch = new MiniSearch<SearchDocEntry>({
@@ -103,33 +156,49 @@ export class SearchIndex {
   }
 
   add(entry: SearchDocEntry): void {
-    // If id already indexed, discard first
-    if (this.miniSearch.has(entry.id)) {
-      this.miniSearch.discard(entry.id);
-    }
     const chapters = this.docChaptersMap.get(entry.docId) || [];
     if (!chapters.includes(entry.chapterId)) {
       chapters.push(entry.chapterId);
       this.docChaptersMap.set(entry.docId, chapters);
     }
-    this.miniSearch.add(entry);
+    if (entry.text) {
+      this.rawTextsMap.set(entry.id, entry.text);
+    }
+    if (this.miniSearch.has(entry.id)) {
+      try {
+        this.miniSearch.discard(entry.id);
+      } catch {
+        // safe ignore
+      }
+    }
+    try {
+      this.miniSearch.add(entry);
+    } catch {
+      try {
+        this.miniSearch.discard(entry.id);
+        this.miniSearch.add(entry);
+      } catch {
+        // safe fallback
+      }
+    }
   }
 
   addAll(entries: SearchDocEntry[]): void {
+    // Deduplicate entries by ID within the incoming batch
+    const uniqueMap = new Map<string, SearchDocEntry>();
     for (const entry of entries) {
-      const chapters = this.docChaptersMap.get(entry.docId) || [];
-      if (!chapters.includes(entry.chapterId)) {
-        chapters.push(entry.chapterId);
-        this.docChaptersMap.set(entry.docId, chapters);
-      }
+      uniqueMap.set(entry.id, entry);
     }
-    this.miniSearch.addAll(entries);
+    for (const entry of uniqueMap.values()) {
+      this.add(entry);
+    }
   }
 
   removeByDocId(docId: string): void {
     const chapters = this.docChaptersMap.get(docId) || [];
     for (const ch of chapters) {
       const id = `${docId}:${ch}`;
+      this.rawTextsMap.delete(id);
       if (this.miniSearch.has(id)) {
         this.miniSearch.discard(id);
       }
@@ -153,7 +222,7 @@ export class SearchIndex {
       const chapterTitle = hit.chapterTitle as string;
       const author = hit.author as string;
 
-      const rawText = rawTexts ? rawTexts.get(`${docId}:${chapterId}`) || "" : "";
+      const rawText = rawTexts?.get(`${docId}:${chapterId}`) || this.rawTextsMap.get(`${docId}:${chapterId}`) || "";
       const snippet = buildSnippet(rawText, queryTokens);
 
       let group = docMap.get(docId);

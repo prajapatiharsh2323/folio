@@ -88,11 +88,18 @@ export interface Manifest {
 }
 
 export interface ReadingPrefs {
-  theme: "light" | "warm" | "dark";
-  fontFamily: "serif" | "sans";
-  fontSize: number;
-  lineHeight: number;
-  margin: number;
+  theme: "light" | "warm" | "dark" | "system";
+  fontFamily: "serif" | "sans" | "mono";
+  fontSize: number;          // 14 - 32 px
+  lineHeight: number;        // 1.3 - 2.4
+  margin: number;            // 12 - 64 px horizontal gutter
   justify: boolean;
+  hyphenate?: boolean;
+  paragraphSpacing?: number; // 0 - 1.5 em
+  letterSpacing?: number;    // -0.02 - 0.08 em
+  maxWidth?: number;         // 560 - 960 px
+  brightness?: number;       // 40 - 100 %
   flow: "paginated" | "scrolled";
+  spread?: "none" | "auto";  // Two-page spread on wide screens
+  pdfZoom?: "fit-width" | "fit-page" | number;
 }

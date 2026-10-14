@@ -14,7 +14,7 @@ import { sha256Hex } from "../util/hash.js";
  */
 export async function importPdf(bytes: Uint8Array, originalName = "document.pdf"): Promise<ImportResult> {
   const loadingTask = pdfjsLib.getDocument({
-    data: bytes,
+    data: bytes.slice(),
     useSystemFonts: true
   });
 

@@ -20,6 +20,7 @@ export interface VerificationResult {
   issues: VerificationIssue[];
   totalFiles: number;
   totalSize: number;
+  unzipped?: Record<string, Uint8Array>;
 }
 
 export interface RestoreSummary {

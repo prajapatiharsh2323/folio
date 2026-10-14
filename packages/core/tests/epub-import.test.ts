@@ -93,4 +93,23 @@ describe("EPUB Importer & Library Manager", () => {
 
     await expect(importEpub(repackaged, "locked.epub")).rejects.toThrow(DrmProtectedError);
   });
+
+  it("decodes numeric entities above U+FFFF properly using fromCodePoint", async () => {
+    const englishBytes = fs.readFileSync(path.join(fixturesDir, "english-novel.epub"));
+    const fflate = await import("fflate");
+    const unzipped = fflate.unzipSync(englishBytes);
+
+    // Replace text in chapter_1.xhtml with an astral plane character like &#128512; (😀) and &#x1F4DA; (📚)
+    const ch1 = fflate.strFromU8(unzipped["OEBPS/chapter_1.xhtml"]!);
+    const modifiedCh1 = ch1.replace(
+      "The quiet afternoon",
+      "The quiet &#128512; afternoon &#x1F4DA;"
+    );
+    unzipped["OEBPS/chapter_1.xhtml"] = fflate.strToU8(modifiedCh1);
+    const repackaged = fflate.zipSync(unzipped);
+
+    const result = await importEpub(repackaged, "emoji-novel.epub");
+    expect(result.searchText[0]?.text).toContain("😀");
+    expect(result.searchText[0]?.text).toContain("📚");
+  });
 });

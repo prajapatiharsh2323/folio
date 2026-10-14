@@ -75,7 +75,7 @@ export async function importTxt(bytes: Uint8Array, filename = "document.txt"): P
           id: "ch-1",
           title,
           order: 1,
-          href: "clean/index.html"
+          href: "chapter_1.xhtml"
         }
       ]
     },

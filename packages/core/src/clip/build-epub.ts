@@ -59,13 +59,32 @@ function escapeXhtml(str: string): string {
 }
 
 /**
- * Ensures XHTML void tags are self-closing.
+ * Ensures XHTML void tags are self-closing and XML-safe entities.
  */
 function toXhtml(html: string): string {
-  return html
+  // Escape bare & that is not already part of a valid XML entity reference
+  const safeAmpHtml = html.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[a-f\d]+);)/gi, "&amp;");
+  return safeAmpHtml
+    .replace(/&nbsp;/g, "&#160;")
+    .replace(/&copy;/g, "&#169;")
+    .replace(/&reg;/g, "&#174;")
+    .replace(/&trade;/g, "&#8482;")
+    .replace(/&mdash;/g, "&#8212;")
+    .replace(/&ndash;/g, "&#8211;")
+    .replace(/&hellip;/g, "&#8230;")
+    .replace(/&ldquo;/g, "&#8220;")
+    .replace(/&rdquo;/g, "&#8221;")
+    .replace(/&lsquo;/g, "&#8216;")
+    .replace(/&rsquo;/g, "&#8217;")
+    .replace(/&laquo;/g, "&#171;")
+    .replace(/&raquo;/g, "&#187;")
+    .replace(/&bull;/g, "&#8226;")
+    .replace(/&middot;/g, "&#183;")
     .replace(/<img([^>]*)(?<!\/)>/gi, "<img$1 />")
     .replace(/<br([^>]*)(?<!\/)>/gi, "<br$1 />")
-    .replace(/<hr([^>]*)(?<!\/)>/gi, "<hr$1 />");
+    .replace(/<hr([^>]*)(?<!\/)>/gi, "<hr$1 />")
+    .replace(/<input([^>]*)(?<!\/)>/gi, "<input$1 />")
+    .replace(/<wbr([^>]*)(?<!\/)>/gi, "<wbr$1 />");
 }
 
 /**
@@ -92,18 +111,25 @@ export async function processClip(payload: ClipPayload, windowObj?: Window): Pro
     const filename = `${prefix}.${ext}`;
     processedImages.push({ name: filename, bytes, mime: img.mime });
 
-    // Rewrite img tags matching the originalUrl to images/<filename>
-    const escapedUrl = img.originalUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`src=["']${escapedUrl}["']`, "gi");
-    sanitized = sanitized.replace(regex, `src="images/${filename}"`);
+    // Rewrite img tags matching the originalUrl (handling raw URL, encoded &, and special regex chars)
+    const urlsToMatch = [img.originalUrl];
+    if (img.originalUrl.includes("&")) {
+      urlsToMatch.push(img.originalUrl.replace(/&/g, "&amp;"));
+    }
+    for (const u of urlsToMatch) {
+      const escapedUrl = u.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`src=["']${escapedUrl}["']`, "gi");
+      sanitized = sanitized.replace(regex, `src="images/${filename}"`);
+    }
   }
 
-  // 3. Wrap body in minimal template (charset, lang, title, byline, source link, capture date)
+  // 3. Wrap body in minimal template (charset, lang, title, byline, source link)
+  // Ensure template is deterministic without volatile runtime timestamps so duplicate content hashes match
   const lang = payload.lang || "en";
   const title = payload.title || "Untitled Article";
   const author = payload.byline || undefined;
   const siteName = payload.siteName || undefined;
-  const captureDate = new Date().toISOString();
+  const articleDate = payload.publishedAt || "";
 
   const cleanIndexHtml = `<!DOCTYPE html>
 <html lang="${escapeXhtml(lang)}">
@@ -111,7 +137,7 @@ export async function processClip(payload: ClipPayload, windowObj?: Window): Pro
   <meta charset="utf-8" />
   <title>${escapeXhtml(title)}</title>
   <meta name="author" content="${escapeXhtml(author || "")}" />
-  <meta name="date" content="${captureDate}" />
+  ${articleDate ? `<meta name="date" content="${escapeXhtml(articleDate)}" />` : ""}
   <style>
     body { font-family: serif; line-height: 1.6; max-width: 680px; margin: 2rem auto; padding: 0 1rem; color: #1C1B19; background: #FAFAF7; }
     h1 { font-size: 1.8rem; margin-bottom: 0.25rem; color: #2F6F5E; }
@@ -126,7 +152,7 @@ export async function processClip(payload: ClipPayload, windowObj?: Window): Pro
     ${author ? `<span>By ${escapeXhtml(author)}</span> · ` : ""}
     ${siteName ? `<span>${escapeXhtml(siteName)}</span> · ` : ""}
     <a href="${escapeXhtml(payload.url)}" rel="noopener noreferrer" target="_blank">Original Article</a>
-    <span> · Captured on ${captureDate.substring(0, 10)}</span>
+    ${articleDate ? `<span> · ${escapeXhtml(articleDate.substring(0, 10))}</span>` : ""}
   </div>
   <article>
     ${sanitized}
@@ -212,15 +238,21 @@ img { max-width: 100%; height: auto; }
     zipObj[`OEBPS/images/${img.name}`] = [img.bytes, { level: 0 }];
   }
 
+  // Derive stable deterministic identifier from contentHash
+  const stableUuid = `urn:uuid:${contentHash.substring(0, 8)}-${contentHash.substring(8, 12)}-${contentHash.substring(12, 16)}-${contentHash.substring(16, 20)}-${contentHash.substring(20, 32)}`;
+  const modifiedDate = articleDate && !isNaN(new Date(articleDate).getTime())
+    ? new Date(articleDate).toISOString().replace(/\.[0-9]+Z$/, "Z")
+    : "2024-01-01T00:00:00Z";
+
   // OEBPS/content.opf
   zipObj["OEBPS/content.opf"] = fflate.strToU8(`<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="pub-id">urn:uuid:${crypto.randomUUID()}</dc:identifier>
+    <dc:identifier id="pub-id">${stableUuid}</dc:identifier>
     <dc:title>${escapeXhtml(title)}</dc:title>
     <dc:language>${escapeXhtml(lang)}</dc:language>
     ${author ? `<dc:creator>${escapeXhtml(author)}</dc:creator>` : ""}
-    <meta property="dcterms:modified">${new Date().toISOString().replace(/\.[0-9]+Z$/, "Z")}</meta>
+    <meta property="dcterms:modified">${modifiedDate}</meta>
   </metadata>
   <manifest>
     ${manifestItems.join("\n    ")}
