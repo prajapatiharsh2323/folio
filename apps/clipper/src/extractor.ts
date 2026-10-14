@@ -39,25 +39,28 @@ export function extractArticleFromDom(doc: Document, fallbackFullPage = false): 
   const title = (parsed && parsed.title) ? parsed.title : (doc.title || "Untitled Article");
   const byline = (parsed && parsed.byline) ? parsed.byline : undefined;
 
-  // Collect image URLs from article content
-  const tempDiv = doc.createElement("div");
-  tempDiv.innerHTML = contentHtml;
-  const imgElements = Array.from(tempDiv.querySelectorAll("img"));
+  // Collect image URLs and rewrite relative URLs in article content using DOMParser
+  const parser = new DOMParser();
+  const parsedDoc = parser.parseFromString(contentHtml, "text/html");
+  const imgElements = Array.from(parsedDoc.querySelectorAll("img"));
   const imageUrls: string[] = [];
 
   for (const img of imgElements) {
-    const src = img.currentSrc || img.src || img.getAttribute("data-src");
+    const src = img.getAttribute("src") || img.getAttribute("data-src");
     if (src && !src.startsWith("data:") && imageUrls.length < 40) {
       try {
         const resolved = new URL(src, url).href;
         if (!imageUrls.includes(resolved)) {
           imageUrls.push(resolved);
         }
+        img.setAttribute("src", resolved);
       } catch {
         // Skip invalid URL
       }
     }
   }
+
+  const finalHtml = parsedDoc.body ? parsedDoc.body.innerHTML : contentHtml;
 
   return {
     url,
@@ -66,7 +69,7 @@ export function extractArticleFromDom(doc: Document, fallbackFullPage = false): 
     siteName,
     lang,
     publishedAt,
-    contentHtml,
+    contentHtml: finalHtml,
     images: imageUrls
   };
 }

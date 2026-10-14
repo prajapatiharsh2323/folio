@@ -14,8 +14,22 @@ export default defineConfig({
       "contextMenus",
       "downloads"
     ],
+    host_permissions: [
+      "http://localhost/*",
+      "http://127.0.0.1/*",
+      "<all_urls>"
+    ],
     action: {
       default_title: "Clip to Folio"
+    },
+    commands: {
+      "clip-article": {
+        suggested_key: {
+          default: "Alt+Shift+F",
+          mac: "Alt+Shift+F"
+        },
+        description: "Clip current article to Folio"
+      }
     }
   }
 });
