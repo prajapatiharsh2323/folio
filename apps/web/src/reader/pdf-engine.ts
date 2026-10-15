@@ -408,6 +408,14 @@ export class PdfEngine implements ReaderEngine {
     }
   }
 
+  highlightSearchMatch(_location: string): void {
+    // PDF page navigation already displays the matching page
+  }
+
+  clearSearchHighlight(): void {
+    // no-op for PDF engine
+  }
+
   destroy(): void {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeObserver?.disconnect();

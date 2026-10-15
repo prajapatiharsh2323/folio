@@ -27,5 +27,7 @@ export interface ReaderEngine {
   addHighlight(a: Annotation): void;
   removeHighlight(id: string): void;
   search(q: string): AsyncIterable<{ location: string; excerpt: string }>;
+  highlightSearchMatch?(location: string): void;
+  clearSearchHighlight?(): void;
   destroy(): void;
 }

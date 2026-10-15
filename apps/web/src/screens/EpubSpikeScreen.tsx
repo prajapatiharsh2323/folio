@@ -43,6 +43,21 @@ export const EpubSpikeScreen: React.FC = () => {
       });
       renditionRef.current = rendition;
 
+      // Defense-in-depth: Patch View.prototype.load to sanitize any HTML string before assigning to iframe.srcdoc
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const viewClass = (rendition as any).manager?.View;
+      if (viewClass && viewClass.prototype && !viewClass.prototype.__folioSanitized) {
+        viewClass.prototype.__folioSanitized = true;
+        const originalLoad = viewClass.prototype.load;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        viewClass.prototype.load = function (contents: string) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const section = (this as any).section;
+          const clean = sanitizeSerializedHtml(contents, section);
+          return originalLoad.call(this, clean);
+        };
+      }
+
       rendition.themes.fontSize(`${fontSize}px`);
       rendition.themes.font(fontFamily === "serif" ? "serif" : "sans-serif");
 
