@@ -13,32 +13,27 @@ export function sanitizeSectionDoc(doc: Document): void {
     // ignore querySelectorAll errors on older or non-standard DOMs
   }
 
+  // Also sweep with getElementsByTagNameNS and localName to catch namespaced XML elements (<xhtml:script>, <epub:script>, etc.)
   try {
-    const byTag = doc.getElementsByTagName("script");
-    while (byTag.length > 0) {
-      const el = byTag[0];
-      el?.parentNode?.removeChild(el);
-    }
+    const scriptsNS = Array.from(doc.getElementsByTagNameNS("*", "script"));
+    scriptsNS.forEach((el) => el.remove());
   } catch {
     // ignore
   }
-
   try {
-    const byTagNs = doc.getElementsByTagNameNS("*", "script");
-    while (byTagNs.length > 0) {
-      const el = byTagNs[0];
-      el?.parentNode?.removeChild(el);
-    }
+    const noscriptsNS = Array.from(doc.getElementsByTagNameNS("*", "noscript"));
+    noscriptsNS.forEach((el) => el.remove());
   } catch {
     // ignore
   }
-
   try {
-    const noScripts = doc.getElementsByTagName("noscript");
-    while (noScripts.length > 0) {
-      const el = noScripts[0];
-      el?.parentNode?.removeChild(el);
-    }
+    const all = doc.querySelectorAll("*");
+    all.forEach((el) => {
+      const tag = (el.localName || el.tagName || "").toLowerCase();
+      if (tag === "script" || tag === "noscript" || tag.endsWith(":script") || tag.endsWith(":noscript")) {
+        el.remove();
+      }
+    });
   } catch {
     // ignore
   }
@@ -51,7 +46,7 @@ export function sanitizeSectionDoc(doc: Document): void {
       for (const name of attrNames) {
         if (/^on/i.test(name)) {
           el.removeAttribute(name);
-        } else if (name === "src" || name === "href" || name === "xlink:href" || name === "action") {
+        } else if (name === "src" || name === "href" || name === "xlink:href" || name === "action" || name === "formaction") {
           const val = el.getAttribute(name) || "";
           if (/^\s*javascript:/i.test(val)) {
             el.removeAttribute(name);
@@ -66,21 +61,24 @@ export function sanitizeSectionDoc(doc: Document): void {
 
 /**
  * Sanitizes serialized HTML string before epub.js assigns it to iframe.srcdoc.
- * Removes residual script tags, inline event attributes, and disarms javascript: URIs.
+ * Removes residual script tags (including namespaced XML tags), meta refresh,
+ * inline event attributes, and disarms javascript: URIs.
  */
 export function sanitizeSerializedHtml(output: string, section?: { output?: string }): string {
   if (!output || typeof output !== "string") return output || "";
   let clean = output;
-  // Strip any <script ...>...</script> (including multiline, whitespace, uppercase, etc.)
-  clean = clean.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script\s*>/gi, "");
-  // Strip self-closing <script ... />
-  clean = clean.replace(/<script\b[^>]*\/>/gi, "");
-  // Strip <noscript ...>...</noscript>
-  clean = clean.replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript\s*>/gi, "");
+  // Strip any <script ...>...</script> including namespaced XML tags (<xhtml:script>, <epub:script>, etc.)
+  clean = clean.replace(/<([a-zA-Z0-9_-]+:)?script\b[\s\S]*?<\/([a-zA-Z0-9_-]+:)?script\s*>/gi, "");
+  // Strip self-closing <script ... /> and namespaced self-closing <xhtml:script ... />
+  clean = clean.replace(/<([a-zA-Z0-9_-]+:)?script\b[^>]*\/>/gi, "");
+  // Strip <noscript ...>...</noscript> including namespaced tags
+  clean = clean.replace(/<([a-zA-Z0-9_-]+:)?noscript\b[\s\S]*?<\/([a-zA-Z0-9_-]+:)?noscript\s*>/gi, "");
+  // Strip <meta http-equiv="refresh" ...>
+  clean = clean.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "");
   // Strip inline on* event handlers (e.g. onload="...", onclick='...', onerror=...)
-  clean = clean.replace(/\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-  // Neutralize javascript: URLs
-  clean = clean.replace(/\s+(href|src|xlink:href)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, ' $1="about:blank"');
+  clean = clean.replace(/\s+on[a-zA-Z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  // Neutralize javascript: URLs in href, src, xlink:href, action, formaction
+  clean = clean.replace(/\s+(href|src|xlink:href|action|formaction)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, ' $1="about:blank"');
 
   if (section) {
     section.output = clean;

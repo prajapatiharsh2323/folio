@@ -1,4 +1,8 @@
 document.getElementById("clip-btn")?.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "clip-current-tab" });
+  try {
+    chrome.runtime?.sendMessage?.({ type: "clip-current-tab" })?.catch(() => {});
+  } catch {
+    // Ignore runtime disconnection
+  }
   window.close();
 });

@@ -128,5 +128,32 @@ describe("EPUB Security & Sandboxed Iframe Sanitization Tests", () => {
       // Verify mutated on section.output
       expect(sectionObj.output).toBe(cleaned);
     });
+
+    it("strips namespaced scripts, self-closing tags, and meta refresh headers", () => {
+      const xmlPayload = `
+        <html xmlns="http://www.w3.org/1999/xhtml" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+          <head>
+            <meta http-equiv="refresh" content="0;url=http://malicious.com" />
+            <xhtml:script type="text/javascript">stealCookies();</xhtml:script>
+            <epub:script src="epub-exploit.js"/>
+            <link rel="stylesheet" href="main.css" />
+          </head>
+          <body onpageshow="track()" data-testid="body">
+            <button formaction="javascript:pwn()">Submit</button>
+            <p>Protected Content</p>
+          </body>
+        </html>
+      `;
+
+      const cleaned = sanitizeSerializedHtml(xmlPayload);
+      expect(cleaned).not.toContain("xhtml:script");
+      expect(cleaned).not.toContain("epub:script");
+      expect(cleaned).not.toContain("stealCookies");
+      expect(cleaned).not.toContain("refresh");
+      expect(cleaned).not.toContain("onpageshow");
+      expect(cleaned).not.toContain("javascript:pwn()");
+      expect(cleaned).toContain("<p>Protected Content</p>");
+      expect(cleaned).toContain('href="main.css"');
+    });
   });
 });

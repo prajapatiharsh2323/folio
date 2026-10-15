@@ -29,13 +29,15 @@ export default defineBackground(() => {
   }
 
   // Listen for messages from popup
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "clip-current-tab") {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]?.id) {
-          clipTab(tabs[0].id);
+          clipTab(tabs[0].id).catch(() => {});
         }
       });
+      sendResponse?.({ status: "ok" });
+      return false;
     }
   });
 });
@@ -58,7 +60,7 @@ async function clipTab(tabId: number, fallbackFullPage = false) {
       const response = await chrome.tabs.sendMessage(tabId, {
         type: "EXTRACT_ARTICLE",
         fallbackFullPage
-      });
+      }).catch(() => null);
       if (response && response.article) {
         article = response.article;
       }
@@ -72,7 +74,7 @@ async function clipTab(tabId: number, fallbackFullPage = false) {
         const retryResp = await chrome.tabs.sendMessage(tabId, {
           type: "EXTRACT_ARTICLE",
           fallbackFullPage
-        });
+        }).catch(() => null);
         if (retryResp && retryResp.article) {
           article = retryResp.article;
         }
