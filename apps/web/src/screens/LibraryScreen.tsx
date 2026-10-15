@@ -5,14 +5,14 @@ import {
   BookOpen,
   Clock,
   BookMarked,
-  User,
-  MoreVertical,
-  Tag,
-  FolderOpen
+  FolderOpen,
+  CheckCircle2,
+  Trash2
 } from "lucide-react";
 import { useLibraryStore, libraryManager } from "../state/library-store.js";
 import type { DocMeta, Collection, Progress } from "@folio/core";
 import { DocumentSheet } from "../components/DocumentSheet.js";
+import { BookCard } from "../components/BookCard.js";
 
 export const LibraryScreen: React.FC = () => {
   const navigate = useNavigate();
@@ -34,6 +34,87 @@ export const LibraryScreen: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [allProgress, setAllProgress] = useState<Record<string, Progress>>({});
   const [activeSheetDoc, setActiveSheetDoc] = useState<DocMeta | null>(null);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+
+  const [customHues, setCustomHues] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("folio_custom_card_hues") || "{}");
+    } catch {
+      return {};
+    }
+  });
+
+  const handleHueChange = (docId: string, hue: number) => {
+    setCustomHues((prev) => {
+      const updated = { ...prev, [docId]: hue };
+      try {
+        localStorage.setItem("folio_custom_card_hues", JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  const handleSelectToggle = (docId: string) => {
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) {
+        next.delete(docId);
+      } else {
+        next.add(docId);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleFinished = async (docId: string, markFinished: boolean) => {
+    try {
+      const p = {
+        docId,
+        location: markFinished ? "finished" : "",
+        percent: markFinished ? 100 : 0,
+        updatedAt: new Date().toISOString()
+      };
+      await libraryManager.saveProgress(p);
+      setAllProgress((prev) => ({ ...prev, [docId]: p }));
+    } catch (err) {
+      console.error("Failed to update progress:", err);
+    }
+  };
+
+  const handleDeleteDoc = async (docId: string) => {
+    try {
+      await libraryManager.deleteDocument(docId);
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(docId);
+        return next;
+      });
+      await loadLibrary();
+    } catch (err) {
+      console.error("Failed to delete document:", err);
+    }
+  };
+
+  const handleBatchMarkFinished = async () => {
+    for (const docId of Array.from(selectedDocIds)) {
+      await handleToggleFinished(docId, true);
+    }
+    setSelectedDocIds(new Set());
+  };
+
+  const handleBatchDelete = async () => {
+    if (
+      window.confirm(
+        `Are you sure you want to delete ${selectedDocIds.size} selected books from your library?`
+      )
+    ) {
+      for (const docId of Array.from(selectedDocIds)) {
+        await libraryManager.deleteDocument(docId);
+      }
+      setSelectedDocIds(new Set());
+      await loadLibrary();
+    }
+  };
 
   useEffect(() => {
     loadLibrary();
@@ -221,23 +302,23 @@ export const LibraryScreen: React.FC = () => {
 
       {/* Main library grid or skeleton cards */}
       {loading ? (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
+        <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 animate-pulse">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
             <div
               key={i}
-              className="p-4 rounded-card border border-border/60 bg-surface/60 flex flex-col justify-between h-36"
+              className="aspect-[3/4.2] rounded-[18px] border border-border/60 bg-surface/40 p-4 flex flex-col justify-between"
             >
-              <div className="flex gap-3">
-                <div className="w-10 h-14 rounded bg-border/60 flex-shrink-0" />
-                <div className="flex-1 space-y-2 py-1">
-                  <div className="h-4 bg-border/60 rounded w-3/4" />
-                  <div className="h-3 bg-border/40 rounded w-1/2" />
-                </div>
+              <div className="flex justify-between items-center">
+                <div className="w-6 h-6 rounded-[7px] bg-border/50" />
+                <div className="w-10 h-4 rounded-full bg-border/40" />
+                <div className="w-6 h-6 rounded-lg bg-border/50" />
               </div>
-              <div className="flex items-center justify-between pt-3 border-t border-border/30">
-                <div className="h-2.5 bg-border/40 rounded w-1/4" />
-                <div className="h-2.5 bg-border/40 rounded w-12" />
+              <div className="space-y-2.5 my-auto">
+                <div className="h-4 bg-border/60 rounded w-5/6" />
+                <div className="h-4 bg-border/50 rounded w-4/6" />
+                <div className="h-4 bg-border/40 rounded w-3/6" />
               </div>
+              <div className="h-3 bg-border/40 rounded w-1/3 ml-auto" />
             </div>
           ))}
         </section>
@@ -265,80 +346,53 @@ export const LibraryScreen: React.FC = () => {
           )}
         </section>
       ) : (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedDocs.map((doc) => {
-            const progress = allProgress[doc.id];
-            return (
-              <div
-                key={doc.id}
-                className="p-4 rounded-card border border-border bg-surface hover:border-accent/40 transition-all flex flex-col justify-between group relative"
-              >
-                <div
-                  onClick={() => handleOpenDoc(doc)}
-                  className="cursor-pointer flex gap-3 mb-3"
-                >
-                  <div className="w-10 h-14 rounded bg-accent/10 text-accent flex items-center justify-center flex-shrink-0 group-hover:bg-accent group-hover:text-white transition-colors">
-                    <BookOpen className="w-5 h-5" />
-                  </div>
-                  <div className="overflow-hidden flex-1 pr-6">
-                    <h4 className="font-semibold text-text text-sm leading-snug truncate">
-                      {doc.title}
-                    </h4>
-                    <div className="flex items-center gap-1.5 text-xs text-muted mt-1">
-                      <User className="w-3 h-3 flex-shrink-0" />
-                      <span className="truncate">{doc.author || "Unknown"}</span>
-                    </div>
-                    {doc.tags && doc.tags.length > 0 && (
-                      <div className="flex items-center gap-1 mt-1.5 overflow-hidden">
-                        <Tag className="w-2.5 h-2.5 text-muted flex-shrink-0" />
-                        <span className="text-[11px] text-accent truncate">
-                          {doc.tags.map((t) => `#${t}`).join(" ")}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* More / Settings icon button */}
-                <button
-                  type="button"
-                  aria-label="Document options"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveSheetDoc(doc);
-                  }}
-                  className="absolute top-3 right-3 p-1.5 rounded-lg text-muted hover:text-text hover:bg-bg transition-colors"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </button>
-
-                {/* Progress bar if read */}
-                {progress && (
-                  <div className="w-full bg-border h-1 rounded-full mb-3 overflow-hidden">
-                    <div
-                      className="bg-accent h-full transition-all"
-                      style={{ width: `${progress.percent}%` }}
-                    />
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between pt-3 border-t border-border/50 text-[11px] text-muted">
-                  <span>
-                    {progress ? `${progress.percent}% read` : `${doc.chapters.length} chapters`}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="uppercase text-[10px] font-mono px-1.5 py-0.5 rounded bg-bg text-muted">
-                      {doc.sourceFormat}
-                    </span>
-                    <span className="uppercase text-[10px] font-mono px-1.5 py-0.5 rounded bg-bg text-muted">
-                      {doc.language || "en"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5">
+          {sortedDocs.map((doc) => (
+            <BookCard
+              key={doc.id}
+              doc={doc}
+              progress={allProgress[doc.id]}
+              isSelected={selectedDocIds.has(doc.id)}
+              onSelectToggle={handleSelectToggle}
+              onOpen={handleOpenDoc}
+              onOpenDetails={(d) => setActiveSheetDoc(d)}
+              onDelete={handleDeleteDoc}
+              onToggleFinished={handleToggleFinished}
+              customHue={customHues[doc.id]}
+              onHueChange={handleHueChange}
+            />
+          ))}
         </section>
+      )}
+
+      {/* Floating Batch Selection Bar */}
+      {selectedDocIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-surface/95 backdrop-blur-md border border-border shadow-2xl text-xs font-medium text-text animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <span className="font-semibold text-accent px-2 py-1 rounded-lg bg-accent/10">
+            {selectedDocIds.size} {selectedDocIds.size === 1 ? "book" : "books"} selected
+          </span>
+          <div className="w-px h-5 bg-border mx-1" />
+          <button
+            onClick={handleBatchMarkFinished}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-bg transition-colors"
+          >
+            <CheckCircle2 className="w-4 h-4 text-accent" />
+            <span>Mark Finished</span>
+          </button>
+          <button
+            onClick={handleBatchDelete}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-red-500/10 text-red-600 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Delete</span>
+          </button>
+          <button
+            onClick={() => setSelectedDocIds(new Set())}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-bg text-muted hover:text-text transition-colors"
+          >
+            <span>Deselect</span>
+          </button>
+        </div>
       )}
 
       {/* Document Details Sheet */}

@@ -1,3 +1,7 @@
+@import "@fontsource/literata/index.css";
+@import "@fontsource/noto-sans-devanagari/index.css";
+@import "@fontsource/noto-serif-devanagari/index.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,9 +9,12 @@
 :root {
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
   --reader-safe-top: calc(72px + var(--sat, 0px));
   --reader-safe-bottom: calc(64px + var(--sab, 0px));
 }
+
 
 @media (min-width: 768px) {
   :root {
@@ -29,6 +36,18 @@
   --hl-green: #B7E4B0;
   --hl-blue: #A9D1F5;
   --hl-pink: #F5B7CC;
+
+  /* Harmonic Book Card Tokens */
+  --card-bg-l: 0.915;
+  --card-bg-c: 0.045;
+  --card-bg-l2: 0.885;
+  --card-ink-l: 0.27;
+  --card-sub-l: 0.43;
+  --card-ink-c: 0.03;
+  --card-chip: oklch(0.27 0.03 var(--h) / 0.10);
+  --card-chip-hover: oklch(0.27 0.03 var(--h) / 0.18);
+  --card-spine-bg: oklch(0.27 0.02 var(--h) / 0.12);
+  --card-shadow: 0 10px 24px -6px oklch(0.2 0.03 var(--h) / 0.14);
 }
 
 :root[data-theme="warm"],
@@ -43,6 +62,18 @@
   --hl-green: #B7E4B0;
   --hl-blue: #A9D1F5;
   --hl-pink: #F5B7CC;
+
+  /* Harmonic Book Card Tokens */
+  --card-bg-l: 0.895;
+  --card-bg-c: 0.05;
+  --card-bg-l2: 0.865;
+  --card-ink-l: 0.28;
+  --card-sub-l: 0.44;
+  --card-ink-c: 0.035;
+  --card-chip: oklch(0.28 0.035 var(--h) / 0.10);
+  --card-chip-hover: oklch(0.28 0.035 var(--h) / 0.18);
+  --card-spine-bg: oklch(0.28 0.02 var(--h) / 0.12);
+  --card-shadow: 0 10px 24px -6px oklch(0.2 0.04 var(--h) / 0.14);
 }
 
 :root[data-theme="dark"],
@@ -57,6 +88,68 @@
   --hl-green: #B7E4B0;
   --hl-blue: #A9D1F5;
   --hl-pink: #F5B7CC;
+
+  /* Harmonic Book Card Tokens */
+  --card-bg-l: 0.325;
+  --card-bg-c: 0.045;
+  --card-bg-l2: 0.295;
+  --card-ink-l: 0.94;
+  --card-sub-l: 0.78;
+  --card-ink-c: 0.02;
+  --card-chip: oklch(0.95 0.02 var(--h) / 0.12);
+  --card-chip-hover: oklch(0.95 0.02 var(--h) / 0.22);
+  --card-spine-bg: oklch(0.95 0.02 var(--h) / 0.14);
+  --card-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.45);
+}
+
+/* Harmonic Book Card Template */
+.folio-book-card {
+  --bg: oklch(var(--card-bg-l) var(--card-bg-c) var(--h));
+  --bg2: oklch(var(--card-bg-l2) var(--card-bg-c) var(--h));
+  --ink: oklch(var(--card-ink-l) var(--card-ink-c) var(--h));
+  --sub: oklch(var(--card-sub-l) var(--card-ink-c) var(--h));
+  position: relative;
+  aspect-ratio: 3 / 4.2;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 16px;
+  border-radius: 18px;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse at 25% 15%, oklch(var(--card-bg-l) var(--card-bg-c) var(--h) / 0.65), transparent 75%),
+    linear-gradient(175deg, var(--bg) 0%, var(--bg2) 100%);
+  box-shadow:
+    inset 0 0 0 1px oklch(var(--card-ink-l) 0.02 var(--h) / 0.12),
+    inset 3.5px 0 6px -2px oklch(var(--card-ink-l) 0.04 var(--h) / 0.14),
+    0 4px 12px -2px rgba(0, 0, 0, 0.06);
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s ease, background 0.25s ease;
+  overflow: hidden;
+  user-select: none;
+}
+
+.folio-book-card:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    inset 0 0 0 1px oklch(var(--card-ink-l) 0.03 var(--h) / 0.22),
+    inset 3.5px 0 6px -2px oklch(var(--card-ink-l) 0.05 var(--h) / 0.18),
+    var(--card-shadow);
+}
+
+.folio-book-card[data-selected="true"] {
+  box-shadow:
+    inset 0 0 0 2.5px var(--ink),
+    inset 3.5px 0 6px -2px oklch(var(--card-ink-l) 0.05 var(--h) / 0.2),
+    var(--card-shadow);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folio-book-card {
+    transition: none !important;
+  }
+  .folio-book-card:hover {
+    transform: none !important;
+  }
 }
 
 /* Base styles and mobile UX polish */

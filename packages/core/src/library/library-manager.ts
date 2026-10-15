@@ -401,21 +401,29 @@ export class LibraryManager {
     return uncommitted;
   }
 
+  private progressQueue: Promise<void> = Promise.resolve();
+  private annotationQueue: Promise<void> = Promise.resolve();
+
   /**
-   * Saves reader progress in user/progress.json.
+   * Saves reader progress in user/progress.json safely using a serialized write queue.
    */
   async saveProgress(progress: Progress): Promise<void> {
-    const progressPath = "library/user/progress.json";
-    let allProgress: Record<string, Progress> = {};
-    if (await this.store.exists(progressPath)) {
-      try {
-        allProgress = JSON.parse(await this.store.readText(progressPath));
-      } catch {
-        allProgress = {};
+    this.progressQueue = this.progressQueue.then(async () => {
+      const progressPath = "library/user/progress.json";
+      let allProgress: Record<string, Progress> = {};
+      if (await this.store.exists(progressPath)) {
+        try {
+          allProgress = JSON.parse(await this.store.readText(progressPath));
+        } catch {
+          allProgress = {};
+        }
       }
-    }
-    allProgress[progress.docId] = progress;
-    await this.store.write(progressPath, JSON.stringify(allProgress, null, 2));
+      allProgress[progress.docId] = progress;
+      await this.store.write(progressPath, JSON.stringify(allProgress, null, 2));
+    }).catch((err) => {
+      console.warn("LibraryManager saveProgress error:", err);
+    });
+    return this.progressQueue;
   }
 
   /**
@@ -465,29 +473,44 @@ export class LibraryManager {
   }
 
   async addAnnotation(annotation: Annotation): Promise<void> {
-    const annotPath = "library/user/annotations.json";
-    const items = await this.getAnnotations();
-    items.push(annotation);
-    await this.store.write(annotPath, JSON.stringify(items, null, 2));
+    this.annotationQueue = this.annotationQueue.then(async () => {
+      const annotPath = "library/user/annotations.json";
+      const items = await this.getAnnotations();
+      items.push(annotation);
+      await this.store.write(annotPath, JSON.stringify(items, null, 2));
+    }).catch((err) => {
+      console.warn("LibraryManager addAnnotation error:", err);
+    });
+    return this.annotationQueue;
   }
 
   async updateAnnotation(annotation: Annotation): Promise<void> {
-    const annotPath = "library/user/annotations.json";
-    const items = await this.getAnnotations();
-    const idx = items.findIndex((a) => a.id === annotation.id);
-    if (idx !== -1) {
-      items[idx] = annotation;
-    } else {
-      items.push(annotation);
-    }
-    await this.store.write(annotPath, JSON.stringify(items, null, 2));
+    this.annotationQueue = this.annotationQueue.then(async () => {
+      const annotPath = "library/user/annotations.json";
+      const items = await this.getAnnotations();
+      const idx = items.findIndex((a) => a.id === annotation.id);
+      if (idx !== -1) {
+        items[idx] = annotation;
+      } else {
+        items.push(annotation);
+      }
+      await this.store.write(annotPath, JSON.stringify(items, null, 2));
+    }).catch((err) => {
+      console.warn("LibraryManager updateAnnotation error:", err);
+    });
+    return this.annotationQueue;
   }
 
   async deleteAnnotation(id: string): Promise<void> {
-    const annotPath = "library/user/annotations.json";
-    const items = await this.getAnnotations();
-    const filtered = items.filter((a) => a.id !== id);
-    await this.store.write(annotPath, JSON.stringify(filtered, null, 2));
+    this.annotationQueue = this.annotationQueue.then(async () => {
+      const annotPath = "library/user/annotations.json";
+      const items = await this.getAnnotations();
+      const filtered = items.filter((a) => a.id !== id);
+      await this.store.write(annotPath, JSON.stringify(filtered, null, 2));
+    }).catch((err) => {
+      console.warn("LibraryManager deleteAnnotation error:", err);
+    });
+    return this.annotationQueue;
   }
 
   // --- Collections (Section 4 & Section 5) ---

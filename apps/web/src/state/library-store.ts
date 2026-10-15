@@ -164,7 +164,20 @@ export const useReaderStore = create<ReaderState>()(
       }
     }),
     {
-      name: "folio-reader-prefs"
+      name: "folio-reader-prefs",
+      version: 2,
+      migrate: (persistedState: unknown, _version: number) => {
+        return persistedState as any;
+      },
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(typeof persistedState === "object" && persistedState !== null ? persistedState : {}),
+        prefs: {
+          ...DEFAULT_READING_PREFS,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ...((persistedState as any)?.prefs || {})
+        }
+      })
     }
   )
 );

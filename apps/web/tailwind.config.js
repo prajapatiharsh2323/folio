@@ -1,3 +1,5 @@
+import tailwindcssAnimate from "tailwindcss-animate";
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
@@ -20,8 +22,15 @@ export default {
       borderRadius: {
         card: "12px",
         sheet: "20px"
+      },
+      boxShadow: {
+        xs: "0 1px 2px 0 rgba(0, 0, 0, 0.05)"
+      },
+      backdropBlur: {
+        xs: "2px"
       }
     }
   },
-  plugins: []
+  plugins: [tailwindcssAnimate]
 };
+

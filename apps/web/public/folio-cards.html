@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Folio Book Cards — Harmonic Palette Preview</title>
+<style>
+/* Every card hue shares the same lightness and chroma per theme, so any hue sits
+   beside any other without one shouting. Only the hue angle (--h) changes. */
+:root{
+  --page:#FAFAF7; --surface:#fff; --text:#1C1B19; --muted:#6B6860; --border:#E6E3DC; --accent:#2F6F5E;
+  --bg-l:.915; --bg-c:.045; --bg-l2:.885;      /* card top / bottom lightness */
+  --ink-l:.27; --sub-l:.43; --ink-c:.03;
+  --chip:oklch(.27 .03 var(--h) / .10); --chip-hover:oklch(.27 .03 var(--h) / .18);
+  --card-shadow: 0 10px 24px -6px oklch(0.2 0.03 var(--h) / 0.14);
+  color-scheme:light;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+:root[data-theme="warm"]{
+  --page:#F4ECD8; --surface:#FBF5E6; --text:#3B3226; --muted:#7A6C58; --border:#E0D4B8; --accent:#8A5A2B;
+  --bg-l:.895; --bg-c:.05; --bg-l2:.865; --ink-l:.28; --sub-l:.44; --ink-c:.035;
+  --chip:oklch(.28 .035 var(--h) / .10); --chip-hover:oklch(.28 .035 var(--h) / .18);
+  --card-shadow: 0 10px 24px -6px oklch(0.2 0.04 var(--h) / 0.14);
+}
+:root[data-theme="dark"]{
+  --page:#121214; --surface:#1C1C20; --text:#E6E3DC; --muted:#9A968C; --border:#2C2C32; --accent:#7FC8B2;
+  --bg-l:.325; --bg-c:.045; --bg-l2:.295; --ink-l:.94; --sub-l:.78; --ink-c:.02;
+  --chip:oklch(.95 .02 var(--h) / .12); --chip-hover:oklch(.95 .02 var(--h) / .22);
+  --card-shadow: 0 12px 28px -6px rgba(0,0,0,.45);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--page);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;transition:background .25s}
+main{max-width:1050px;margin:0 auto;padding:24px 20px 64px}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-0.02em}
+.seg{display:inline-flex;padding:3px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.seg button{border:0;background:none;color:var(--muted);font:inherit;font-size:13px;padding:8px 16px;min-height:40px;border-radius:9px;cursor:pointer;font-weight:500;transition:all .15s}
+.seg button[aria-pressed="true"]{background:var(--page);color:var(--text);box-shadow:inset 0 0 0 1px var(--border);font-weight:600}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:20px}
+
+.card{
+  --bg:oklch(var(--bg-l) var(--bg-c) var(--h));
+  --bg2:oklch(var(--bg-l2) var(--bg-c) var(--h));
+  --ink:oklch(var(--ink-l) var(--ink-c) var(--h));
+  --sub:oklch(var(--sub-l) var(--ink-c) var(--h));
+  position:relative;aspect-ratio:3/4.2;display:flex;flex-direction:column;
+  padding:14px 16px 18px;border-radius:18px;color:var(--ink);
+  background:
+    radial-gradient(ellipse at 25% 15%, oklch(var(--bg-l) var(--bg-c) var(--h) / 0.65), transparent 75%),
+    linear-gradient(175deg,var(--bg) 0%,var(--bg2) 100%);
+  box-shadow:
+    inset 0 0 0 1px oklch(var(--ink-l) .02 var(--h) / .12),
+    inset 3.5px 0 6px -2px oklch(var(--ink-l) .04 var(--h) / .14),
+    0 4px 12px -2px rgba(0,0,0,.06);
+  transition:transform .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s ease,background .25s;
+  overflow:hidden;
+  user-select:none;
+}
+.card:hover{
+  transform:translateY(-4px);
+  box-shadow:
+    inset 0 0 0 1px oklch(var(--ink-l) .03 var(--h) / .22),
+    inset 3.5px 0 6px -2px oklch(var(--ink-l) .05 var(--h) / .18),
+    var(--card-shadow);
+}
+.card[data-selected="true"]{
+  box-shadow:
+    inset 0 0 0 2.5px var(--ink),
+    inset 3.5px 0 6px -2px oklch(var(--ink-l) .05 var(--h) / .2),
+    var(--card-shadow);
+  transform:translateY(-2px);
+}
+.top{display:flex;justify-content:space-between;align-items:center;margin:-6px -8px 0}
+.icon{width:40px;height:40px;border:0;background:none;color:inherit;display:grid;place-items:center;border-radius:12px;cursor:pointer;position:relative;z-index:2}
+.icon:hover .glyph{background:var(--chip-hover)}
+.icon svg{width:18px;height:18px}
+.glyph{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:var(--chip);transition:background .15s}
+.sel .glyph{border-radius:7px;box-shadow:inset 0 0 0 1.75px currentColor;background:none;opacity:.55;transition:opacity .15s,background .15s}
+.sel[aria-pressed="true"] .glyph{background:var(--ink);color:var(--bg);opacity:1;box-shadow:none}
+.sel svg{opacity:0;transform:scale(.5);transition:opacity .12s,transform .18s cubic-bezier(.3,1.6,.5,1)}
+.sel[aria-pressed="true"] svg{opacity:1;transform:none}
+.card:hover .sel .glyph{opacity:.95}
+
+.fmt{font-size:10px;font-family:monospace;font-weight:700;text-transform:uppercase;padding:2px 8px;border-radius:99px;background:var(--chip);color:var(--ink);opacity:.85}
+
+.title{
+  margin:10px 0 0;font:600 clamp(18px,2.2vw,22px)/1.22 "Literata",Georgia,"Noto Serif Devanagari",serif;
+  letter-spacing:-.015em;text-wrap:balance;overflow-wrap:anywhere;hyphens:auto;
+  display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;
+}
+.title a{color:inherit;text-decoration:none}
+.title a:hover{text-decoration:underline;text-underline-offset:3px}
+.title a::after{content:"";position:absolute;inset:0;z-index:1;border-radius:inherit}
+.author{margin:auto 0 0;text-align:right;font-size:13px;color:var(--sub);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-top:14px}
+.spine{position:absolute;left:0;right:0;bottom:0;height:5px;background:oklch(var(--ink-l) .02 var(--h) / .12)}
+.spine i{display:block;height:100%;background:var(--ink);border-radius:0 3px 3px 0;transition:width .4s ease-out}
+.card[data-done="true"] .spine i{opacity:.6}
+
+.menu{position:absolute;right:10px;top:48px;z-index:50;min-width:196px;padding:6px;border-radius:16px;background:var(--surface);color:var(--text);
+  border:1px solid var(--border);box-shadow:0 16px 36px rgba(0,0,0,.24);transform-origin:top right;animation:pop .14s ease-out}
+.menu[hidden]{display:none}
+.menu button{display:flex;width:100%;align-items:center;gap:10px;border:0;background:none;color:inherit;font:inherit;font-size:13px;padding:9px 12px;border-radius:9px;cursor:pointer;text-align:left}
+.menu button:hover,.menu button:focus-visible{background:var(--page)}
+.swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:6px 12px 10px;border-bottom:1px solid var(--border);margin-bottom:4px}
+.swatch{width:26px;height:26px;border-radius:50%;border:1px solid rgba(0,0,0,.15);cursor:pointer;transition:transform .12s}
+.swatch:hover{transform:scale(1.15)}
+@keyframes pop{from{opacity:0;transform:scale(.94)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}.card:hover{transform:none}}
+.note{margin-top:36px;font-size:13.5px;color:var(--muted);max-width:65ch;line-height:1.6}
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <div>
+      <h1>Library</h1>
+      <p style="margin:2px 0 0;font-size:13px;color:var(--muted)">8 harmonious book jackets in OKLCH</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button data-t="light" aria-pressed="true">Light</button>
+      <button data-t="warm" aria-pressed="false">Warm</button>
+      <button data-t="dark" aria-pressed="false">Dark</button>
+    </div>
+  </div>
+  <section class="grid" id="grid" aria-label="Books"></section>
+  <p class="note"><strong>Why the palette stays in harmony:</strong> All eight colors share identical lightness and chroma per theme. Only the hue angle shifts. Text and glyphs are computed from the card’s own hue, creating instant contrast and cohesive warmth across Light, Warm, and Dark modes.</p>
+</main>
+
+<script>
+const HUES=[
+  {h:135, name:"Moss"},
+  {h:195, name:"Teal"},
+  {h:250, name:"Ink blue"},
+  {h:285, name:"Iris"},
+  {h:330, name:"Plum"},
+  {h:10,  name:"Rose"},
+  {h:50,  name:"Clay"},
+  {h:90,  name:"Ochre"}
+];
+const books=[
+ {t:"The Solitary Reader",a:"M. Ellison",p:42,fmt:"EPUB"},
+ {t:"निर्मल धारा",a:"प्रेमचंद",p:8,fmt:"EPUB"},
+ {t:"A Short History of Nearly Everything",a:"Bill Bryson",p:100,fmt:"EPUB"},
+ {t:"Walden",a:"H. D. Thoreau",p:0,fmt:"EPUB"},
+ {t:"Notes on the Synthesis of Form",a:"C. Alexander",p:67,fmt:"PDF"},
+ {t:"Why We Sleep",a:"M. Walker",p:23,fmt:"EPUB"},
+ {t:"The Remains of the Day",a:"K. Ishiguro",p:91,fmt:"EPUB"},
+ {t:"Clipped: How slow reading changed my mind about the internet",a:"Web clip",p:15,fmt:"CLIP"}
+];
+const hash=s=>[...s].reduce((h,c)=>(h*31+c.codePointAt(0))>>>0,7);
+const CHECK='<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5l3.6 3.6 7.4-8"/></svg>';
+const DOTS='<svg viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="4.5" r="1.7"/><circle cx="10" cy="10" r="1.7"/><circle cx="10" cy="15.5" r="1.7"/></svg>';
+const grid=document.getElementById('grid');
+let openMenu=null;
+const closeMenu=()=>{if(!openMenu)return;openMenu.menu.hidden=true;openMenu.btn.setAttribute('aria-expanded','false');openMenu=null};
+
+books.forEach((b,i)=>{
+  const hi=hash(b.t)%HUES.length;
+  const el=document.createElement('article');
+  el.className='card';el.dataset.hi=hi;el.dataset.done=b.p===100;
+  el.style.setProperty('--h',HUES[hi].h);
+  el.innerHTML=`
+   <div class="top">
+     <button class="icon sel" aria-pressed="false" aria-label="Select ${b.t}"><span class="glyph">${CHECK}</span></button>
+     <span class="fmt">${b.fmt}</span>
+     <button class="icon more" aria-haspopup="menu" aria-expanded="false" aria-label="More actions for ${b.t}"><span class="glyph">${DOTS}</span></button>
+   </div>
+   <h3 class="title"><a href="#" aria-label="Open ${b.t}">${b.t}</a></h3>
+   <p class="author">— ${b.a}</p>
+   <div class="spine" role="progressbar" aria-valuenow="${b.p}" aria-valuemin="0" aria-valuemax="100" aria-label="Reading progress"><i style="width:${b.p}%"></i></div>
+   <div class="menu" role="menu" hidden>
+     <button role="menuitem" data-a="open">Open Book</button>
+     <div class="swatches" title="Pick Card Hue">
+       ${HUES.map(x=>`<button class="swatch" style="background:oklch(.68 .12 ${x.h})" data-hue="${x.h}" title="${x.name}"></button>`).join('')}
+     </div>
+     <button role="menuitem" data-a="done">${b.p===100?'Mark as unread':'Mark as finished'}</button>
+   </div>`;
+  const sel=el.querySelector('.sel'),more=el.querySelector('.more'),menu=el.querySelector('.menu');
+  sel.onclick=()=>{const on=sel.getAttribute('aria-pressed')!=='true';sel.setAttribute('aria-pressed',on);el.dataset.selected=on;if(on&&navigator.vibrate)navigator.vibrate(8)};
+  more.onclick=e=>{e.stopPropagation();const was=!menu.hidden;closeMenu();if(!was){menu.hidden=false;more.setAttribute('aria-expanded','true');openMenu={menu,btn:more};menu.querySelector('button').focus()}};
+  menu.onclick=e=>{
+    const swatch=e.target.closest('.swatch');
+    if(swatch){
+      const h=swatch.dataset.hue;
+      el.style.setProperty('--h',h);
+      closeMenu();more.focus();
+      return;
+    }
+    const a=e.target.closest('button')?.dataset.a;if(!a)return;
+    if(a==='done'){const bar=el.querySelector('.spine');const d=el.dataset.done!=='true';el.dataset.done=d;bar.firstChild.style.width=d?'100%':'0%';bar.setAttribute('aria-valuenow',d?100:0);e.target.closest('button').textContent=d?'Mark as unread':'Mark as finished'}
+    closeMenu();more.focus();
+  };
+  el.querySelector('a').onclick=e=>e.preventDefault();
+  grid.appendChild(el);
+});
+document.addEventListener('click',closeMenu);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&openMenu){const b=openMenu.btn;closeMenu();b.focus()}});
+
+const root=document.documentElement,btns=[...document.querySelectorAll('.seg button')];
+const setTheme=t=>{root.dataset.theme=t;btns.forEach(x=>x.setAttribute('aria-pressed',x.dataset.t===t))};
+btns.forEach(x=>x.onclick=()=>setTheme(x.dataset.t));
+if(matchMedia('(prefers-color-scheme:dark)').matches)setTheme('dark');
+</script>
+</body>
+</html>
