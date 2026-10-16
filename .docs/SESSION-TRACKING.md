@@ -32,8 +32,26 @@
   - Skill site fix: `.agents/skills/app-icon-gen/scripts/author_icon.mjs` path-depth
     guard used `split("/")` (0 components on Windows); changed to `/[\\/]+/` like the
     neighboring normalizeRelativePath (Windows-compat bug fix).
-  - Next: user acceptance of the refined mark, then optionally wire 192/512/maskable
-    PNGs into `apps/web/public/icons/`.
+  — app icon package v2 = ORIGINAL logo (commits 6f5cc80, f947466, 9fe9375, pushed).
+  - User clarified brand mark = apps/web/public/icons/logo.png (charcoal two-page
+    book #23242F + flat violet bookmark #715CFC), NOT the green-book mark; and
+    background removed → transparent deliverable.
+  - Built via app-icon-gen: color-segmented logo.png per component (charcoal pages,
+    violet bookmark), potrace vectorization, 1024 square canvas; layers
+    01-open-book.svg + 02-bookmark.svg; origin evidence folio-icon.origin.png.
+  - NOTE: logo.png is NOT transparent — it has a baked opaque white background.
+    Fair reference verification required un-matting (alpha recovery vs sampled
+    flat colors) + rounded-square mask: mean delta 0.31 (<10), gates OK, 0 warnings.
+  - Geometry audit: bookmark clean; book = 11 sub-2px trace-noise segments,
+    polish rejected twice (0.4/0.15 tolerance, drift limits) → kept original.
+  - Skill/env notes: potrace installed at design/folio-icon/tmp/work/trace (scratch);
+    eslint now ignores design/**; verify compares RAW RGBA (references must be
+    transparent, not white-matted); verify --width normalizes by width only —
+    build square references manually.
+  - Restored apps/web/public/icons/icon.svg (researched: to 25f47aa exact bytes).
+    Its deletion wasn't ours — ask user where it came from. Manifest references it
+    at vite.config.ts:49.
+  - Pending: user acceptance of package; optional wiring 192/512/maskable into apps/web.
 - **Session 1 (Oct 16, 2026)** — COMPLETE (commits 3a5398e, 26af458, b3ff9e6, 84367a4,
   b1a4bb9, 66c30a3 — all pushed to origin/main).
   - Superpowers plugin installed (opencode.json `plugins` key, git-backed worked).
