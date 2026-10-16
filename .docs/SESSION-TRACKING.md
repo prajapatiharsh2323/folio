@@ -24,6 +24,16 @@
     direct body child. RED on old markup → GREEN after portal.
   - eslint now ignores `.agents/**` (vendored skill scripts tripped no-unused-vars).
   - Result: lint clean, typecheck clean, suite 80/80.
+  — app icon package (design/folio-icon, uncommitted→commit this session).
+  - Route: semantic re-author of the project-local mark (origin preserved at
+    `folio-icon.origin.svg`). 3 layers: gradient plate, open book, spine+page rules.
+  - Verify: clean (no warnings/failures); preview inspected full-size + 64px on
+    white/dark/true-black — legible on all three themes.
+  - Skill site fix: `.agents/skills/app-icon-gen/scripts/author_icon.mjs` path-depth
+    guard used `split("/")` (0 components on Windows); changed to `/[\\/]+/` like the
+    neighboring normalizeRelativePath (Windows-compat bug fix).
+  - Next: user acceptance of the refined mark, then optionally wire 192/512/maskable
+    PNGs into `apps/web/public/icons/`.
 - **Session 1 (Oct 16, 2026)** — COMPLETE (commits 3a5398e, 26af458, b3ff9e6, 84367a4,
   b1a4bb9, 66c30a3 — all pushed to origin/main).
   - Superpowers plugin installed (opencode.json `plugins` key, git-backed worked).

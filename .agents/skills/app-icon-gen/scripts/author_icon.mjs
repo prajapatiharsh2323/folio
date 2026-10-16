@@ -132,7 +132,7 @@ async function assertSafeOutDir(outDir) {
   if (forbidden.includes(canonical)) {
     throw new Error(`refusing to replace unsafe output directory: ${canonical}`);
   }
-  if (canonical.split("/").filter(Boolean).length < 3) {
+  if (canonical.split(/[\\/]+/).filter(Boolean).length < 3) {
     throw new Error(`refusing to replace shallow output directory: ${canonical}`);
   }
   return stat;

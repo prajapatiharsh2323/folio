@@ -1,0 +1,74 @@
+{
+  "status": "ok",
+  "out": "D:\\folio\\design\\folio-icon",
+  "style_report": "tmp/reports/style-report.json",
+  "reports_dir": "tmp/reports",
+  "target_platforms": [
+    "Web (PWA)"
+  ],
+  "canvas": {
+    "width": 1024,
+    "height": 1024
+  },
+  "preview_svg": "folio-icon.preview.svg",
+  "preview_png": {
+    "width": 1024,
+    "height": 1024,
+    "visible_pixels": 1006147,
+    "visible_bounds": {
+      "min_x": 0,
+      "min_y": 0,
+      "max_x": 1023,
+      "max_y": 1023
+    }
+  },
+  "app_svg": "folio-icon.svg",
+  "app_png": {
+    "width": 1024,
+    "height": 1024,
+    "visible_pixels": 1048576,
+    "visible_bounds": {
+      "min_x": 0,
+      "min_y": 0,
+      "max_x": 1023,
+      "max_y": 1023
+    }
+  },
+  "generic_assets": {
+    "layers": [
+      "layers/01-gradient-plate.svg",
+      "layers/02-open-book.svg",
+      "layers/03-spine-and-page-rules.svg"
+    ]
+  },
+  "apple_adapter": null,
+  "generated_files_manifest_validation": {
+    "status": "valid",
+    "files": [
+      "folio-icon.preview.svg",
+      "folio-icon.preview.png",
+      "folio-icon.svg",
+      "folio-icon.png",
+      "layers/01-gradient-plate.svg",
+      "layers/02-open-book.svg",
+      "layers/03-spine-and-page-rules.svg",
+      "tmp/README.md",
+      "tmp/reports/style-report.json",
+      "tmp/reports/package-verification.json",
+      "tmp/reports/reference-diff.png",
+      "tmp/reports/reference-overlay.png",
+      "tmp/reports/reference-side-by-side.png",
+      "tmp/reports/visual-review.json"
+    ],
+    "problems": []
+  },
+  "visual_review": null,
+  "outcome": {
+    "pixel_status": "not_required",
+    "route_status": "generic_assets_ready",
+    "review_required": false
+  },
+  "reference_comparison": null,
+  "warnings": [],
+  "failures": []
+}

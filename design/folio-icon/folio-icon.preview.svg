@@ -1,0 +1,6 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs><clipPath id="folioicon-clip"><rect width="1024" height="1024" rx="224"/></clipPath></defs>
+<g clip-path="url(#folioicon-clip)"><rect width="1024" height="1024" fill="url(#plate-grad)"/><defs><linearGradient id="plate-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#357A67"/><stop offset="1" stop-color="#276051"/></linearGradient></defs>
+<path d="M512 320 C 588 272 668 252 736 252 L 736 736 C 656 736 578 748 512 784 C 446 748 368 736 288 736 L 288 252 C 356 252 436 272 512 320 Z" fill="#FAFAF7"/>
+<g stroke="#2F6F5E" stroke-linecap="round" fill="none"><path d="M512 330 L512 764" stroke-width="18"/><path d="M352 400 L464 400" stroke-width="14"/><path d="M352 480 L464 480" stroke-width="14"/><path d="M352 560 L440 560" stroke-width="14"/><path d="M560 400 L672 400" stroke-width="14"/><path d="M560 480 L672 480" stroke-width="14"/><path d="M560 560 L648 560" stroke-width="14"/></g></g>
+</svg>
