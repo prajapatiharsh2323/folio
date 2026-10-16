@@ -67,18 +67,22 @@ export function sanitizeSectionDoc(doc: Document): void {
 export function sanitizeSerializedHtml(output: string, section?: { output?: string }): string {
   if (!output || typeof output !== "string") return output || "";
   let clean = output;
-  // Strip any <script ...>...</script> including namespaced XML tags (<xhtml:script>, <epub:script>, etc.)
-  clean = clean.replace(/<([a-zA-Z0-9_-]+:)?script\b[\s\S]*?<\/([a-zA-Z0-9_-]+:)?script\s*>/gi, "");
-  // Strip self-closing <script ... /> and namespaced self-closing <xhtml:script ... />
+  // Self-closing scripts FIRST: otherwise the lazy block pattern below would start at "<script src=x/>"
+  // and swallow all real content up to the next "</script>".
   clean = clean.replace(/<([a-zA-Z0-9_-]+:)?script\b[^>]*\/>/gi, "");
-  // Strip <noscript ...>...</noscript> including namespaced tags
+  // <script ...>...</script> including namespaced XML tags (<xhtml:script>, <epub:script>, ...)
+  clean = clean.replace(/<([a-zA-Z0-9_-]+:)?script\b[\s\S]*?<\/([a-zA-Z0-9_-]+:)?script\s*>/gi, "");
+  clean = clean.replace(/<([a-zA-Z0-9_-]+:)?noscript\b[^>]*\/>/gi, "");
   clean = clean.replace(/<([a-zA-Z0-9_-]+:)?noscript\b[\s\S]*?<\/([a-zA-Z0-9_-]+:)?noscript\s*>/gi, "");
-  // Strip <meta http-equiv="refresh" ...>
+  // <meta http-equiv="refresh">
   clean = clean.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "");
-  // Strip inline on* event handlers (e.g. onload="...", onclick='...', onerror=...)
-  clean = clean.replace(/\s+on[a-zA-Z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-  // Neutralize javascript: URLs in href, src, xlink:href, action, formaction
-  clean = clean.replace(/\s+(href|src|xlink:href|action|formaction)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, ' $1="about:blank"');
+  // Inline on* handlers and javascript: URLs -- only INSIDE start tags, so visible prose such as
+  // " one = 5" or " online=true" is never edited.
+  clean = clean.replace(/<[a-zA-Z][^<>]*>/g, (tag) =>
+    tag
+      .replace(/\s+on[a-zA-Z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+      .replace(/\s+(href|src|xlink:href|action|formaction)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, ' $1="about:blank"')
+  );
 
   if (section) {
     section.output = clean;
