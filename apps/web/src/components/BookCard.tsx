@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   MoreVertical,
@@ -58,6 +59,7 @@ export const BookCard: React.FC<BookCardProps> = ({
   onHueChange
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 48, right: 8 });
   const menuRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -112,6 +114,14 @@ export const BookCard: React.FC<BookCardProps> = ({
 
   const handleMoreClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!menuOpen && menuBtnRef.current) {
+      // Anchor the portalled menu below the three-dot button (fixed coords)
+      const r = menuBtnRef.current.getBoundingClientRect();
+      setMenuPos({
+        top: r.bottom + 6,
+        right: Math.max(8, window.innerWidth - r.right)
+      });
+    }
     setMenuOpen((prev) => !prev);
   };
 
@@ -236,24 +246,30 @@ export const BookCard: React.FC<BookCardProps> = ({
         />
       </div>
 
-      {/* Action Popover Menu */}
-      {menuOpen && (
-        <div
-          ref={menuRef}
-          onClick={(e) => e.stopPropagation()}
-          className="absolute right-2.5 top-12 z-50 min-w-[190px] p-1.5 rounded-2xl bg-surface/98 backdrop-blur-md border border-border shadow-2xl text-text animate-in fade-in zoom-in-95 duration-120 origin-top-right text-xs"
-        >
-          {/* Open Reader */}
-          <button
-            onClick={() => {
-              setMenuOpen(false);
-              onOpen(doc);
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-bg transition-colors text-left font-medium text-text"
+      {/* Action Popover Menu — portaled to document.body so the card's
+          overflow:hidden can never clip it (three-dot menus on phone-sized
+          cards were previously cut off) */}
+      {menuOpen &&
+        createPortal(
+          <div
+            role="menu"
+            ref={menuRef}
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-[60] min-w-[190px] p-1.5 rounded-2xl bg-surface/98 backdrop-blur-md border border-border shadow-2xl text-text animate-in fade-in zoom-in-95 duration-120 origin-top-right text-xs"
+            style={{ top: menuPos.top, right: menuPos.right }}
           >
-            <BookOpen className="w-4 h-4 text-muted" />
-            <span>Open Book</span>
-          </button>
+            {/* Open Reader */}
+            <button
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+                onOpen(doc);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-bg transition-colors text-left font-medium text-text"
+            >
+              <BookOpen className="w-4 h-4 text-muted" />
+              <span>Open Book</span>
+            </button>
 
           {/* Color Palette Picker Row */}
           <div className="px-3 py-2 border-y border-border/60 my-1">
@@ -339,8 +355,9 @@ export const BookCard: React.FC<BookCardProps> = ({
               <span>Delete Book</span>
             </button>
           )}
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </article>
   );
 };

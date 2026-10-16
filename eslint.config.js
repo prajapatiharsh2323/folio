@@ -12,7 +12,8 @@ export default tseslint.config(
       "**/.output/**",
       "**/.wxt/**",
       "**/coverage/**",
-      "**/playwright-report/**"
+      "**/playwright-report/**",
+      "**/.agents/**"
     ]
   },
   js.configs.recommended,

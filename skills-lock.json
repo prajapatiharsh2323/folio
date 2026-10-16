@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "app-icon-gen": {
+      "source": "xzhih/app-icon-skill",
+      "sourceType": "github",
+      "skillPath": "skills/app-icon-gen/SKILL.md",
+      "computedHash": "6f16907e4a70eb0224a75dd7704aa52698f3879f6029223f385bdd301e853548"
+    }
+  }
+}
