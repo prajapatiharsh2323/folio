@@ -14,6 +14,16 @@
   - Gate added: `eslint-plugin-react-hooks` (`rules-of-hooks: "error"`) for the whole repo —
     this violation is now a lint-RED, would never reach a build again.
   - Note: user added commit "added the samples" (b1b0bd4) between sessions.
+  — three-dot card menu clipped (commit c2c6a2f, pushed).
+  - Bug: BookCard action popover was positioned inside `.folio-book-card` (`overflow: hidden`) →
+    cut off / invisible on phone-sized cards.
+  - Fix: popover now `createPortal(document.body)` with fixed coords anchored to the
+    three-dot button; `role="menu"` + `menuitem`; Escape/outside-press still close it.
+  - New test: `packages/core/tests/book-card-menu.test.tsx` (jsdom + @testing-library/react,
+    react/react-dom added as root devDeps) — asserts popover lives outside the card and is a
+    direct body child. RED on old markup → GREEN after portal.
+  - eslint now ignores `.agents/**` (vendored skill scripts tripped no-unused-vars).
+  - Result: lint clean, typecheck clean, suite 80/80.
 - **Session 1 (Oct 16, 2026)** — COMPLETE (commits 3a5398e, 26af458, b3ff9e6, 84367a4,
   b1a4bb9, 66c30a3 — all pushed to origin/main).
   - Superpowers plugin installed (opencode.json `plugins` key, git-backed worked).
