@@ -196,3 +196,57 @@ textarea {
   animation-duration: 200ms;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Modern, subtle scrollbars across Folio */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Strict scrollbar suppression for paginated reader mode */
+[data-flow="paginated"] .epub-container,
+[data-flow="paginated"] .epub-view,
+[data-flow="paginated"] iframe {
+  overflow: hidden !important;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+[data-flow="paginated"] .epub-container::-webkit-scrollbar,
+[data-flow="paginated"] .epub-view::-webkit-scrollbar,
+[data-flow="paginated"] iframe::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Prevent accidental horizontal overflow on reader containers in scrolled mode */
+.epub-container {
+  overflow-x: hidden !important;
+}
+.epub-view {
+  overflow-x: hidden !important;
+}
+

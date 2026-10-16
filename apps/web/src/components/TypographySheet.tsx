@@ -15,6 +15,7 @@ import {
   Sparkles,
   RectangleVertical
 } from "lucide-react";
+import "../reader/fonts.js";
 import { useReaderStore, DEFAULT_READING_PREFS } from "../state/library-store.js";
 import type { ReadingPrefs } from "@folio/core";
 

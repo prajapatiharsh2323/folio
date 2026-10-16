@@ -1,7 +1,9 @@
-import ePub, { Book, Rendition } from "epubjs";
+import ePub from "epubjs";
+import type { Book, Rendition } from "epubjs";
 import { sanitizeSectionDoc, sanitizeSerializedHtml, type Annotation, type DocMeta, type ReadingPrefs } from "@folio/core";
 import { fileStore } from "../state/library-store.js";
 import type { ReaderEngine } from "./reader-engine.js";
+import { collectFontFaceCss } from "./fonts.js";
 export type { ReaderEngine };
 export { sanitizeSectionDoc, sanitizeSerializedHtml };
 
@@ -24,6 +26,7 @@ export class EpubEngine implements ReaderEngine {
     rect: DOMRect;
   }) => void)[] = [];
   private highlightMap = new Map<string, string>(); // annotationId -> cfiRange
+  private highlightColors = new Map<string, string>(); // annotationId -> colour name
   private cachedBytes?: Uint8Array;
   private cachedDocId?: string;
   private containerEl: HTMLElement | null = null;
@@ -51,31 +54,11 @@ export class EpubEngine implements ReaderEngine {
       if (spineHooks.serialize && typeof spineHooks.serialize.register === "function") {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         spineHooks.serialize.register((output: string, section: any) => {
-          const target = section?.output || output;
-          const clean = sanitizeSerializedHtml(target, section);
-          if (section) {
-            section.output = clean;
-          }
-          return clean;
+          // epub.js resolves section.output (not the hook's return value) into iframe.srcdoc
+          const target = typeof section?.output === "string" && section.output ? section.output : output;
+          sanitizeSerializedHtml(target, section);
         });
       }
-    }
-  }
-
-  private patchViewManagerSanitizer(rendition: Rendition): void {
-    // Defense-in-depth: Patch View.prototype.load to sanitize any HTML string before assigning to iframe.srcdoc
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const viewClass = (rendition as any).manager?.View;
-    if (viewClass && viewClass.prototype && !viewClass.prototype.__folioSanitized) {
-      viewClass.prototype.__folioSanitized = true;
-      const originalLoad = viewClass.prototype.load;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      viewClass.prototype.load = function (contents: string) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const section = (this as any).section;
-        const clean = sanitizeSerializedHtml(contents, section);
-        return originalLoad.call(this, clean);
-      };
     }
   }
 
@@ -136,6 +119,7 @@ export class EpubEngine implements ReaderEngine {
       this.containerEl.innerHTML = "";
     }
     this.highlightMap.clear();
+    this.highlightColors.clear();
     this.chapterMap.clear();
     this.clearSearchHighlight();
   }
@@ -180,16 +164,6 @@ export class EpubEngine implements ReaderEngine {
 
     const isWide = typeof window !== "undefined" ? window.innerWidth >= 800 : el.clientWidth >= 800;
     const targetSpread = o.prefs.flow === "paginated" && o.prefs.spread === "auto" && isWide ? "auto" : "none";
-    if (o.prefs.flow === "paginated") {
-      if (targetSpread === "auto") {
-        const baseMax = o.prefs.maxWidth ?? 720;
-        el.style.maxWidth = `${Math.max(840, Math.min(1280, baseMax * 1.75))}px`;
-      } else {
-        el.style.maxWidth = `${o.prefs.maxWidth ?? 720}px`;
-      }
-    } else {
-      el.style.maxWidth = "100%";
-    }
 
     const rendition = book.renderTo(el, {
       width: "100%",
@@ -199,7 +173,6 @@ export class EpubEngine implements ReaderEngine {
       allowScriptedContent: false // Critical rule: never run scripts from book or article content
     });
     this.rendition = rendition;
-    this.patchViewManagerSanitizer(rendition);
     this.observeContainerResize(el);
 
     this.applyPrefs(o.prefs);
@@ -208,20 +181,6 @@ export class EpubEngine implements ReaderEngine {
     // Ensure package & spine are fully parsed before display
     try {
       await book.ready;
-      // Re-register serialize security hook after book.ready to ensure it runs AFTER book.replacements()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const spineHooks = (book.spine as any)?.hooks;
-      if (spineHooks?.serialize && typeof spineHooks.serialize.register === "function") {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        spineHooks.serialize.register((output: string, section: any) => {
-          const target = section?.output || output;
-          const clean = sanitizeSerializedHtml(target, section);
-          if (section) {
-            section.output = clean;
-          }
-          return clean;
-        });
-      }
       // Preload navigation for chapter titles
       this.preloadNavigation();
     } catch (err) {
@@ -369,20 +328,9 @@ export class EpubEngine implements ReaderEngine {
       if (!doc) return;
       sanitizeSectionDoc(doc);
 
-      // Inject host @font-face rules into iframe head (R-06)
+      // Inject bundled @font-face rules (absolute URLs) -- the iframe does not inherit host fonts
       try {
-        let fontCss = "";
-        for (const sheet of Array.from(document.styleSheets)) {
-          try {
-            for (const rule of Array.from(sheet.cssRules || [])) {
-              if (rule.constructor.name === "CSSFontFaceRule" || rule instanceof CSSFontFaceRule) {
-                fontCss += rule.cssText + "\n";
-              }
-            }
-          } catch {
-            // cross-origin stylesheet protection
-          }
-        }
+        const fontCss = collectFontFaceCss();
         if (fontCss && doc.head && !doc.head.querySelector("style[data-folio-fonts]")) {
           const styleEl = doc.createElement("style");
           styleEl.setAttribute("data-folio-fonts", "true");
@@ -390,7 +338,33 @@ export class EpubEngine implements ReaderEngine {
           doc.head.appendChild(styleEl);
         }
       } catch {
-        // fallback font injection guard
+        // fonts are an enhancement only
+      }
+
+      // Suppress scrollbars on iframe document in paginated mode & prevent horizontal overflow
+      const isPaginated = (this.currentPrefs?.flow ?? "paginated") === "paginated";
+      if (isPaginated) {
+        doc.documentElement.style.setProperty("overflow", "hidden", "important");
+        doc.documentElement.style.setProperty("overflow-x", "hidden", "important");
+        doc.documentElement.style.setProperty("overflow-y", "hidden", "important");
+        doc.documentElement.style.setProperty("scrollbar-width", "none", "important");
+        if (doc.body) {
+          doc.body.style.setProperty("overflow", "hidden", "important");
+          doc.body.style.setProperty("overflow-x", "hidden", "important");
+          doc.body.style.setProperty("overflow-y", "hidden", "important");
+          doc.body.style.setProperty("scrollbar-width", "none", "important");
+        }
+      } else {
+        doc.documentElement.style.setProperty("overflow-x", "hidden", "important");
+        if (doc.body) {
+          doc.body.style.setProperty("overflow-x", "hidden", "important");
+        }
+      }
+
+      const frameEl = (doc.defaultView?.frameElement as HTMLElement | null) || el.querySelector("iframe");
+      if (frameEl) {
+        frameEl.style.setProperty("overflow", "hidden", "important");
+        frameEl.setAttribute("scrolling", "no");
       }
 
       // Forward keydown from iframe to host container (R-09)
@@ -493,13 +467,15 @@ export class EpubEngine implements ReaderEngine {
           return;
         }
 
-        // Viewport width for accurate tap zones regardless of multi-column chapter width (R-08)
+        // The iframe is as wide as the whole chapter (CSS columns) and the container scrolls it by
+        // pages, so e.clientX is NOT relative to the visible page. Convert to host coordinates first.
         const frameEl = (doc.defaultView?.frameElement as HTMLElement | null) || el.querySelector("iframe");
-        const viewportWidth = frameEl ? frameEl.clientWidth : (el.clientWidth || window.innerWidth);
-        const x = e.clientX;
-        if (x < viewportWidth / 3) {
+        const frameLeft = frameEl ? frameEl.getBoundingClientRect().left : 0;
+        const box = el.getBoundingClientRect();
+        const ratio = box.width > 0 ? (frameLeft + e.clientX - box.left) / box.width : 0.5;
+        if (ratio < 0.3) {
           this.prev();
-        } else if (x > (2 * viewportWidth) / 3) {
+        } else if (ratio > 0.7) {
           this.next();
         } else {
           el.dispatchEvent(new CustomEvent("folio:middle-tap", { bubbles: true }));
@@ -694,17 +670,6 @@ export class EpubEngine implements ReaderEngine {
     const isWide = typeof window !== "undefined" ? window.innerWidth >= 800 : ((this.containerEl.parentElement?.clientWidth ?? 0) >= 800);
     const targetSpread = flow === "paginated" && this.currentPrefs?.spread === "auto" && isWide ? "auto" : "none";
 
-    // Set container maxWidth directly so epub.js measures the target column geometry correctly
-    if (flow === "paginated") {
-      if (targetSpread === "auto") {
-        const baseMax = this.currentPrefs?.maxWidth ?? 720;
-        this.containerEl.style.maxWidth = `${Math.max(840, Math.min(1280, baseMax * 1.75))}px`;
-      } else {
-        this.containerEl.style.maxWidth = `${this.currentPrefs?.maxWidth ?? 720}px`;
-      }
-    } else {
-      this.containerEl.style.maxWidth = "100%";
-    }
 
     const rendition = this.book.renderTo(this.containerEl, {
       width: "100%",
@@ -714,7 +679,6 @@ export class EpubEngine implements ReaderEngine {
       allowScriptedContent: false
     });
     this.rendition = rendition;
-    this.patchViewManagerSanitizer(rendition);
     this.observeContainerResize(this.containerEl);
 
     if (this.currentPrefs) {
@@ -734,17 +698,13 @@ export class EpubEngine implements ReaderEngine {
       console.warn("EpubEngine reopenWithFlow display failed:", err);
     }
 
-    // Reapply existing highlights to new rendition
+    // Reapply existing highlights (with their real colours and click handlers) to the new rendition
     for (const [id, cfiRange] of this.highlightMap.entries()) {
       try {
-        rendition.annotations.highlight(
-          cfiRange,
-          {},
-          () => {},
-          `hl-${id}`,
-          { fill: "#FFE58A", "fill-opacity": "0.45" }
-        );
-      } catch {}
+        this.paintHighlight(id, cfiRange, this.highlightColors.get(id));
+      } catch {
+        // ignore a single bad range
+      }
     }
   }
 
@@ -863,17 +823,7 @@ export class EpubEngine implements ReaderEngine {
 
     if (!this.rendition || this.isDestroyed) return;
 
-    if (this.containerEl) {
-      if (p.flow === "paginated") {
-        const isWide = typeof window !== "undefined" ? window.innerWidth >= 800 : ((this.containerEl.parentElement?.clientWidth ?? 0) >= 800);
-        const targetSpread = p.spread === "auto" && isWide;
-        this.containerEl.style.maxWidth = targetSpread
-          ? `${Math.max(840, Math.min(1280, (p.maxWidth ?? 720) * 1.75))}px`
-          : `${p.maxWidth ?? 720}px`;
-      } else {
-        this.containerEl.style.maxWidth = "100%";
-      }
-    }
+    // (container width is owned by ReaderScreen; the ResizeObserver re-lays out on change)
 
     // Capture current location to prevent reading position drift during typography changes (R-07)
     // Only capture if rendition has already been displayed (has manager) to prevent initial open crash
@@ -956,12 +906,46 @@ export class EpubEngine implements ReaderEngine {
       "*, *::before, *::after": {
         "box-sizing": "border-box"
       },
+      // Nothing may be wider than the page column, whatever fixed px widths the publisher used
+      "html body *": {
+        "max-width": "100% !important"
+      },
+
       "html": {
+        ...(isPaginated
+          ? {
+              "overflow": "hidden !important",
+              "overflow-x": "hidden !important",
+              "overflow-y": "hidden !important",
+              "scrollbar-width": "none !important",
+              "-ms-overflow-style": "none !important"
+            }
+          : {
+              "overflow-x": "hidden !important",
+              "scrollbar-width": "thin !important",
+              "scrollbar-color": `${border} transparent !important`
+            }),
         "background-color": `${bg} !important`,
         "color": `${text} !important`,
         "-webkit-text-size-adjust": "100%"
       },
       "body": {
+        ...(isPaginated
+          ? {
+              "overflow": "hidden !important",
+              "overflow-x": "hidden !important",
+              "overflow-y": "hidden !important",
+              "scrollbar-width": "none !important",
+              "-ms-overflow-style": "none !important",
+              "margin": "0 !important",
+              "padding": "0 !important"
+            }
+          : {
+              "overflow-x": "hidden !important",
+              "max-width": `${p.maxWidth ?? 720}px !important`,
+              "margin": "0 auto !important",
+              "padding": `24px ${p.margin}px 48px ${p.margin}px !important`
+            }),
         "background-color": `${bg} !important`,
         "color": `${text} !important`,
         ...(p.fontFamily !== "publisher" ? { "font-family": `${fontMap[p.fontFamily] || fontMap.serif} !important` } : {}),
@@ -972,18 +956,29 @@ export class EpubEngine implements ReaderEngine {
         "hyphens": p.hyphenate ? "auto !important" : "manual !important",
         "-webkit-hyphens": p.hyphenate ? "auto !important" : "manual !important",
         "overflow-wrap": "break-word !important",
-        "word-break": "normal !important",
-        ...(isPaginated
-          ? {
-              "margin": "0 !important",
-              "padding": "0 !important"
-            }
-          : {
-              "max-width": `${p.maxWidth ?? 720}px !important`,
-              "margin": "0 auto !important",
-              "padding": `24px ${p.margin}px 48px ${p.margin}px !important`
-            })
+        "word-break": "normal !important"
       },
+      ...(isPaginated
+        ? {
+            "html::-webkit-scrollbar, body::-webkit-scrollbar": {
+              "display": "none !important",
+              "width": "0 !important",
+              "height": "0 !important"
+            }
+          }
+        : {
+            "html::-webkit-scrollbar, body::-webkit-scrollbar": {
+              "width": "6px !important",
+              "height": "6px !important"
+            },
+            "html::-webkit-scrollbar-track, body::-webkit-scrollbar-track": {
+              "background": "transparent !important"
+            },
+            "html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb": {
+              "background": `${border} !important`,
+              "border-radius": "9999px !important"
+            }
+          }),
       // Deep overrides across text nodes so publisher classes do not block user prefs (R-03, R-04)
       ...(p.fontFamily !== "publisher"
         ? {
@@ -1066,6 +1061,8 @@ export class EpubEngine implements ReaderEngine {
       },
       "table": {
         "max-width": "100% !important",
+        "width": "100% !important",
+        "table-layout": "fixed !important",
         "border-collapse": "collapse !important",
         "margin": "1em 0 !important",
         "font-size": "0.9em !important",
@@ -1118,53 +1115,53 @@ export class EpubEngine implements ReaderEngine {
     this.selectionListeners.push(cb);
   }
 
-  addHighlight(a: Annotation): void {
-    if (!this.rendition || !a.location || this.isDestroyed) return;
-
+  private paintHighlight(id: string, cfiRange: string, color?: string): void {
+    if (!this.rendition || this.isDestroyed) return;
     const colors: Record<string, string> = {
       yellow: "#FFE58A",
       green: "#B7E4B0",
       blue: "#A9D1F5",
       pink: "#F5B7CC"
     };
-    const fill = colors[a.color || "yellow"] || "#FFE58A";
-    const isDark = this.currentPrefs?.theme === "dark" || (
-      this.currentPrefs?.theme === "system" &&
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-color-scheme: dark)").matches
-    );
+    const fill = colors[color || "yellow"] || "#FFE58A";
+    const isDark =
+      this.currentPrefs?.theme === "dark" ||
+      (this.currentPrefs?.theme === "system" &&
+        typeof window !== "undefined" &&
+        window.matchMedia?.("(prefers-color-scheme: dark)").matches);
 
+    this.rendition.annotations.highlight(
+      cfiRange,
+      { annotationId: id },
+      (e: MouseEvent) => {
+        e.stopPropagation();
+        const frameEl = this.containerEl?.querySelector("iframe");
+        const frameRect = frameEl?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
+        this.containerEl?.dispatchEvent(
+          new CustomEvent("folio:highlight-click", {
+            bubbles: true,
+            detail: {
+              annotationId: id,
+              rect: new DOMRect(frameRect.left + (e.clientX || 0), frameRect.top + (e.clientY || 0), 0, 0)
+            }
+          })
+        );
+      },
+      `hl-${id}`,
+      {
+        fill,
+        "fill-opacity": isDark ? "0.65" : "0.45",
+        "mix-blend-mode": isDark ? "screen" : "multiply"
+      }
+    );
+  }
+
+  addHighlight(a: Annotation): void {
+    if (!this.rendition || !a.location || this.isDestroyed) return;
     try {
-      this.rendition.annotations.highlight(
-        a.location,
-        { annotationId: a.id },
-        (e: MouseEvent) => {
-          e.stopPropagation();
-          const frameEl = this.containerEl?.querySelector("iframe");
-          const frameRect = frameEl?.getBoundingClientRect() ?? new DOMRect(0, 0, 0, 0);
-          this.containerEl?.dispatchEvent(
-            new CustomEvent("folio:highlight-click", {
-              bubbles: true,
-              detail: {
-                annotationId: a.id,
-                rect: new DOMRect(
-                  frameRect.left + (e.clientX || 0),
-                  frameRect.top + (e.clientY || 0),
-                  0,
-                  0
-                )
-              }
-            })
-          );
-        },
-        `hl-${a.id}`,
-        {
-          fill,
-          "fill-opacity": isDark ? "0.65" : "0.45",
-          "mix-blend-mode": isDark ? "screen" : "multiply"
-        }
-      );
+      this.paintHighlight(a.id, a.location, a.color);
       this.highlightMap.set(a.id, a.location);
+      this.highlightColors.set(a.id, a.color || "yellow");
     } catch (err) {
       console.warn("EpubEngine addHighlight failed:", err);
     }
@@ -1177,6 +1174,7 @@ export class EpubEngine implements ReaderEngine {
       try {
         this.rendition.annotations.remove(cfiRange, "highlight");
         this.highlightMap.delete(id);
+        this.highlightColors.delete(id);
       } catch (err) {
         console.warn("EpubEngine removeHighlight failed:", err);
       }

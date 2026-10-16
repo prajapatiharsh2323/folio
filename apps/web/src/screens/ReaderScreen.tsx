@@ -1053,7 +1053,7 @@ export const ReaderScreen: React.FC = () => {
   // Error Card
   if (error) {
     return (
-      <div className="flex flex-col h-[100dvh] w-screen items-center justify-center bg-bg text-text p-6 text-center">
+      <div className="flex flex-col h-[100dvh] w-full items-center justify-center bg-bg text-text p-6 text-center">
         <div className="max-w-md p-6 bg-surface border border-border rounded-2xl shadow-lg">
           <div className="w-12 h-12 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-4">
             <Info className="w-6 h-6" />
@@ -1083,7 +1083,7 @@ export const ReaderScreen: React.FC = () => {
   // Loading Skeleton
   if (!doc) {
     return (
-      <div className="flex flex-col h-[100dvh] w-screen bg-bg text-text p-8 items-center justify-center">
+      <div className="flex flex-col h-[100dvh] w-full bg-bg text-text p-8 items-center justify-center">
         <div className="w-full max-w-lg space-y-5 animate-pulse">
           <div className="h-6 bg-border/80 rounded-md w-1/2 mx-auto" />
           <div className="space-y-3 pt-6">
@@ -1117,7 +1117,8 @@ export const ReaderScreen: React.FC = () => {
   return (
     <div
       data-theme={prefs.theme}
-      className="relative h-[100dvh] w-screen overflow-hidden select-none bg-bg text-text flex flex-col md:grid md:grid-rows-[auto_1fr_auto]"
+      data-flow={prefs.flow}
+      className="relative h-[100dvh] w-full overflow-hidden select-none bg-bg text-text flex flex-col md:grid md:grid-rows-[auto_1fr_auto]"
     >
       {/* Top Header */}
       <header
