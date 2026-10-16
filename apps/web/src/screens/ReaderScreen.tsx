@@ -30,6 +30,7 @@ import {
 } from "../state/library-store.js";
 import { TypographySheet } from "../components/TypographySheet.js";
 import { DocumentSheet } from "../components/DocumentSheet.js";
+import { haptic } from "../reader/haptics.js";
 import type { DocMeta, Annotation } from "@folio/core";
 
 interface SelectionData {
@@ -197,8 +198,8 @@ export const ReaderScreen: React.FC = () => {
             navigator as unknown as { wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void> }> } }
           ).wakeLock.request("screen");
         } catch {
-      /* ignore */
-    }
+          /* ignore */
+        }
       }
     };
     void acquireLock();
@@ -916,8 +917,10 @@ export const ReaderScreen: React.FC = () => {
       const x = e.clientX;
 
       if (x < left + (right - left) / 3) {
+        haptic(5);
         engineRef.current?.prev();
       } else if (x > right - (right - left) / 3) {
+        haptic(5);
         engineRef.current?.next();
       } else {
         setControlsVisible((prev) => !prev);
@@ -939,13 +942,7 @@ export const ReaderScreen: React.FC = () => {
   const handleSaveHighlight = async (color: "yellow" | "green" | "blue" | "pink") => {
     if (!doc || !selection) return;
 
-    if ("vibrate" in navigator) {
-      try {
-        navigator.vibrate(10);
-      } catch {
-      /* ignore */
-    }
-    }
+    haptic(10);
 
     const annotation: Annotation = {
       id: crypto.randomUUID(),
@@ -1022,13 +1019,7 @@ export const ReaderScreen: React.FC = () => {
 
   const toggleBookmark = async () => {
     if (!doc) return;
-    if ("vibrate" in navigator) {
-      try {
-        navigator.vibrate(10);
-      } catch {
-      /* ignore */
-    }
-    }
+    haptic(10);
 
     if (activeBookmark) {
       try {

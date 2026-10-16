@@ -4,6 +4,7 @@ import { sanitizeSectionDoc, sanitizeSerializedHtml, type Annotation, type DocMe
 import { fileStore } from "../state/library-store.js";
 import type { ReaderEngine } from "./reader-engine.js";
 import { collectFontFaceCss } from "./fonts.js";
+import { haptic } from "./haptics.js";
 export type { ReaderEngine };
 export { sanitizeSectionDoc, sanitizeSerializedHtml };
 
@@ -422,8 +423,10 @@ export class EpubEngine implements ReaderEngine {
             const diffY = e.changedTouches[0].clientY - touchStartY;
             if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
               if (diffX < 0) {
+                haptic(5);
                 this.next();
               } else {
+                haptic(5);
                 this.prev();
               }
             }
@@ -474,8 +477,10 @@ export class EpubEngine implements ReaderEngine {
         const box = el.getBoundingClientRect();
         const ratio = box.width > 0 ? (frameLeft + e.clientX - box.left) / box.width : 0.5;
         if (ratio < 0.3) {
+          haptic(5);
           this.prev();
         } else if (ratio > 0.7) {
+          haptic(5);
           this.next();
         } else {
           el.dispatchEvent(new CustomEvent("folio:middle-tap", { bubbles: true }));
