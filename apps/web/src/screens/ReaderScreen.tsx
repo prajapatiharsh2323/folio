@@ -452,12 +452,15 @@ export const ReaderScreen: React.FC = () => {
       // Register relocation and selection listeners BEFORE opening
       engine.onRelocate((r) => {
         if (cancelled) return;
-        // Pace accrual: credit wall-time since the previous relocation and the
-        // forward percent delta (clamped for jumps & idle inside the module).
+        // Pace accrual: credit the wall-time since the previous relocation and
+        // the forward percent delta. Gaps over 3 minutes are treated as away
+        // time (book parked, came back later) and credit none; jump-sized
+        // percent deltas are suppressed inside the pace module.
         const now = Date.now();
         const prevRelocate = lastRelocateRef.current;
         if (prevRelocate) {
-          const deltaMs = Math.min(Math.max(0, now - prevRelocate.time), 30_000);
+          const gapMs = now - prevRelocate.time;
+          const deltaMs = gapMs >= 0 && gapMs <= 180_000 ? gapMs : 0;
           paceRef.current = updateReadingPace(paceRef.current, deltaMs, r.percent - prevRelocate.percent);
           setPaceState(paceRef.current);
         }

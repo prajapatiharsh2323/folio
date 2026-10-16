@@ -4,9 +4,9 @@
  * Pace is an accumulating pair of counters per document — total active session
  * time and total percent genuinely read toward the end — which yields a robust
  * ms-per-percent rate without storing per-session history. Relocations give the
- * percent deltas; TOC jumps and scrubber commits are capped so that skips do
- * not fabricate reading speed (a skipped jump counts its time but little credit,
- * which keeps the estimate conservative, never inflated).
+ * percent deltas; navigation jumps and repeat scrubbing credit nothing (a raw
+ * delta beyond the threshold is navigation, not reading), so the estimate is
+ * conservative, never inflated.
  */
 
 export interface ReadingPace {
@@ -17,10 +17,12 @@ export interface ReadingPace {
 }
 
 /**
- * Maximum percent credited per pace update. Relocations between neighbouring
- * pages stay below this; chapter jumps and scrub commits clamp to it.
+ * Percent deltas beyond this threshold are navigation (TOC / scrubber jumps),
+ * not continuous reading, and credit nothing. Genuine page-turn deltas sit
+ * well below it; the threshold also keeps repeat scrub left-right cycling
+ * from double-crediting the same span.
  */
-export const MAX_CREDITED_PERCENT_PER_UPDATE = 2;
+export const READING_CREDIT_JUMP_THRESHOLD_PERCENT = 5;
 
 const clamp = (v: number, lo: number, hi: number): number =>
   Math.min(hi, Math.max(lo, v));
@@ -33,8 +35,13 @@ export function updateReadingPace(
 ): ReadingPace {
   const base = pace ?? { sessionsMs: 0, percentRead: 0 };
   const nextSessions = base.sessionsMs + Math.max(0, sessionMs);
-  const nextPercent =
-    base.percentRead + clamp(deltaPercent, 0, MAX_CREDITED_PERCENT_PER_UPDATE);
+  // Continuous reading only: tiny forward deltas get full credit, negative or
+  // jump-sized deltas get none so re-reads and skips never inflate the pace.
+  const credit =
+    deltaPercent >= 0 && deltaPercent <= READING_CREDIT_JUMP_THRESHOLD_PERCENT
+      ? deltaPercent
+      : 0;
+  const nextPercent = base.percentRead + credit;
   return {
     sessionsMs: Math.round(nextSessions),
     percentRead: Math.round(nextPercent * 1000) / 1000

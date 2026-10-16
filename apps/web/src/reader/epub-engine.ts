@@ -1146,6 +1146,7 @@ export class EpubEngine implements ReaderEngine {
     const fill = colors[color || "yellow"] || "#FFE58A";
     const isDark =
       this.currentPrefs?.theme === "dark" ||
+      this.currentPrefs?.theme === "true-black" ||
       (this.currentPrefs?.theme === "system" &&
         typeof window !== "undefined" &&
         window.matchMedia?.("(prefers-color-scheme: dark)").matches);
@@ -1207,7 +1208,8 @@ export class EpubEngine implements ReaderEngine {
     try {
       this.currentSearchHighlightCfi = location;
       const isDark =
-        (this.currentPrefs?.theme || "system") === "dark" ||
+        this.currentPrefs?.theme === "dark" ||
+        this.currentPrefs?.theme === "true-black" ||
         ((this.currentPrefs?.theme || "system") === "system" &&
           typeof window !== "undefined" &&
           window.matchMedia("(prefers-color-scheme: dark)").matches);

@@ -23,12 +23,22 @@ describe("ReadingPace accumulation", () => {
     expect(pace.sessionsMs).toBe(10_000);
   });
 
-  it("clamps percent deltas that arrive out of range (scrubber artifacts)", () => {
-    // e.g. jumping forward 95% via TOC should not fake 95% of reading speed
+  it("credits nothing for navigation jumps (LET 5% threshold: scrubber/TOC skips are not reading)", () => {
     const pace = updateReadingPace(undefined, 120_000, 95);
-    expect(pace).toEqual({ sessionsMs: 120_000, percentRead: 2 });
-    const jump = updateReadingPace({ sessionsMs: 10_000, percentRead: 0 }, 10_000, 80);
+    expect(pace).toEqual({ sessionsMs: 120_000, percentRead: 0 });
+    const jump = updateReadingPace({ sessionsMs: 10_000, percentRead: 2 }, 10_000, 30);
     expect(jump).toEqual({ sessionsMs: 20_000, percentRead: 2 });
+  });
+
+  it("is immune to the scrub left-right inflation loop (the +2%-per-update bug)", () => {
+    let pace: ReadingPace | undefined = { sessionsMs: 10_000, percentRead: 1 };
+    // A user yo-yos the scrubber: forward 30% > threshold (no credit), lands at 1.5%
+    for (let i = 0; i < 20; i++) {
+      pace = updateReadingPace(pace, 1_000, 30);
+      pace = updateReadingPace(pace, 1_000, -0.5); // back-scrolled: below 0, no credit
+    }
+    expect(pace.percentRead).toBe(1);
+    expect(pace.sessionsMs).toBe(50_000);
   });
 });
 
