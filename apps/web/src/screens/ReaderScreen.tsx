@@ -248,6 +248,13 @@ export const ReaderScreen: React.FC = () => {
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
+  // Reading pace estimate shown near the scrubber and in document details
+  // (must stay before every early return so the hook order is stable)
+  const timeLeftLabel = useMemo(
+    () => formatTimeLeft(estimateTimeLeftSeconds(paceState, 100 - currentPercent)),
+    [paceState, currentPercent]
+  );
+
   const recordJump = useCallback(() => {
     if (currentCfi) {
       setJumpHistory({
@@ -1154,12 +1161,6 @@ export const ReaderScreen: React.FC = () => {
 
   const displayPercent =
     currentPercent % 1 === 0 ? `${currentPercent}%` : `${currentPercent.toFixed(1)}%`;
-
-  // Reading pace estimate shown near the scrubber and in document details
-  const timeLeftLabel = useMemo(
-    () => formatTimeLeft(estimateTimeLeftSeconds(paceState, 100 - currentPercent)),
-    [paceState, currentPercent]
-  );
 
   return (
     <div
