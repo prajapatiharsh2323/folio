@@ -2,56 +2,67 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 
-function createPng(width, height, rgbaBuffer) {
-  const signature = Buffer.from([137, 80, 78, 72, 13, 10, 26, 10]);
-
-  // IHDR chunk
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr.writeUInt8(8, 8); // bit depth
-  ihdr.writeUInt8(6, 9); // color type (RGBA)
-  ihdr.writeUInt8(0, 10); // compression method
-  ihdr.writeUInt8(0, 11); // filter method
-  ihdr.writeUInt8(0, 12); // interlace method
-  const ihdrChunk = makeChunk("IHDR", ihdr);
-
-  // Raw image data with filter byte (0) per scanline
-  const scanlineLength = width * 4 + 1;
-  const rawData = Buffer.alloc(scanlineLength * height);
+function decodePng(buf) {
+  let offset = 8;
+  const idatChunks = [];
+  let width, height;
+  while (offset < buf.length) {
+    const len = buf.readUInt32BE(offset);
+    const type = buf.toString("ascii", offset + 4, offset + 8);
+    if (type === "IHDR") {
+      width = buf.readUInt32BE(offset + 8);
+      height = buf.readUInt32BE(offset + 12);
+    } else if (type === "IDAT") {
+      idatChunks.push(buf.subarray(offset + 8, offset + 8 + len));
+    }
+    offset += 12 + len;
+  }
+  const decompressed = zlib.inflateSync(Buffer.concat(idatChunks));
+  const bpp = 4;
+  const stride = width * bpp;
+  const out = Buffer.alloc(width * height * 4);
+  let srcOffset = 0;
+  let prevRow = null;
 
   for (let y = 0; y < height; y++) {
-    rawData[y * scanlineLength] = 0; // Filter None
-    rgbaBuffer.copy(
-      rawData,
-      y * scanlineLength + 1,
-      y * width * 4,
-      (y + 1) * width * 4
-    );
+    const filter = decompressed[srcOffset++];
+    const row = Buffer.alloc(stride);
+    for (let x = 0; x < stride; x++) {
+      const raw = decompressed[srcOffset++];
+      const a = x >= bpp ? row[x - bpp] : 0;
+      const b = prevRow ? prevRow[x] : 0;
+      const c = x >= bpp && prevRow ? prevRow[x - bpp] : 0;
+      let val = raw;
+      if (filter === 1) val = (raw + a) & 0xff;
+      else if (filter === 2) val = (raw + b) & 0xff;
+      else if (filter === 3) val = (raw + Math.floor((a + b) / 2)) & 0xff;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        const pr = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        val = (raw + pr) & 0xff;
+      }
+      row[x] = val;
+    }
+    row.copy(out, y * stride);
+    prevRow = row;
   }
-
-  const compressed = zlib.deflateSync(rawData);
-  const idatChunk = makeChunk("IDAT", compressed);
-  const iendChunk = makeChunk("IEND", Buffer.alloc(0));
-
-  return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
+  return { width, height, data: out };
 }
 
 function makeChunk(type, data) {
   const length = Buffer.alloc(4);
   length.writeUInt32BE(data.length, 0);
-
   const typeBuffer = Buffer.from(type, "ascii");
   const crcData = Buffer.concat([typeBuffer, data]);
   const crc = crc32(crcData);
-
   const crcBuffer = Buffer.alloc(4);
   crcBuffer.writeUInt32BE(crc, 0);
-
   return Buffer.concat([length, typeBuffer, data, crcBuffer]);
 }
 
-// Table-based CRC32
 const crcTable = [];
 for (let n = 0; n < 256; n++) {
   let c = n;
@@ -69,75 +80,97 @@ function crc32(buf) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-// Generate Folio icon with forest green background (#2F6F5E) and cream book mark
-function drawIcon(size, isMaskable) {
-  const buf = Buffer.alloc(size * size * 4);
-  const bgR = 0x2f, bgG = 0x6f, bgB = 0x5e;
-  const fgR = 0xfa, fgG = 0xfa, fgB = 0xf7;
+function createPng(width, height, rgbaBuffer) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.writeUInt8(8, 8); // bit depth
+  ihdr.writeUInt8(6, 9); // RGBA
+  ihdr.writeUInt8(0, 10);
+  ihdr.writeUInt8(0, 11);
+  ihdr.writeUInt8(0, 12);
+  const ihdrChunk = makeChunk("IHDR", ihdr);
 
-  const center = size / 2;
-  const cornerRadius = isMaskable ? 0 : size * 0.22;
+  const scanlineLength = width * 4 + 1;
+  const rawData = Buffer.alloc(scanlineLength * height);
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const idx = (y * size + x) * 4;
+  for (let y = 0; y < height; y++) {
+    rawData[y * scanlineLength] = 0;
+    rgbaBuffer.copy(
+      rawData,
+      y * scanlineLength + 1,
+      y * width * 4,
+      (y + 1) * width * 4
+    );
+  }
 
-      let inShape = true;
-      if (!isMaskable) {
-        const dx = Math.max(0, Math.abs(x - center) - (center - cornerRadius));
-        const dy = Math.max(0, Math.abs(y - center) - (center - cornerRadius));
-        if (dx * dx + dy * dy > cornerRadius * cornerRadius) {
-          inShape = false;
-        }
-      }
+  const compressed = zlib.deflateSync(rawData);
+  const idatChunk = makeChunk("IDAT", compressed);
+  const iendChunk = makeChunk("IEND", Buffer.alloc(0));
 
-      if (!inShape) {
-        buf[idx] = 0;
-        buf[idx + 1] = 0;
-        buf[idx + 2] = 0;
-        buf[idx + 3] = 0;
-        continue;
-      }
+  return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
+}
 
-      // Base background: forest green #2F6F5E
-      buf[idx] = bgR;
-      buf[idx + 1] = bgG;
-      buf[idx + 2] = bgB;
-      buf[idx + 3] = 255;
+function resizeImage(src, targetW, targetH, paddingFraction = 0) {
+  const out = Buffer.alloc(targetW * targetH * 4);
+  // Default background color from logo edges (nearly pure white / cream)
+  for (let i = 0; i < out.length; i += 4) {
+    out[i] = 254;
+    out[i + 1] = 255;
+    out[i + 2] = 254;
+    out[i + 3] = 255;
+  }
 
-      // Central book icon region (within central safe area)
-      const scale = size / 512;
-      const nx = x / scale;
-      const ny = y / scale;
+  const padX = targetW * paddingFraction;
+  const padY = targetH * paddingFraction;
+  const innerW = targetW - padX * 2;
+  const innerH = targetH - padY * 2;
 
-      const inBookLeft = nx >= 150 && nx <= 245 && ny >= 140 && ny <= 370;
-      const inBookRight = nx >= 267 && nx <= 362 && ny >= 140 && ny <= 370;
+  const scale = Math.min(innerW / src.width, innerH / src.height);
+  const renderW = Math.round(src.width * scale);
+  const renderH = Math.round(src.height * scale);
+  const offsetX = Math.round((targetW - renderW) / 2);
+  const offsetY = Math.round((targetH - renderH) / 2);
 
-      if (inBookLeft || inBookRight) {
-        buf[idx] = fgR;
-        buf[idx + 1] = fgG;
-        buf[idx + 2] = fgB;
-        buf[idx + 3] = 255;
+  for (let y = 0; y < renderH; y++) {
+    const sy = (y + 0.5) * (src.height / renderH) - 0.5;
+    const y0 = Math.max(0, Math.min(src.height - 1, Math.floor(sy)));
+    const y1 = Math.max(0, Math.min(src.height - 1, y0 + 1));
+    const wy = Math.max(0, Math.min(1, sy - y0));
 
-        const localY = (ny - 140) % 40;
-        if (localY >= 18 && localY <= 24 && ((inBookLeft && nx <= 225) || (inBookRight && nx >= 285))) {
-          buf[idx] = bgR;
-          buf[idx + 1] = bgG;
-          buf[idx + 2] = bgB;
-          buf[idx + 3] = 255;
-        }
+    for (let x = 0; x < renderW; x++) {
+      const sx = (x + 0.5) * (src.width / renderW) - 0.5;
+      const x0 = Math.max(0, Math.min(src.width - 1, Math.floor(sx)));
+      const x1 = Math.max(0, Math.min(src.width - 1, x0 + 1));
+      const wx = Math.max(0, Math.min(1, sx - x0));
+
+      const dstIdx = ((offsetY + y) * targetW + (offsetX + x)) * 4;
+
+      for (let c = 0; c < 4; c++) {
+        const v00 = src.data[(y0 * src.width + x0) * 4 + c];
+        const v10 = src.data[(y0 * src.width + x1) * 4 + c];
+        const v01 = src.data[(y1 * src.width + x0) * 4 + c];
+        const v11 = src.data[(y1 * src.width + x1) * 4 + c];
+
+        const top = v00 * (1 - wx) + v10 * wx;
+        const bot = v01 * (1 - wx) + v11 * wx;
+        out[dstIdx + c] = Math.round(top * (1 - wy) + bot * wy);
       }
     }
   }
-
-  return buf;
+  return out;
 }
 
 const outDir = path.resolve(process.cwd(), "apps/web/public/icons");
-fs.mkdirSync(outDir, { recursive: true });
+const logoPath = path.join(outDir, "logo.png");
 
-fs.writeFileSync(path.join(outDir, "icon-192.png"), createPng(192, 192, drawIcon(192, false)));
-fs.writeFileSync(path.join(outDir, "icon-512.png"), createPng(512, 512, drawIcon(512, false)));
-fs.writeFileSync(path.join(outDir, "maskable-512.png"), createPng(512, 512, drawIcon(512, true)));
-
-console.log("Generated 192x192, 512x512, and maskable-512 PNG icons successfully.");
+if (fs.existsSync(logoPath)) {
+  const logo = decodePng(fs.readFileSync(logoPath));
+  fs.writeFileSync(path.join(outDir, "icon-192.png"), createPng(192, 192, resizeImage(logo, 192, 192, 0.05)));
+  fs.writeFileSync(path.join(outDir, "icon-512.png"), createPng(512, 512, resizeImage(logo, 512, 512, 0.05)));
+  fs.writeFileSync(path.join(outDir, "maskable-512.png"), createPng(512, 512, resizeImage(logo, 512, 512, 0.15)));
+  console.log("Generated icon-192.png, icon-512.png, and maskable-512.png from logo.png.");
+} else {
+  console.error("logo.png not found in", outDir);
+}

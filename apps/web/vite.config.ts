@@ -23,6 +23,11 @@ export default defineConfig({
         categories: ["books", "productivity"],
         icons: [
           {
+            src: "/icons/logo.png",
+            sizes: "678x716",
+            type: "image/png"
+          },
+          {
             src: "/icons/icon-192.png",
             sizes: "192x192",
             type: "image/png"

@@ -156,11 +156,16 @@ export const LibraryScreen: React.FC = () => {
     <div className="flex-1 flex flex-col p-4 md:p-8 max-w-5xl mx-auto w-full">
       {/* Header bar */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-border mb-6">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-text">Library</h2>
-          <p className="text-sm text-muted">
-            {docs.length} {docs.length === 1 ? "document" : "documents"} offline
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="md:hidden w-10 h-10 rounded-xl bg-surface border border-border/60 p-1 flex items-center justify-center shadow-xs overflow-hidden shrink-0">
+            <img src="/icons/logo.png" alt="Folio Logo" className="w-full h-full object-contain" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight text-text">Library</h2>
+            <p className="text-sm text-muted">
+              {docs.length} {docs.length === 1 ? "document" : "documents"} offline
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <select

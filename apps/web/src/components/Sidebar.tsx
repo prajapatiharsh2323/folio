@@ -13,8 +13,12 @@ export const Sidebar: React.FC = () => {
   return (
     <aside className="hidden md:flex flex-col w-64 h-full bg-surface border-r border-border p-4 ui-chrome select-none">
       <div className="flex items-center gap-3 px-3 py-4 mb-6">
-        <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-bg font-bold">
-          F
+        <div className="w-9 h-9 rounded-xl bg-surface border border-border/60 p-1 flex items-center justify-center shadow-xs overflow-hidden shrink-0">
+          <img
+            src="/icons/logo.png"
+            alt="Folio Logo"
+            className="w-full h-full object-contain"
+          />
         </div>
         <div>
           <h1 className="text-lg font-bold tracking-tight text-text">Folio</h1>

@@ -389,11 +389,16 @@ export const SettingsScreen: React.FC = () => {
       {/* Install App Section (Checklist #8) */}
       {!isAppInstalled && deferredPrompt && (
         <section className="mb-6 p-4 rounded-2xl border border-accent/40 bg-accent/10 flex items-center justify-between gap-4">
-          <div>
-            <h4 className="text-sm font-semibold text-text">Install Folio App</h4>
-            <p className="text-xs text-muted mt-0.5">
-              Install Folio as a standalone PWA on your device for offline reading and quick launch.
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-surface border border-border/60 p-1 flex items-center justify-center shadow-xs overflow-hidden shrink-0">
+              <img src="/icons/logo.png" alt="Folio Logo" className="w-full h-full object-contain" />
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-text">Install Folio App</h4>
+              <p className="text-xs text-muted mt-0.5">
+                Install Folio as a standalone PWA on your device for offline reading and quick launch.
+              </p>
+            </div>
           </div>
           <button
             onClick={handleInstallApp}
@@ -717,9 +722,14 @@ export const SettingsScreen: React.FC = () => {
       </section>
 
       {/* About & Version */}
-      <section className="text-xs text-muted space-y-1">
-        <p>Folio v0.1.0 · Local-First Library</p>
-        <p>Built with TypeScript, OPFS, epub.js, and MiniSearch.</p>
+      <section className="flex items-center gap-3.5 text-xs text-muted pt-2">
+        <div className="w-10 h-10 rounded-xl bg-surface border border-border/60 p-1 flex items-center justify-center shadow-xs overflow-hidden shrink-0">
+          <img src="/icons/logo.png" alt="Folio Logo" className="w-full h-full object-contain" />
+        </div>
+        <div className="space-y-0.5">
+          <p className="font-semibold text-text">Folio v0.1.0 · Local-First Library</p>
+          <p>Built with TypeScript, OPFS, epub.js, and MiniSearch.</p>
+        </div>
       </section>
 
       {/* Restore Confirmation Modal */}
