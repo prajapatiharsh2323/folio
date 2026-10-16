@@ -7,6 +7,13 @@
 
 ## Session log
 
+- **Session 2 (Oct 16, 2026)** — hooks-order crash fix (commit 29fec2e, pushed).
+  - Bug: `timeLeftLabel` useMemo was after the error/`!doc` early returns in ReaderScreen →
+    hook count changed between null and loaded renders → "Rendered more hooks" crash.
+  - Fix: moved the memo above all early returns.
+  - Gate added: `eslint-plugin-react-hooks` (`rules-of-hooks: "error"`) for the whole repo —
+    this violation is now a lint-RED, would never reach a build again.
+  - Note: user added commit "added the samples" (b1b0bd4) between sessions.
 - **Session 1 (Oct 16, 2026)** — COMPLETE (commits 3a5398e, 26af458, b3ff9e6, 84367a4,
   b1a4bb9, 66c30a3 — all pushed to origin/main).
   - Superpowers plugin installed (opencode.json `plugins` key, git-backed worked).
