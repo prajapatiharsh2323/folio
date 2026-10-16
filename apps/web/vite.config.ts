@@ -11,22 +11,24 @@ export default defineConfig({
       registerType: "prompt",
       includeAssets: ["favicon.ico", "icons/*.png", "icons/*.svg"],
       manifest: {
+        id: "/",
         name: "Folio",
         short_name: "Folio",
-        description: "Offline reading library",
+        lang: "en",
+        dir: "ltr",
+        description: "Private, local-first reading library — EPUB, PDF, HTML and TXT with instant offline search, highlights and notes.",
         start_url: "/?source=pwa",
         scope: "/",
         display: "standalone",
+        display_override: ["standalone"],
+        launch_handler: {
+          client_mode: "focus-existing"
+        },
         background_color: "#FAFAF7",
         theme_color: "#FAFAF7",
         orientation: "any",
         categories: ["books", "productivity"],
         icons: [
-          {
-            src: "/icons/logo.png",
-            sizes: "678x716",
-            type: "image/png"
-          },
           {
             src: "/icons/icon-192.png",
             sizes: "192x192",
@@ -42,6 +44,11 @@ export default defineConfig({
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable"
+          },
+          {
+            src: "/icons/icon.svg",
+            sizes: "any",
+            type: "image/svg+xml"
           }
         ],
         shortcuts: [
@@ -79,14 +86,19 @@ export default defineConfig({
             action: "/open",
             accept: {
               "application/epub+zip": [".epub"],
-              "application/pdf": [".pdf"]
+              "application/pdf": [".pdf"],
+              "text/html": [".html", ".htm"],
+              "text/plain": [".txt"]
             }
           }
         ]
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        importScripts: ["/sw-share-target.js"]
+        importScripts: ["/sw-share-target.js"],
+        // Serve the precached app shell for offline navigations (SPA deep links)
+        navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/share-target$/]
       }
     })
   ],
