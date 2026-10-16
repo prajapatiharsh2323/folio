@@ -32,6 +32,7 @@ import { TypographySheet } from "../components/TypographySheet.js";
 import { DocumentSheet } from "../components/DocumentSheet.js";
 import { haptic } from "../reader/haptics.js";
 import type { DocMeta, Annotation } from "@folio/core";
+import { updateReadingPace, formatTimeLeft, estimateTimeLeftSeconds } from "@folio/core";
 
 interface SelectionData {
   quote: string;
@@ -129,6 +130,13 @@ export const ReaderScreen: React.FC = () => {
       setSearchOpen(true);
     }
   }, [targetQuery]);
+
+  // Reading pace accumulation (time-to-finish): wall-clock + forward percent
+  // are credited per relocation; jumps/idle gaps are clamped inside the engine
+  // of the pace module so the estimate stays conservative.
+  const paceRef = useRef<import("@folio/core").ReadingPace | undefined>(undefined);
+  const lastRelocateRef = useRef<{ time: number; percent: number } | null>(null);
+  const [paceState, setPaceState] = useState<import("@folio/core").ReadingPace | undefined>(undefined);
 
   // Selection & Highlight Toolbar State
   const [selection, setSelection] = useState<SelectionData | null>(null);
@@ -246,6 +254,7 @@ export const ReaderScreen: React.FC = () => {
         docId: doc.id,
         location: locStr,
         percent,
+        pace: paceRef.current,
         updatedAt: new Date().toISOString()
       };
       libraryManager.saveProgress(progress).catch(console.error);
@@ -383,6 +392,13 @@ export const ReaderScreen: React.FC = () => {
       const saved = await libraryManager.getProgress(doc.id);
       if (cancelled) return;
 
+      // Restore accumulated pace from previous sessions (optional field)
+      paceRef.current = saved?.pace;
+      if (saved?.pace) {
+        setPaceState(saved.pace);
+      }
+      lastRelocateRef.current = null;
+
       // Determine initial location: targetLoc -> targetChapter -> saved -> first page
       let initialLocation = targetLoc || undefined;
       if (!initialLocation && targetChapter) {
@@ -424,6 +440,17 @@ export const ReaderScreen: React.FC = () => {
       // Register relocation and selection listeners BEFORE opening
       engine.onRelocate((r) => {
         if (cancelled) return;
+        // Pace accrual: credit wall-time since the previous relocation and the
+        // forward percent delta (clamped for jumps & idle inside the module).
+        const now = Date.now();
+        const prevRelocate = lastRelocateRef.current;
+        if (prevRelocate) {
+          const deltaMs = Math.min(Math.max(0, now - prevRelocate.time), 30_000);
+          paceRef.current = updateReadingPace(paceRef.current, deltaMs, r.percent - prevRelocate.percent);
+          setPaceState(paceRef.current);
+        }
+        lastRelocateRef.current = { time: now, percent: r.percent };
+
         setCurrentCfi(r.location);
         setCurrentPercent(r.percent);
         if (r.chapterTitle) {
@@ -520,7 +547,6 @@ export const ReaderScreen: React.FC = () => {
       percent: currentPercent
     };
   }, [doc, currentCfi, currentPercent]);
-
   // Flush reading progress immediately on visibility change, pagehide, or unmount
   useEffect(() => {
     const flushProgress = () => {
@@ -531,6 +557,7 @@ export const ReaderScreen: React.FC = () => {
             docId: p.docId,
             location: p.location,
             percent: p.percent,
+            pace: paceRef.current,
             updatedAt: new Date().toISOString()
           })
           .catch(console.error);
@@ -1113,6 +1140,12 @@ export const ReaderScreen: React.FC = () => {
   const displayPercent =
     currentPercent % 1 === 0 ? `${currentPercent}%` : `${currentPercent.toFixed(1)}%`;
 
+  // Reading pace estimate shown near the scrubber and in document details
+  const timeLeftLabel = useMemo(
+    () => formatTimeLeft(estimateTimeLeftSeconds(paceState, 100 - currentPercent)),
+    [paceState, currentPercent]
+  );
+
   return (
     <div
       data-theme={prefs.theme}
@@ -1544,6 +1577,16 @@ export const ReaderScreen: React.FC = () => {
               aria-label="Reading progress scrubber"
             />
           </div>
+
+          {/* Estimated Time to Finish (desktop footer) */}
+          {timeLeftLabel && (
+            <span
+              className="hidden md:inline-flex md:items-center whitespace-nowrap text-[11px] font-medium text-muted min-h-[36px]"
+              title="Estimated time to finish — learns from your reading pace"
+            >
+              {timeLeftLabel}
+            </span>
+          )}
 
           {/* Current Chapter Title */}
           {currentChapterTitle && (

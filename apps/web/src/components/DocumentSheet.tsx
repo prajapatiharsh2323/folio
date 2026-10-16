@@ -8,8 +8,15 @@ import {
   ExternalLink,
   AlertTriangle
 } from "lucide-react";
-import type { DocMeta, Collection } from "@folio/core";
-import { libraryManager, useLibraryStore } from "../state/library-store.js";
+import type { DocMeta, Collection, Progress } from "@folio/core";
+import {
+  libraryManager,
+  useLibraryStore
+} from "../state/library-store.js";
+import {
+  estimateTimeLeftSeconds,
+  formatTimeLeft
+} from "@folio/core";
 
 interface DocumentSheetProps {
   doc: DocMeta | null;
@@ -36,6 +43,7 @@ export const DocumentSheet: React.FC<DocumentSheetProps> = ({
   const [newCollName, setNewCollName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [progress, setProgress] = useState<Progress | null>(null);
 
   useEffect(() => {
     if (doc) {
@@ -44,8 +52,13 @@ export const DocumentSheet: React.FC<DocumentSheetProps> = ({
       setTags([...(doc.tags || [])]);
       setSelectedColls([...(doc.collectionIds || [])]);
       setConfirmDelete(false);
+      setProgress(null);
 
       libraryManager.getCollections().then(setCollections).catch(console.error);
+      libraryManager
+        .getProgress(doc.id)
+        .then((p) => setProgress(p ?? null))
+        .catch(() => {});
     }
   }, [doc]);
 
@@ -295,6 +308,28 @@ export const DocumentSheet: React.FC<DocumentSheetProps> = ({
                   {doc.searchable ? "Indexed & Searchable" : "No text layer"}
                 </span>
               </div>
+              {progress && progress.percent > 0 && (
+                <div className="flex items-center justify-between">
+                  <span>Progress:</span>
+                  <span className="font-medium text-text">
+                    {progress.percent % 1 === 0
+                      ? `${progress.percent}%`
+                      : `${progress.percent.toFixed(1)}%`}
+                    {progress.pace && progress.percent < 100 && (
+                      (() => {
+                        const left = formatTimeLeft(
+                          estimateTimeLeftSeconds(progress.pace, 100 - progress.percent)
+                        );
+                        return left ? (
+                          <span className="text-muted font-normal">
+                            {" "}· {left.replace(" left", "")} to go
+                          </span>
+                        ) : null;
+                      })()
+                    )}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Delete Section */}

@@ -40,6 +40,8 @@ export interface Progress {
   location: string;
   percent: number;
   updatedAt: string; // location: EPUB CFI, PDF page, or scroll offset
+  /** Accumulated reading pace for time-to-finish estimates (optional, additive). */
+  pace?: import("./reading/stats.js").ReadingPace;
 }
 
 export interface Annotation {
