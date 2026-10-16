@@ -88,8 +88,7 @@ export class OpfsStore implements FileStore {
 
   async write(path: string, data: Uint8Array | string): Promise<void> {
     const prevQueue = this.writeQueues.get(path) || Promise.resolve();
-    let currentOperation: Promise<void>;
-    currentOperation = (async () => {
+    const currentOperation: Promise<void> = (async () => {
       await prevQueue.catch(() => {});
       await this.doWrite(path, data);
     })();

@@ -67,9 +67,14 @@ if (typeof window !== "undefined" && window.matchMedia) {
       applyThemeToDom("system");
     }
   };
-  if (mql.addEventListener) {
-    mql.addEventListener("change", handler);
-  } else if ((mql as any).addListener) {
-    (mql as any).addListener(handler);
+  type LegacyMql = MediaQueryList & {
+    addEventListener?: MediaQueryList["addEventListener"];
+    addListener?: (listener: (ev: MediaQueryListEvent) => void) => void;
+  };
+  const lmql = mql as LegacyMql;
+  if (lmql.addEventListener) {
+    lmql.addEventListener("change", handler);
+  } else if (lmql.addListener) {
+    lmql.addListener(handler);
   }
 }

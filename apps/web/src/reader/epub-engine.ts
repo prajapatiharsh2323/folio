@@ -598,7 +598,9 @@ export class EpubEngine implements ReaderEngine {
             chapterTitle = this.lookupChapterTitle(spineItem.href);
           }
         }
-      } catch {}
+      } catch {
+        /* ignore */
+      }
 
       for (const listener of this.relocateListeners) {
         listener({ location: cfi, percent, chapterId, chapterTitle });
@@ -773,7 +775,9 @@ export class EpubEngine implements ReaderEngine {
               if (p !== undefined && p !== null && !isNaN(p)) {
                 percent = Math.round(p * 1000) / 10;
               }
-            } catch {}
+            } catch {
+        /* ignore */
+      }
           }
 
           // Fallback to spine position fraction until locations are loaded
@@ -1088,7 +1092,9 @@ export class EpubEngine implements ReaderEngine {
 
     // Re-anchor to current CFI to prevent reading position drift (R-07)
     // Only re-display if rendition has already completed an initial display (has manager)
-    if (anchorCfi && (this.rendition as any)?.manager && !this.isDestroyed) {
+    if (anchorCfi
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      && (this.rendition as any)?.manager && !this.isDestroyed) {
       try {
         this.rendition.display(anchorCfi).catch(() => {});
       } catch {

@@ -35,8 +35,8 @@ export async function importHtml(
   let contentHtml = rawHtml;
   try {
     let doc: Document | null = null;
-    if (windowObj && "DOMParser" in (windowObj as any)) {
-      doc = new (windowObj as any).DOMParser().parseFromString(rawHtml, "text/html");
+    if (windowObj && "DOMParser" in (windowObj as unknown as Record<string, unknown>)) {
+      doc = new (windowObj as unknown as { DOMParser: typeof DOMParser }).DOMParser().parseFromString(rawHtml, "text/html");
     } else if (typeof window !== "undefined" && typeof DOMParser !== "undefined") {
       doc = new DOMParser().parseFromString(rawHtml, "text/html");
     } else {

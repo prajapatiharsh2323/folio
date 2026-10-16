@@ -49,7 +49,6 @@ export const EpubSpikeScreen: React.FC = () => {
       if (viewClass && viewClass.prototype && !viewClass.prototype.__folioSanitized) {
         viewClass.prototype.__folioSanitized = true;
         const originalLoad = viewClass.prototype.load;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         viewClass.prototype.load = function (contents: string) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const section = (this as any).section;

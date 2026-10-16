@@ -103,7 +103,9 @@ export const BookCard: React.FC<BookCardProps> = ({
     if ("vibrate" in navigator) {
       try {
         navigator.vibrate(8);
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     }
     onSelectToggle?.(doc.id);
   };

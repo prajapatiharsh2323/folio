@@ -167,7 +167,7 @@ export const useReaderStore = create<ReaderState>()(
       name: "folio-reader-prefs",
       version: 2,
       migrate: (persistedState: unknown, _version: number) => {
-        return persistedState as any;
+        return persistedState as ReaderState;
       },
       merge: (persistedState, currentState) => ({
         ...currentState,

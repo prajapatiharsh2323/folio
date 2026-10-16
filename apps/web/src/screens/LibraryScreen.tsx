@@ -49,7 +49,9 @@ export const LibraryScreen: React.FC = () => {
       const updated = { ...prev, [docId]: hue };
       try {
         localStorage.setItem("folio_custom_card_hues", JSON.stringify(updated));
-      } catch {}
+      } catch {
+        /* ignore */
+      }
       return updated;
     });
   };

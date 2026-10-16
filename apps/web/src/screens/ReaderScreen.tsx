@@ -196,7 +196,9 @@ export const ReaderScreen: React.FC = () => {
           wakeLock = await (
             navigator as unknown as { wakeLock: { request: (type: string) => Promise<{ release: () => Promise<void> }> } }
           ).wakeLock.request("screen");
-        } catch {}
+        } catch {
+      /* ignore */
+    }
       }
     };
     void acquireLock();
@@ -940,7 +942,9 @@ export const ReaderScreen: React.FC = () => {
     if ("vibrate" in navigator) {
       try {
         navigator.vibrate(10);
-      } catch {}
+      } catch {
+      /* ignore */
+    }
     }
 
     const annotation: Annotation = {
@@ -1001,7 +1005,9 @@ export const ReaderScreen: React.FC = () => {
       await navigator.clipboard.writeText(selection.quote);
       setCopiedFeedback(true);
       setTimeout(() => setCopiedFeedback(false), 1500);
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   };
 
   const toggleFullscreen = () => {
@@ -1019,7 +1025,9 @@ export const ReaderScreen: React.FC = () => {
     if ("vibrate" in navigator) {
       try {
         navigator.vibrate(10);
-      } catch {}
+      } catch {
+      /* ignore */
+    }
     }
 
     if (activeBookmark) {

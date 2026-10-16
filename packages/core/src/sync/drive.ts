@@ -181,7 +181,7 @@ export class GoogleDriveSyncProvider implements SyncProvider {
 
     do {
       const pageParam: string = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
-      const res: any = await this.fetchFn(
+      const res: Response = await this.fetchFn(
         `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,size,modifiedTime,appProperties)&pageSize=1000${pageParam}`,
         { headers }
       );
@@ -190,8 +190,8 @@ export class GoogleDriveSyncProvider implements SyncProvider {
         throw new Error(`Failed to list files from Drive: ${res.statusText}`);
       }
 
-      const data: any = await res.json();
-      const files: DriveApiFile[] = (data.files || []) as DriveApiFile[];
+      const data = (await res.json()) as { files?: DriveApiFile[]; nextPageToken?: string };
+      const files: DriveApiFile[] = data.files || [];
       for (const f of files) {
         const sha256 = f.appProperties?.sha256 || "";
         const path = f.appProperties?.relPath || f.name;
