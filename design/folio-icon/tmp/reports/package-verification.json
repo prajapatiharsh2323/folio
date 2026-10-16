@@ -14,31 +14,30 @@
   "preview_png": {
     "width": 1024,
     "height": 1024,
-    "visible_pixels": 1006147,
+    "visible_pixels": 213540,
     "visible_bounds": {
-      "min_x": 0,
-      "min_y": 0,
-      "max_x": 1023,
-      "max_y": 1023
+      "min_x": 288,
+      "min_y": 252,
+      "max_x": 735,
+      "max_y": 783
     }
   },
   "app_svg": "folio-icon.svg",
   "app_png": {
     "width": 1024,
     "height": 1024,
-    "visible_pixels": 1048576,
+    "visible_pixels": 213540,
     "visible_bounds": {
-      "min_x": 0,
-      "min_y": 0,
-      "max_x": 1023,
-      "max_y": 1023
+      "min_x": 288,
+      "min_y": 252,
+      "max_x": 735,
+      "max_y": 783
     }
   },
   "generic_assets": {
     "layers": [
-      "layers/01-gradient-plate.svg",
-      "layers/02-open-book.svg",
-      "layers/03-spine-and-page-rules.svg"
+      "layers/01-open-book.svg",
+      "layers/02-spine-and-page-rules.svg"
     ]
   },
   "apple_adapter": null,
@@ -49,9 +48,8 @@
       "folio-icon.preview.png",
       "folio-icon.svg",
       "folio-icon.png",
-      "layers/01-gradient-plate.svg",
-      "layers/02-open-book.svg",
-      "layers/03-spine-and-page-rules.svg",
+      "layers/01-open-book.svg",
+      "layers/02-spine-and-page-rules.svg",
       "tmp/README.md",
       "tmp/reports/style-report.json",
       "tmp/reports/package-verification.json",

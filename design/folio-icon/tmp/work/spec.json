@@ -1,8 +1,10 @@
 {
   "name": "folio-icon",
-  "target_platforms": ["Web (PWA)"],
+  "target_platforms": [
+    "Web (PWA)"
+  ],
   "source_reference": "apps/web/public/icons/icon.svg (project-local Folio reader mark)",
-  "brief": "Refine the existing Folio open-book monogram into a clean layered semantic package: moss-green plate with a 2-stop depth gradient, cream open-book silhouette, spine and page rules. Must read clearly on light, dark, and true-black launchers (PWA manifest use).",
+  "brief": "Transparent no-background version of the Folio open-book mark (user requested background removal). Rendered mark colors must still read on dark themes; a companion opaque-plate variant lives in git history for PWA manifest use.",
   "semantic_review": {
     "status": "visually-close",
     "identity_risk": "low",
@@ -17,8 +19,8 @@
     "must_preserve": [
       "open-book two-page silhouette with top-center dip and bottom-center spine flare",
       "single central spine line and 5 page rules (two long + one short per page)",
-      "moss green plate and cream book color roles",
-      "solid plate: no transparency in app canvas"
+      "cream book with green rule color roles",
+      "fully transparent canvas: no plate, no filled background"
     ],
     "must_not_add": [
       "material effects, bevel, glow, shadow, rim, text, frames",
@@ -27,20 +29,15 @@
     ],
     "components": [
       {
-        "id": "plate",
-        "layer": "gradient plate",
-        "format": "svg",
-        "source_provenance": "project-local",
-        "alignment_basis": "full-canvas square derived from original 512 plate",
-        "spec_constraints": ["2-stop vertical moss gradient, no texture or strips"]
-      },
-      {
         "id": "book-mark",
         "layer": "open book",
         "format": "svg",
         "source_provenance": "project-local",
         "alignment_basis": "redrawn from apps/web/public/icons/icon.svg coordinates (x2 scale) with smooth C curves",
-        "spec_constraints": ["single continuous compound silhouette", "no material helpers"]
+        "spec_constraints": [
+          "single continuous compound silhouette",
+          "no material helpers"
+        ]
       },
       {
         "id": "page-details",
@@ -48,7 +45,10 @@
         "format": "svg",
         "source_provenance": "project-local",
         "alignment_basis": "stroke positions scaled x2 from original spine and rule lines",
-        "spec_constraints": ["round cap strokes in plate green", "exactly one spine line + 5 page rules as in source"]
+        "spec_constraints": [
+          "round cap strokes in plate green",
+          "exactly one spine line + 5 page rules as in source"
+        ]
       }
     ],
     "acceptance_checks": [
@@ -57,18 +57,7 @@
       "preview reads at 64px on white, dark, and true-black backdrops"
     ]
   },
-  "fill": {
-    "linear-gradient": [
-      "extended-srgb:0.20784,0.47843,0.40392,1.00000",
-      "extended-srgb:0.15294,0.37647,0.31765,1.00000"
-    ],
-    "orientation": { "start": { "x": 0, "y": 0 }, "stop": { "x": 0, "y": 1 } }
-  },
   "layers": [
-    {
-      "name": "gradient plate",
-      "svg": "<rect width=\"1024\" height=\"1024\" fill=\"url(#plate-grad)\"/><defs><linearGradient id=\"plate-grad\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"#357A67\"/><stop offset=\"1\" stop-color=\"#276051\"/></linearGradient></defs>"
-    },
     {
       "name": "open book",
       "svg": "<path d=\"M512 320 C 588 272 668 252 736 252 L 736 736 C 656 736 578 748 512 784 C 446 748 368 736 288 736 L 288 252 C 356 252 436 272 512 320 Z\" fill=\"#FAFAF7\"/>"

@@ -10,16 +10,15 @@
   ],
   "deliverable_type": null,
   "source_reference": "apps/web/public/icons/icon.svg (project-local Folio reader mark)",
-  "brief": "Refine the existing Folio open-book monogram into a clean layered semantic package: moss-green plate with a 2-stop depth gradient, cream open-book silhouette, spine and page rules. Must read clearly on light, dark, and true-black launchers (PWA manifest use).",
+  "brief": "Transparent no-background version of the Folio open-book mark (user requested background removal). Rendered mark colors must still read on dark themes; a companion opaque-plate variant lives in git history for PWA manifest use.",
   "renderer": "@resvg/resvg-js",
   "generated_files": [
     "folio-icon.preview.svg",
     "folio-icon.preview.png",
     "folio-icon.svg",
     "folio-icon.png",
-    "layers/01-gradient-plate.svg",
-    "layers/02-open-book.svg",
-    "layers/03-spine-and-page-rules.svg",
+    "layers/01-open-book.svg",
+    "layers/02-spine-and-page-rules.svg",
     "tmp/README.md",
     "tmp/reports/style-report.json",
     "tmp/reports/package-verification.json",
@@ -38,9 +37,8 @@
   "app_svg": "folio-icon.svg",
   "app_png": "folio-icon.png",
   "layers": [
-    "layers/01-gradient-plate.svg",
-    "layers/02-open-book.svg",
-    "layers/03-spine-and-page-rules.svg"
+    "layers/01-open-book.svg",
+    "layers/02-spine-and-page-rules.svg"
   ],
   "apple_adapter": null,
   "preview_background_layers": [],
@@ -60,8 +58,8 @@
     "must_preserve": [
       "open-book two-page silhouette with top-center dip and bottom-center spine flare",
       "single central spine line and 5 page rules (two long + one short per page)",
-      "moss green plate and cream book color roles",
-      "solid plate: no transparency in app canvas"
+      "cream book with green rule color roles",
+      "fully transparent canvas: no plate, no filled background"
     ],
     "must_not_add": [
       "material effects, bevel, glow, shadow, rim, text, frames",
@@ -69,14 +67,6 @@
       "rounded platform mask in foreground assets"
     ],
     "components": [
-      {
-        "id": "plate",
-        "layer": "gradient plate",
-        "format": "svg",
-        "spec_constraints": [
-          "2-stop vertical moss gradient, no texture or strips"
-        ]
-      },
       {
         "id": "book-mark",
         "layer": "open book",
