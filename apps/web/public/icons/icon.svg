@@ -1,1 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">  <rect width="512" height="512" rx="112" fill="#2F6F5E" />  <!-- Book / Folio monogram -->  <path d="M144 128 C 144 128, 208 120, 256 160 C 304 120, 368 128, 368 128 L 368 368 C 368 368, 304 360, 256 392 C 208 360, 144 368, 144 368 Z" fill="#FAFAF7" />  <path d="M256 160 L 256 392" stroke="#2F6F5E" stroke-width="8" stroke-linecap="round" />  <path d="M176 200 L 232 200" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />  <path d="M176 240 L 232 240" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />  <path d="M176 280 L 220 280" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />  <path d="M280 200 L 336 200" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />  <path d="M280 240 L 336 240" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />  <path d="M280 280 L 324 280" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" /></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <rect width="512" height="512" rx="112" fill="#2F6F5E" />
+  <!-- Book / Folio monogram -->
+  <path d="M144 128 C 144 128, 208 120, 256 160 C 304 120, 368 128, 368 128 L 368 368 C 368 368, 304 360, 256 392 C 208 360, 144 368, 144 368 Z" fill="#FAFAF7" />
+  <path d="M256 160 L 256 392" stroke="#2F6F5E" stroke-width="8" stroke-linecap="round" />
+  <path d="M176 200 L 232 200" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />
+  <path d="M176 240 L 232 240" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />
+  <path d="M176 280 L 220 280" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />
+  <path d="M280 200 L 336 200" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />
+  <path d="M280 240 L 336 240" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />
+  <path d="M280 280 L 324 280" stroke="#2F6F5E" stroke-width="6" stroke-linecap="round" />
+</svg>
