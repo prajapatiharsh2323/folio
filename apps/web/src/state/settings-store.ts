@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
-export type Theme = "light" | "warm" | "dark" | "system";
+export type Theme = "light" | "warm" | "dark" | "true-black" | "system";
+
+export type EffectiveTheme = Exclude<Theme, "system">;
 
 interface SettingsState {
   theme: Theme;
@@ -12,13 +14,19 @@ const THEME_STORAGE_KEY = "folio-theme";
 const getSavedTheme = (): Theme => {
   if (typeof localStorage === "undefined") return "light";
   const saved = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
-  if (saved === "light" || saved === "warm" || saved === "dark" || saved === "system") {
+  if (
+    saved === "light" ||
+    saved === "warm" ||
+    saved === "dark" ||
+    saved === "true-black" ||
+    saved === "system"
+  ) {
     return saved;
   }
   return "light";
 };
 
-export const resolveEffectiveTheme = (theme: Theme): "light" | "warm" | "dark" => {
+export const resolveEffectiveTheme = (theme: Theme): EffectiveTheme => {
   if (theme === "system") {
     if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
       return "dark";
@@ -35,10 +43,11 @@ export const applyThemeToDom = (theme: Theme) => {
   document.documentElement.setAttribute("data-theme-setting", theme);
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) {
-    const colors: Record<"light" | "warm" | "dark", string> = {
+    const colors: Record<EffectiveTheme, string> = {
       light: "#FAFAF7",
       warm: "#F4ECD8",
-      dark: "#121214"
+      dark: "#121214",
+      "true-black": "#000000"
     };
     metaTheme.setAttribute("content", colors[effective]);
   }

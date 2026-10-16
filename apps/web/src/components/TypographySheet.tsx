@@ -5,6 +5,7 @@ import {
   Moon,
   Coffee,
   Laptop,
+  Contrast,
   AlignLeft,
   AlignJustify,
   Columns2,
@@ -171,6 +172,8 @@ export const TypographySheet: React.FC<TypographySheetProps> = ({ open, onOpenCh
             fontFamily:
               localPrefs.fontFamily === "serif"
                 ? '"Literata", "Noto Serif Devanagari", Georgia, serif'
+                : localPrefs.fontFamily === "lora"
+                ? '"Lora", "Literata", "Noto Serif Devanagari", Georgia, serif'
                 : localPrefs.fontFamily === "mono"
                 ? "ui-monospace, SFMono-Regular, monospace"
                 : localPrefs.fontFamily === "publisher"
@@ -254,12 +257,13 @@ export const TypographySheet: React.FC<TypographySheetProps> = ({ open, onOpenCh
             <span className="text-xs font-semibold uppercase tracking-wider text-muted block mb-2">
               Color Theme
             </span>
-            <div role="radiogroup" aria-label="Theme selection" className="grid grid-cols-4 gap-2">
+            <div role="radiogroup" aria-label="Theme selection" className="grid grid-cols-5 gap-2">
               {(
                 [
                   { id: "light", label: "Light", icon: Sun },
                   { id: "warm", label: "Warm", icon: Coffee },
                   { id: "dark", label: "Dark", icon: Moon },
+                  { id: "true-black", label: "OLED", icon: Contrast },
                   { id: "system", label: "System", icon: Laptop }
                 ] as const
               ).map(({ id, label, icon: Icon }) => (
@@ -313,7 +317,7 @@ export const TypographySheet: React.FC<TypographySheetProps> = ({ open, onOpenCh
             <div
               role="radiogroup"
               aria-label="Font family selection"
-              className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+              className="grid grid-cols-2 sm:grid-cols-5 gap-2"
             >
               <button
                 role="radio"
@@ -328,7 +332,23 @@ export const TypographySheet: React.FC<TypographySheetProps> = ({ open, onOpenCh
                     : "border-border bg-bg text-text hover:bg-border/30"
                 }`}
               >
-                Literata Serif
+                Literata
+              </button>
+              <button
+                role="radio"
+                aria-checked={localPrefs.fontFamily === "lora"}
+                onClick={() => {
+                  setLocalPrefs((prev) => ({ ...prev, fontFamily: "lora" }));
+                  setPrefs({ fontFamily: "lora" });
+                }}
+                className={`py-2 px-2.5 rounded-lg border text-xs transition-all min-h-[44px] flex items-center justify-center ${
+                  localPrefs.fontFamily === "lora"
+                    ? "border-accent bg-accent/10 text-accent font-semibold ring-1 ring-accent"
+                    : "border-border bg-bg text-text hover:bg-border/30"
+                }`}
+                style={{ fontFamily: '"Lora", Georgia, serif' }}
+              >
+                Lora
               </button>
               <button
                 role="radio"

@@ -90,8 +90,8 @@ export interface Manifest {
 }
 
 export interface ReadingPrefs {
-  theme: "light" | "warm" | "dark" | "system";
-  fontFamily: "serif" | "sans" | "mono" | "publisher";
+  theme: "light" | "warm" | "dark" | "true-black" | "system";
+  fontFamily: "serif" | "sans" | "mono" | "lora" | "publisher";
   fontSize: number;          // 14 - 32 px
   lineHeight: number;        // 1.3 - 2.4
   margin: number;            // 12 - 64 px horizontal gutter

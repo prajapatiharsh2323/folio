@@ -882,6 +882,14 @@ export class EpubEngine implements ReaderEngine {
         muted: "#9A968C",
         border: "#2C2C32",
         accent: "#7FC8B2"
+      },
+      "true-black": {
+        bg: "#000000",
+        surface: "#0B0B0E",
+        text: "#C8C4BC",
+        muted: "#8B887F",
+        border: "#232329",
+        accent: "#7FC8B2"
       }
     };
 
@@ -899,6 +907,7 @@ export class EpubEngine implements ReaderEngine {
 
     const fontMap: Record<string, string> = {
       serif: '"Literata", "Noto Serif Devanagari", Georgia, serif',
+      lora: '"Lora", "Literata", "Noto Serif Devanagari", Georgia, serif',
       sans: 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Devanagari", sans-serif',
       mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       publisher: 'inherit'

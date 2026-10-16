@@ -1,4 +1,5 @@
 @import "@fontsource/literata/index.css";
+@import "@fontsource/lora/index.css";
 @import "@fontsource/noto-sans-devanagari/index.css";
 @import "@fontsource/noto-serif-devanagari/index.css";
 
@@ -100,6 +101,33 @@
   --card-chip-hover: oklch(0.95 0.02 var(--h) / 0.22);
   --card-spine-bg: oklch(0.95 0.02 var(--h) / 0.14);
   --card-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.45);
+}
+
+/* OLED / true black: pure black background for power-efficient dark reading */
+:root[data-theme="true-black"],
+[data-theme="true-black"] {
+  --bg: #000000;
+  --surface: #0B0B0E;
+  --text: #C8C4BC;
+  --muted: #8B887F;
+  --border: #232329;
+  --accent: #7FC8B2;
+  --hl-yellow: #FFE58A;
+  --hl-green: #B7E4B0;
+  --hl-blue: #A9D1F5;
+  --hl-pink: #F5B7CC;
+
+  /* Harmonic Book Card Tokens */
+  --card-bg-l: 0.24;
+  --card-bg-c: 0.04;
+  --card-bg-l2: 0.2;
+  --card-ink-l: 0.92;
+  --card-sub-l: 0.74;
+  --card-ink-c: 0.02;
+  --card-chip: oklch(0.92 0.02 var(--h) / 0.12);
+  --card-chip-hover: oklch(0.92 0.02 var(--h) / 0.22);
+  --card-spine-bg: oklch(0.92 0.02 var(--h) / 0.14);
+  --card-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.6);
 }
 
 /* Harmonic Book Card Template */

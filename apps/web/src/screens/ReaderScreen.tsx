@@ -16,6 +16,8 @@ import {
   RotateCcw,
   Info,
   X,
+  Moon,
+  Sun,
   Loader2,
   Trash2
 } from "lucide-react";
@@ -28,6 +30,7 @@ import {
   fileStore,
   libraryManager
 } from "../state/library-store.js";
+import { resolveEffectiveTheme } from "../state/settings-store.js";
 import { TypographySheet } from "../components/TypographySheet.js";
 import { DocumentSheet } from "../components/DocumentSheet.js";
 import { haptic } from "../reader/haptics.js";
@@ -156,8 +159,17 @@ export const ReaderScreen: React.FC = () => {
   const engineRef = useRef<ReaderEngine | null>(null);
   const touchDownRef = useRef(false);
 
-  const { prefs } = useReaderStore();
+  const { prefs, setPrefs } = useReaderStore();
   const libraryDocs = useLibraryStore((state) => state.docs);
+
+  // Quick night-mode cycle: light→dark→light from the reader header
+  const toggleNightMode = useCallback(() => {
+    haptic(5);
+    const effective = resolveEffectiveTheme(prefs.theme);
+    setPrefs({ theme: effective === "dark" || effective === "true-black" ? "light" : "dark" });
+  }, [prefs.theme, setPrefs]);
+  const isNightReading =
+    resolveEffectiveTheme(prefs.theme) === "dark" || resolveEffectiveTheme(prefs.theme) === "true-black";
 
   const [isDesktop, setIsDesktop] = useState(
     typeof window !== "undefined" ? window.innerWidth >= 768 : false
@@ -1148,7 +1160,7 @@ export const ReaderScreen: React.FC = () => {
 
   return (
     <div
-      data-theme={prefs.theme}
+      data-theme={resolveEffectiveTheme(prefs.theme)}
       data-flow={prefs.flow}
       className="relative h-[100dvh] w-full overflow-hidden select-none bg-bg text-text flex flex-col md:grid md:grid-rows-[auto_1fr_auto]"
     >
@@ -1185,6 +1197,16 @@ export const ReaderScreen: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {/* Quick Night Mode Toggle */}
+          <button
+            onClick={toggleNightMode}
+            title={isNightReading ? "Switch to day reading" : "Switch to night reading"}
+            aria-label={isNightReading ? "Switch to day reading" : "Switch to night reading"}
+            className="min-w-[44px] min-h-[44px] p-2 rounded-lg hover:bg-bg text-muted hover:text-text transition-colors flex items-center justify-center"
+          >
+            {isNightReading ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+
           {/* In-Book Search button */}
           <button
             onClick={() => setSearchOpen(true)}

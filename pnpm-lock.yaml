@@ -63,6 +63,9 @@ importers:
       '@fontsource/literata':
         specifier: ^5.3.0
         version: 5.3.0
+      '@fontsource/lora':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/noto-sans-devanagari':
         specifier: ^5.3.0
         version: 5.3.0
@@ -982,6 +985,9 @@ packages:
 
   '@fontsource/literata@5.3.0':
     resolution: {integrity: sha512-9JGMT5+YfBK49thoMq9ASaMRJErHT4V4QuMhAEwKHRLreOsIMP2xP6ZRLhPJ0e6YlET+kjWTJuN7LAxt9/gWGQ==}
+
+  '@fontsource/lora@5.3.0':
+    resolution: {integrity: sha512-OK1g1z01rHVPqO5aw/FOIoDqc46KKYZdgL3NOLkxLWDk6QhDHhdr/h2BV1cke6gTvR1tzpDfdKyUkGsC+sQLeQ==}
 
   '@fontsource/noto-sans-devanagari@5.3.0':
     resolution: {integrity: sha512-7khYmipS/5KAUUmrO1DKir8yL8XI00d0+ZE9BqbS8XF1jzObv6CpPOk3UeYxF+Pvi8bx9bBvprBCOcbx/eQWTQ==}
@@ -5397,6 +5403,8 @@ snapshots:
   '@exodus/bytes@1.16.0': {}
 
   '@fontsource/literata@5.3.0': {}
+
+  '@fontsource/lora@5.3.0': {}
 
   '@fontsource/noto-sans-devanagari@5.3.0': {}
 

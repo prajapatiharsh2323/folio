@@ -202,6 +202,11 @@ export class PdfEngine implements ReaderEngine {
         this.canvasEl.style.filter = "invert(0.92) hue-rotate(180deg) contrast(0.95)";
         context.fillStyle = "#121214";
         context.fillRect(0, 0, viewport.width, viewport.height);
+      } else if (effectiveTheme === "true-black") {
+        // Same inverted treatment as dark, with a pure black page background
+        this.canvasEl.style.filter = "invert(0.92) hue-rotate(180deg) contrast(1.02)";
+        context.fillStyle = "#000000";
+        context.fillRect(0, 0, viewport.width, viewport.height);
       } else if (effectiveTheme === "warm") {
         this.canvasEl.style.filter = "sepia(0.28) brightness(0.97)";
         context.fillStyle = "#fbf0d9";

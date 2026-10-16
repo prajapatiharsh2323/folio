@@ -7,6 +7,10 @@
 import "@fontsource/literata/400.css";
 import "@fontsource/literata/400-italic.css";
 import "@fontsource/literata/700.css";
+import "@fontsource/lora/400.css";
+import "@fontsource/lora/400-italic.css";
+import "@fontsource/lora/500.css";
+import "@fontsource/lora/700.css";
 import "@fontsource/noto-serif-devanagari/400.css";
 import "@fontsource/noto-serif-devanagari/700.css";
 import "@fontsource/noto-sans-devanagari/400.css";
@@ -15,10 +19,13 @@ import "@fontsource/noto-sans-devanagari/700.css";
 export const SERIF_STACK =
   '"Literata", "Noto Serif Devanagari", "Iowan Old Style", "Palatino Linotype", Georgia, "Nirmala UI", "Kohinoor Devanagari", "Devanagari Sangam MN", serif';
 
+export const LORA_STACK =
+  '"Lora", "Literata", "Noto Serif Devanagari", "Iowan Old Style", Georgia, "Nirmala UI", "Kohinoor Devanagari", "Devanagari Sangam MN", serif';
+
 export const SANS_STACK =
   'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Devanagari", "Nirmala UI", "Kohinoor Devanagari", "Devanagari Sangam MN", sans-serif';
 
-const FAMILIES = ["Literata", "Noto Serif Devanagari", "Noto Sans Devanagari"];
+const FAMILIES = ["Literata", "Lora", "Noto Serif Devanagari", "Noto Sans Devanagari"];
 
 let cached = "";
 
