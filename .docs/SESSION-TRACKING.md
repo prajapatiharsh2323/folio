@@ -24,8 +24,8 @@
   git config user.email "harshprajapaticoding@gmail.com"` (repo-local).
 - Verification: `pnpm -r run typecheck` · `pnpm run lint` · `pnpm test` (79 passing) ·
   `pnpm --filter @folio/web run build` (PWA: 88 precache entries).
-- Superpowers SDD workspace for this plan: `.superpowers/sdd/reader-enhancement-plan/`
-  (ledger `progress.md`; Plan tasks 1–5 all marked complete).
+- Completed plan workspace (`.superpowers/sdd/reader-enhancement-plan/`) was cleaned up
+  after final review; the durable record lives in git history + `.docs/results/`.
 
 ## AI-side deferred minors (candidates for next session — from fresh review 66c30a3)
 
