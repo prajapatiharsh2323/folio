@@ -36,6 +36,7 @@
 | M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-4 DONE — core rendering + prefs + chrome + chapter-accurate restore (strict within-chapter CFI + fonts pending; device smoke blocked) |
+| R2 | reader comfort polish (chrome toggle, page pillar, typography controls) | **DONE** (cb7ed34) |
 | ↳ step 3 | PWA-parity prefs mapper + library harness screen + PDFBox app init | **DONE** (9028907) — device smoke next |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
@@ -98,6 +99,24 @@
 14. **Importers are `object`s** (companion-less) with sync `import(bytes, name)`
     — NOT constructors; `LibraryManager.listDocuments(): List<DocMeta>`
     (metadata), NOT ManifestDoc (file-hashes).
+15. **Readium 3.0.0 selection/decoration APIs**: `SelectableNavigator.
+    currentSelection()` is a **suspend** fn returning `Selection?` (NO flow);
+    `clearSelection()`; `Selection(locator, rect: RectF)`. `DecorableNavigator`
+    has **batch** `applyDecorations(List<Decoration>, group: String)` (no
+    single-add in 3.0) + `supportsDecorationStyle(KClass)` +
+    `addDecorationListener(group, Listener{onDecorationActivated(event):
+    Boolean})`. `Decoration(id, locator, style, extras)`;
+    `Style.Highlight(tint: Int ARGB, isActive: Boolean)`; tints via
+    `Decoration.Style.Tinted.getTint(): Int`. `InputListener.onTap(TapEvent):
+    Boolean` (+ onDrag/onKey) via `addInputListener` — returning true consumes.
+16. **`Locator.Text(before, highlight, after)`** — all three are NULLABLE in
+    Kotlin metadata (javap shows non-null; use `.orEmpty()`). PWA annotation
+    parity: `prefix = before.takeLast(32)`, `suffix = after.take(32)`,
+    `location` = CFI string.
+17. **HighlightManager (R3 groundwork)**: saved annotations carry only a CFI
+    string (schema-1), which 3.0.0 cannot parse → v1 renders only session-made
+    highlights (keeps full Locator in memory). Reopening-render needs the CFI
+    parser. Group name `"highlights"`.
 
 ## Environment facts (fresh sessions: re-verify, don't assume)
 
@@ -188,7 +207,16 @@
       FontFamilyDeclaration (3.1.2+). Custom profiles (Literata/Lora stacks,
       Devanagari fonts) require the toolchain upgrade OR @font-face injection;
       serif/sans/mono generic families work via FontFamily enum value class.
-    - 79/79 tests green.
+    - **R2 (cb7ed34, b6abc56)**: reader chrome rework (tap-middle-third toggles
+      top bar via InputListener; always-visible bottom pillar = chapter title +
+      %; secondary typography row = family menu / line-height / margins /
+      justify) + selection→highlight groundwork (SelectionBridge pure core,
+      HighlightManager decorations, chrome Highlight button). Progress saving
+      throttled in-activity (lastSavedProgress) instead of distinctUntilChanged.
+      82/82 tests green.
+    - **Next**: R3 proper — annotation context menu (edit note/color/delete),
+      rendering persisted highlights on reopen (needs CFI parser), quote-card
+      share images; OR device smoke (still blocked: no AVDs/system images).
   - **Next session**: FIRST verify green build. Options in priority order:
     1. Device smoke (still blocked: no AVDs/system images on VM).
     2. R2: reader chrome polish — toggle-by-tap (hidden chrome), page-number
