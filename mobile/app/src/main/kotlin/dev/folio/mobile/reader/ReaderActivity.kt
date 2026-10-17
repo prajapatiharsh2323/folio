@@ -11,7 +11,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import dev.folio.mobile.R
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Progress
+import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.reader.ProgressBridge
+import dev.folio.mobile.core.reader.ReaderPrefsMapper
 import dev.folio.mobile.core.store.AppFileStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -150,9 +152,16 @@ class ReaderActivity : FragmentActivity() {
     }
 
     private fun attachNavigator(publication: Publication, docId: String, initialLocator: Locator) {
-        val factory = EpubNavigatorFactory(publication = publication)
+        val mappedPrefs = ReaderPrefsMapper.mapPrefs(ReadingPrefs())
+        val factory = EpubNavigatorFactory(
+            publication = publication,
+            configuration = EpubNavigatorFactory.Configuration(
+                defaults = ReaderPrefsAndroid.toEpubDefaults(mappedPrefs)
+            )
+        )
         supportFragmentManager.fragmentFactory = factory.createFragmentFactory(
             initialLocator = initialLocator,
+            initialPreferences = ReaderPrefsAndroid.toEpubInitialPreferences(mappedPrefs),
             listener = readerListener(),
         )
 
