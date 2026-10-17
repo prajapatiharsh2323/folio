@@ -22,7 +22,8 @@
   No MuPDF (AGPL).
 - **EPUB-first focus** (user priority): R1–R4 reader workstream, see below.
 - v1 EPUB scope: R1 core + R2 comfort + R3 annotations (incl. shareable quote-card
-  images) + R4 = TTS read-aloud + footnote popups + media overlays.
+  images) + R4 = footnote popups + media overlays. **TTS read-aloud DROPPED for now**
+  (user decision, Oct 17 2026 — post-v1 backlog, not debt).
 - Deferred post-v1: fixed-layout EPUB, custom user CSS, auto-scroll, repair-import,
   landmarks/page-list.
 
@@ -37,7 +38,7 @@
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | pending |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
-| R4 | TTS read-aloud (+ MediaSession audio-focus), footnote popups, media overlays | pending |
+| R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
 | M4 | Search: SQLDelight FTS5 + normaliser port; manifest+index single transaction; Hindi fixture suite | pending |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
@@ -55,6 +56,14 @@
 6. Package `dev.folio.mobile`; icon = vector adaptive (charcoal bg #23242F + violet
    bookmark #715CFC brand mark), no bitmaps committed.
 7. Material You dynamic color disabled for now — Folio palette is the identity.
+8. **Readium Kotlin Toolkit pinned to 3.0.0** (Kotlin 1.9.24-compiled; our Kotlin
+   2.0.21 cannot consume metadata from 3.1+ which is built with Kotlin 2.1.x).
+   Upgrading mobile to Kotlin 2.1.x later unlocks 3.1.2. Modules: shared/streamer/
+   navigator only — NO readium-lcp (DRM refused at import), no opds.
+9. **Progress .location contract**: the PWA stores epub.js `epubcfi(...)` strings.
+   Mobile writes CFI strings from Readium `Locator.locations.fragments` (or chapter
+   href when no CFI). v1 restore uses `publication.locateProgression(percent)`;
+   exact CFI-restore is an open R1 item.
 
 ## Environment facts (fresh sessions: re-verify, don't assume)
 
