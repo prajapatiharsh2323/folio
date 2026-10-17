@@ -36,6 +36,14 @@
             android:name=".reader.ReaderActivity"
             android:theme="@style/Theme.FolioMobile"
             android:exported="false" />
+        <activity
+            android:name=".SettingsActivity"
+            android:theme="@style/Theme.FolioMobile"
+            android:exported="false" />
+        <activity
+            android:name=".NotesActivity"
+            android:theme="@style/Theme.FolioMobile"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

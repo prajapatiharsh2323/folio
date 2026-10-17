@@ -129,13 +129,21 @@ data class DocFiles(
 )
 
 @Serializable
+data class ProgressPace(
+    val sessionsMs: Long = 0,
+    val percentRead: Double = 0.0
+)
+
+@Serializable
 data class Progress(
     val docId: String,
     /** EPUB CFI, PDF page, or scroll offset */
     val location: String,
     val percent: Double,
     /** ISO 8601 UTC */
-    val updatedAt: String
+    val updatedAt: String,
+    /** Optional reading pace (PWA B3). Tolerated on read; written only when known. */
+    val pace: ProgressPace? = null
 )
 
 @Serializable

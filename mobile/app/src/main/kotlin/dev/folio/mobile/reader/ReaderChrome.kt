@@ -13,12 +13,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -62,6 +72,8 @@ fun ReaderChrome(
     onBack: () -> Unit,
     onPrefsChange: (ReadingPrefs) -> Unit,
     onHighlight: () -> Unit = {},
+    onBookmark: () -> Unit = {},
+    onToc: () -> Unit = {},
     onScrub: (Double) -> Unit = {},
     onScrubFinished: (Double) -> Unit = {},
     modifier: Modifier = Modifier
@@ -74,16 +86,33 @@ fun ReaderChrome(
             Surface(
                 color = surface,
                 contentColor = text,
-                tonalElevation = 2.dp
+                tonalElevation = 2.dp,
+                modifier = Modifier.windowInsetsPadding(
+                    WindowInsets.statusBars
+                        .union(WindowInsets.displayCutout)
+                        .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                )
             ) {
                 Column {
-                    TopBar(prefs, onBack, onPrefsChange, onHighlight)
+                    TopBar(prefs, onBack, onPrefsChange, onHighlight, onBookmark, onToc)
                     TypographyRow(prefs, text, onPrefsChange)
                 }
             }
         }
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) // spacer over the canvas
-        Pillar(pillarTitle, pillarPercent, surface, text, onScrub, onScrubFinished)
+        Pillar(
+            pillarTitle,
+            pillarPercent,
+            surface,
+            text,
+            onScrub,
+            onScrubFinished,
+            modifier = Modifier.windowInsetsPadding(
+                WindowInsets.navigationBars
+                    .union(WindowInsets.displayCutout)
+                    .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+            )
+        )
     }
 }
 
@@ -92,7 +121,9 @@ private fun TopBar(
     prefs: ReadingPrefs,
     onBack: () -> Unit,
     onPrefsChange: (ReadingPrefs) -> Unit,
-    onHighlight: () -> Unit
+    onHighlight: () -> Unit,
+    onBookmark: () -> Unit = {},
+    onToc: () -> Unit = {}
 ) {
     var themeMenuOpen by remember { mutableStateOf(false) }
 
@@ -140,6 +171,12 @@ private fun TopBar(
             )
         }) {
             Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Toggle flow")
+        }
+        IconButton(onClick = onToc) {
+            Icon(Icons.Filled.FormatListBulleted, contentDescription = "Table of contents")
+        }
+        IconButton(onClick = onBookmark) {
+            Icon(Icons.Filled.Bookmark, contentDescription = "Add bookmark")
         }
         // R3 groundwork: captures the current text selection as a highlight.
         IconButton(onClick = onHighlight) {
@@ -267,14 +304,15 @@ private fun Pillar(
     surface: Color,
     text: Color,
     onScrub: (Double) -> Unit,
-    onScrubFinished: (Double) -> Unit
+    onScrubFinished: (Double) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     if (title.isBlank() && percent <= 0.0) return
 
     // Local drag value so the thumb doesn't fight live progression updates.
     var scrub by remember { mutableStateOf<Double?>(null) }
 
-    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+    Box(modifier = modifier.fillMaxWidth().padding(bottom = 4.dp)) {
         Column(
             modifier = Modifier
                 .align(Alignment.Center)

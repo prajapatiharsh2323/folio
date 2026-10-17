@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -85,6 +86,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.importer.ImportDispatch
+import dev.folio.mobile.core.importer.ImportResult
 import dev.folio.mobile.core.importer.UnsupportedFormatException
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
@@ -211,6 +213,9 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var activeFilter by remember { mutableStateOf<LibraryUi.LibraryFilter?>(null) }
     var detailsTarget by remember { mutableStateOf<LibraryUi.LibraryItem?>(null) }
     var manageCollectionsOpen by remember { mutableStateOf(false) }
+    var sortBy by remember { mutableStateOf("recent") }
+    var duplicateResult by remember { mutableStateOf<ImportResult?>(null) }
+    var duplicateDialogOpen by remember { mutableStateOf(false) }
 
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
@@ -219,7 +224,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         val library = appLibrary(context)
         val docs = withContext(Dispatchers.IO) { library.listDocuments() }
         val progress = withContext(Dispatchers.IO) { library.getAllProgress() }
-        entries = LibraryUi.sort(docs.map { LibraryUi.item(it, progress[it.id]) })
+        entries = sortLibrary(docs.map { LibraryUi.item(it, progress[it.id]) }, sortBy, progress)
         // Recovery state (spec §4 Rule 2): damaged entries + interrupted imports.
         withContext(Dispatchers.IO) {
             damagedNotice = LibraryUi.damagedNotice(library.damagedDocuments())
@@ -249,12 +254,25 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         scope.launch {
             importing = true
             try {
-                val added = importFromUri(context, uri)
-                if (added) {
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IOException("Cannot read the selected file")
+                }
+                if (bytes.size > 50 * 1024 * 1024) {
+                    throw IOException("File too large (max 50 MB)")
+                }
+                val displayName = uri.lastPathSegment?.substringAfterLast('/')
+                    ?.takeIf { it.isNotBlank() } ?: "import"
+                val result = ImportDispatch.import(bytes, displayName)
+                val library = appLibrary(context)
+                val dup = withContext(Dispatchers.IO) { library.findDuplicate(result.meta.contentHash) }
+                if (dup != null) {
+                    duplicateResult = result
+                    duplicateDialogOpen = true
+                } else {
+                    withContext(Dispatchers.IO) { library.addDocument(result) }
                     refresh()
                     snackbar.showSnackbar("Imported")
-                } else {
-                    snackbar.showSnackbar("Already in library — skipped")
                 }
             } catch (e: UnsupportedFormatException) {
                 snackbar.showSnackbar("Unsupported format — EPUB, HTML or TXT only")
@@ -283,6 +301,27 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             TopAppBar(
                 title = { Text("Folio") },
                 actions = {
+                    Box {
+                        var sortMenuOpen by remember { mutableStateOf(false) }
+                        IconButton(onClick = { sortMenuOpen = true }) {
+                            Icon(Icons.Filled.Sort, contentDescription = "Sort")
+                        }
+                        DropdownMenu(
+                            expanded = sortMenuOpen,
+                            onDismissRequest = { sortMenuOpen = false }
+                        ) {
+                            listOf("recent", "title", "author", "progress").forEach { key ->
+                                DropdownMenuItem(
+                                    text = { Text(if (sortBy == key) "• $key" else key) },
+                                    onClick = {
+                                        sortMenuOpen = false
+                                        sortBy = key
+                                        scope.launch { refresh() }
+                                    }
+                                )
+                            }
+                        }
+                    }
                     IconButton(
                         enabled = !importing && !loading,
                         onClick = { searchActive = true }
@@ -309,6 +348,20 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                 onClick = {
                                     topMenuOpen = false
                                     manageCollectionsOpen = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                onClick = {
+                                    topMenuOpen = false
+                                    context.startActivity(SettingsActivity.createIntent(context))
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Notes") },
+                                onClick = {
+                                    topMenuOpen = false
+                                    context.startActivity(NotesActivity.createIntent(context))
                                 }
                             )
                         }
@@ -549,6 +602,66 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 withContext(Dispatchers.IO) { appLibrary(context).createCollection(name) }
             },
             onDismiss = { detailsTarget = null }
+        )
+    }
+
+    // Duplicate import prompt (spec §4 Rule 3).
+    if (duplicateDialogOpen) {
+        AlertDialog(
+            onDismissRequest = {
+                duplicateDialogOpen = false
+                duplicateResult = null
+            },
+            title = { Text("Already in library") },
+            text = { Text("This document's content already exists. What do you want to do?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    duplicateDialogOpen = false
+                    val r = duplicateResult
+                    duplicateResult = null
+                    if (r != null) {
+                        scope.launch {
+                            try {
+                                val library = appLibrary(context)
+                                withContext(Dispatchers.IO) { library.addDocument(r) }
+                                refresh()
+                                snackbar.showSnackbar("Imported as new copy")
+                            } catch (t: Throwable) {
+                                snackbar.showSnackbar(t.message ?: "Import failed")
+                            }
+                        }
+                    }
+                }) { Text("Keep both") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        duplicateDialogOpen = false
+                        duplicateResult = null
+                    }) { Text("Skip") }
+                    TextButton(onClick = {
+                        duplicateDialogOpen = false
+                        val r = duplicateResult
+                        duplicateResult = null
+                        if (r != null) {
+                            scope.launch {
+                                try {
+                                    val library = appLibrary(context)
+                                    val dup = withContext(Dispatchers.IO) { library.findDuplicate(r.meta.contentHash) }
+                                    if (dup != null) {
+                                        withContext(Dispatchers.IO) { library.deleteDocument(dup.id) }
+                                        withContext(Dispatchers.IO) { library.addDocument(r) }
+                                    }
+                                    refresh()
+                                    snackbar.showSnackbar("Replaced")
+                                } catch (t: Throwable) {
+                                    snackbar.showSnackbar(t.message ?: "Import failed")
+                                }
+                            }
+                        }
+                    }) { Text("Replace") }
+                }
+            }
         )
     }
 
@@ -1196,6 +1309,18 @@ private fun SearchHitRow(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+/** Sorts library items by the chosen key. */
+private fun sortLibrary(
+    items: List<LibraryUi.LibraryItem>,
+    sortBy: String,
+    progress: Map<String, dev.folio.mobile.core.model.Progress>
+): List<LibraryUi.LibraryItem> = when (sortBy) {
+    "title" -> items.sortedBy { it.title.lowercase() }
+    "author" -> items.sortedBy { it.subtitle.lowercase() }
+    "progress" -> items.sortedByDescending { it.percent ?: -1.0 }
+    else -> LibraryUi.sort(items) // recent = in-progress first, then untouched, then finished
 }
 
 /** Stable placeholder spine tints (Folio palette-adjacent). */private val SPINE_TINTS = listOf(

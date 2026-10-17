@@ -2,23 +2,34 @@ package dev.folio.mobile.reader
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
+import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -27,8 +38,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
@@ -39,6 +54,7 @@ import dev.folio.mobile.core.annotation.SelectionBridge
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Annotation
+import dev.folio.mobile.core.model.AnnotationKind
 import dev.folio.mobile.core.model.HighlightColor
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.ReadingPrefs
@@ -62,6 +78,7 @@ import org.readium.r2.navigator.input.DragEvent
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.KeyEvent
 import org.readium.r2.navigator.input.TapEvent
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.LocatorService
@@ -139,6 +156,15 @@ class ReaderActivity : FragmentActivity() {
     /** Cleared once the navigator emits its first locator (or after a timeout). */
     private val readerReady = mutableStateOf(false)
 
+    /** TOC sheet visibility + flattened entries (title, depth, locator). */
+    private val tocVisible = mutableStateOf(false)
+    private val tocEntries = mutableStateOf<List<TocEntry>>(emptyList())
+
+    /** Captured selection for the floating selection toolbar. */
+    private val selectionToolbarVisible = mutableStateOf(false)
+    private val selectionAnnotation = mutableStateOf<Annotation?>(null)
+    private val selectionLocator = mutableStateOf<Locator?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
             // The OS killed the process mid-session: the navigator can only be
@@ -155,9 +181,24 @@ class ReaderActivity : FragmentActivity() {
             finish()
             return
         }
+        enableEdgeToEdge()
         setContentView(R.layout.activity_reader)
+        // Keep the screen awake while reading (PWA spec §7).
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         prefsStore = PrefsStore(AppFileStore(filesDir))
         currentDocId = docId
+
+        // Edge-to-edge: Readium only pads for display cutouts, so handle the
+        // system bars (status + nav/gesture) at this container level instead.
+        val navContainer = findViewById<android.view.View>(R.id.navigator_container)
+        ViewCompat.setOnApplyWindowInsetsListener(navContainer) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         // Chrome overlay (Compose hosting on a FragmentActivity via ComposeView)
         val chrome = findViewById<ComposeView>(R.id.reader_chrome)
@@ -172,11 +213,52 @@ class ReaderActivity : FragmentActivity() {
                     onBack = { onBackPressedDispatcher.onBackPressed() },
                     onPrefsChange = { updated -> onPrefsChanged(updated) },
                     onHighlight = { onHighlightTapped() },
+                    onBookmark = { onBookmarkTapped() },
+                    onToc = { tocVisible.value = true },
                     onScrub = { p -> pillarPercent.value = p },
                     onScrubFinished = { p -> scrubTo(p) },
                     pillarTitle = pillarTitle.value,
                     pillarPercent = pillarPercent.value
                 )
+                if (tocVisible.value) {
+                    TocSheet(
+                        entries = tocEntries.value,
+                        onEntry = { onTocEntryTapped(it) },
+                        onDismiss = { tocVisible.value = false }
+                    )
+                }
+                if (selectionToolbarVisible.value) {
+                    SelectionToolbarSheet(
+                        annotation = selectionAnnotation.value,
+                        onColor = { color -> saveSelectionHighlight(color) },
+                        onNote = { _ ->
+                            val a = selectionAnnotation.value
+                            if (a != null) {
+                                val updated = a.copy(color = HighlightColor.Yellow)
+                                loadScope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        highlightManager?.add(updated, selectionLocator.value!!)
+                                        navigatorRef?.clearSelection()
+                                        selectionToolbarVisible.value = false
+                                        selectionAnnotation.value = null
+                                        selectionLocator.value = null
+                                        annotationMenu.value = updated
+                                    }
+                                }
+                            }
+                        },
+                        onCopy = { copySelectionToClipboard() },
+                        onDismiss = {
+                            navigatorRef?.clearSelection()
+                            selectionToolbarVisible.value = false
+                            selectionAnnotation.value = null
+                            selectionLocator.value = null
+                        }
+                    )
+                }
                 // Splash sits ABOVE the chrome so loading is a clean takeover;
                 // it fades out on the navigator's first locator.
                 AnimatedVisibility(
@@ -201,11 +283,15 @@ class ReaderActivity : FragmentActivity() {
         loadScope.launch {
             // Prefs FIRST — the navigator gets the mapped values at attach time
             prefsState.value = prefsStore.loadReadingPrefs()
+            withContext(Dispatchers.Main) {
+                applySystemBarAppearance(prefsState.value)
+            }
             loadAndAttach(docId)
         }
     }
 
     override fun onDestroy() {
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         progressJob?.cancel()
         // Flush the last debounced progress write before the scope goes away.
         saveJob?.cancel()
@@ -223,6 +309,9 @@ class ReaderActivity : FragmentActivity() {
     /** Chrome → navigator → persistence (single source of truth: prefsState). */
     private fun onPrefsChanged(updated: ReadingPrefs) {
         prefsState.value = updated
+        applySystemBarAppearance(updated)
+        findViewById<android.view.View>(R.id.navigator_container)
+            ?.setBackgroundColor(ReaderPrefsMapper.mapPrefs(updated).backgroundArgb)
         navigatorRef?.submitPreferences(
             ReaderPrefsAndroid.toEpubInitialPreferences(
                 ReaderPrefsMapper.mapPrefs(updated)
@@ -322,6 +411,9 @@ class ReaderActivity : FragmentActivity() {
     private fun attachNavigator(publication: Publication, docId: String, initialLocator: Locator) {
         val currentPrefs = prefsState.value
         val mappedPrefs = ReaderPrefsMapper.mapPrefs(currentPrefs)
+        applySystemBarAppearance(currentPrefs)
+        findViewById<android.view.View>(R.id.navigator_container)
+            ?.setBackgroundColor(mappedPrefs.backgroundArgb)
         val factory = EpubNavigatorFactory(
             publication = publication,
             configuration = EpubNavigatorFactory.Configuration(
@@ -332,6 +424,9 @@ class ReaderActivity : FragmentActivity() {
             initialLocator = initialLocator,
             initialPreferences = ReaderPrefsAndroid.toEpubInitialPreferences(mappedPrefs),
             listener = readerListener(),
+            configuration = EpubNavigatorFragment.Configuration(
+                shouldApplyInsetsPadding = false
+            )
         )
         supportFragmentManager.fragmentFactory = factoryFragment
         supportFragmentManager.commitNow {
@@ -341,6 +436,8 @@ class ReaderActivity : FragmentActivity() {
             as? EpubNavigatorFragment ?: return
         navigatorRef = navigator
         publicationRef = publication
+        // Flatten the publication's table of contents (nested → flat with depth).
+        tocEntries.value = flattenToc(publication.tableOfContents, 0)
         navigator.addInputListener(chromeTapListener())
         val manager = HighlightManager(navigator, publication, docId).also { it.installListener() }
         highlightManager = manager
@@ -411,6 +508,19 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
+    private fun applySystemBarAppearance(prefs: ReadingPrefs) {
+        val dark = when (prefs.theme) {
+            "dark", "true-black" -> true
+            "system" -> (resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            else -> false
+        }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
+
     private fun shareQuoteCard(annotation: Annotation) {
         loadScope.launch {
             val uri = QuoteCard.share(
@@ -445,10 +555,16 @@ class ReaderActivity : FragmentActivity() {
     private fun onHighlightTapped() {
         val navigator = navigatorRef ?: return
         val docId = currentDocId
-        val manager = highlightManager ?: return
         loadScope.launch {
             val selection = navigator.currentSelection()
-            if (selection == null) return@launch
+            if (selection == null) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity, "Select text first", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                return@launch
+            }
             val now = java.time.Instant.now().toString()
             val annotation = SelectionBridge.annotationFromSelection(
                 docId = docId,
@@ -456,12 +572,43 @@ class ReaderActivity : FragmentActivity() {
                 id = java.util.UUID.randomUUID().toString(),
                 updatedAt = now
             )
-            withContext(Dispatchers.IO) {
-                LibraryManager(AppFileStore(filesDir)).saveAnnotation(annotation)
+            selectionAnnotation.value = annotation
+            selectionLocator.value = selection.locator
+            withContext(Dispatchers.Main) {
+                selectionToolbarVisible.value = true
             }
-            manager.add(annotation, selection.locator)
-            navigator.clearSelection()
         }
+    }
+
+    /** Saves the captured selection as a highlight with the chosen color and optional note. */
+    private fun saveSelectionHighlight(color: HighlightColor, note: String? = null) {
+        val annotation = selectionAnnotation.value ?: return
+        val locator = selectionLocator.value ?: return
+        val manager = highlightManager ?: return
+        val updated = annotation.copy(color = color, note = note?.ifBlank { null })
+        loadScope.launch {
+            withContext(Dispatchers.IO) {
+                LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
+            }
+            withContext(Dispatchers.Main) {
+                manager.add(updated, locator)
+                navigatorRef?.clearSelection()
+                selectionToolbarVisible.value = false
+                selectionAnnotation.value = null
+                selectionLocator.value = null
+            }
+        }
+    }
+
+    /** Copies the captured selection's quote to the clipboard. */
+    private fun copySelectionToClipboard() {
+        val annotation = selectionAnnotation.value ?: return
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Folio", annotation.quote))
+        selectionToolbarVisible.value = false
+        selectionAnnotation.value = null
+        selectionLocator.value = null
+        android.widget.Toast.makeText(this, "Copied", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -491,10 +638,68 @@ class ReaderActivity : FragmentActivity() {
             mediaType = MediaType.XHTML
         )
 
-    /** Navigator wires external links only via this listener (v1: no-op). */
+    /** Flattens a (possibly nested) TOC into a depth-annotated list. */
+    private fun flattenToc(links: List<Link>, depth: Int): List<TocEntry> {
+        val out = mutableListOf<TocEntry>()
+        for (link in links) {
+            val title = link.title?.takeIf { it.isNotBlank() } ?: link.href.toString()
+            out.add(TocEntry(title, depth, link))
+            if (link.children.isNotEmpty()) {
+                out.addAll(flattenToc(link.children, depth + 1))
+            }
+        }
+        return out
+    }
+
+    /** Jumps the navigator to a TOC entry. */
+    private fun onTocEntryTapped(entry: TocEntry) {
+        val navigator = navigatorRef ?: return
+        val publication = publicationRef ?: return
+        tocVisible.value = false
+        loadScope.launch {
+            val locator = chapterLocator(entry.link)
+            withContext(Dispatchers.Main) {
+                navigator.go(locator, false)
+            }
+        }
+    }
+
+    /** Adds a bookmark at the current reading position. */
+    private fun onBookmarkTapped() {
+        val navigator = navigatorRef ?: return
+        val docId = currentDocId
+        loadScope.launch {
+            val selection = navigator.currentLocator.value
+            val now = java.time.Instant.now().toString()
+            val annotation = Annotation(
+                id = java.util.UUID.randomUUID().toString(),
+                docId = docId,
+                quote = "",
+                prefix = "",
+                suffix = "",
+                location = ProgressBridge.buildProgress(docId, selection, now).location,
+                kind = AnnotationKind.Bookmark,
+                createdAt = now,
+                updatedAt = now
+            )
+            withContext(Dispatchers.IO) {
+                LibraryManager(AppFileStore(filesDir)).saveAnnotation(annotation)
+            }
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    this@ReaderActivity, "Bookmark added", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    /** Navigator wires external links to a browser. */
     private fun readerListener() = object : EpubNavigatorFragment.Listener {
         override fun onExternalLinkActivated(absoluteUrl: AbsoluteUrl) {
-            // R-phase TODO: open a browser / share sheet; blocked for v1 reader
+            runCatching {
+                val uri = android.net.Uri.parse(absoluteUrl.toString())
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+            }
         }
     }
 
@@ -571,6 +776,106 @@ class ReaderActivity : FragmentActivity() {
             // go() mutates the view pager — must run on the main thread.
             withContext(Dispatchers.Main) {
                 navigator.go(locator, false)
+            }
+        }
+    }
+}
+
+/** A flattened table-of-contents entry. */
+data class TocEntry(val title: String, val depth: Int, val link: Link)
+
+/**
+ * Floating selection toolbar (PWA parity): 4 color chips + Add note + Copy.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionToolbarSheet(
+    annotation: Annotation?,
+    onColor: (HighlightColor) -> Unit,
+    onNote: (String) -> Unit,
+    onCopy: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        androidx.compose.foundation.layout.Column(
+            modifier = androidx.compose.ui.Modifier.padding(16.dp)
+        ) {
+            Text("Highlight", style = MaterialTheme.typography.titleMedium)
+            androidx.compose.foundation.layout.Spacer(
+                androidx.compose.ui.Modifier.height(8.dp)
+            )
+            if (annotation != null) {
+                Text(
+                    "\u201C${annotation.quote.take(80)}\u201D",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                androidx.compose.foundation.layout.Spacer(
+                    androidx.compose.ui.Modifier.height(12.dp)
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ANNOTATION_CHIP_ARGBS.forEach { (color, argb) ->
+                    Box(
+                        modifier = androidx.compose.ui.Modifier
+                            .size(36.dp)
+                            .background(androidx.compose.ui.graphics.Color(argb), CircleShape)
+                            .clickable { onColor(color) }
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = {
+                    // Simple note capture: prompt via a toast; full dialog is in AnnotationMenu.
+                    onNote("")
+                }) { Text("Add note") }
+                TextButton(onClick = onCopy) { Text("Copy") }
+            }
+        }
+    }
+}
+
+/**
+ * Table of contents sheet (R1). Lists flattened TOC entries; tapping jumps.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun TocSheet(
+    entries: List<TocEntry>,
+    onEntry: (TocEntry) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        androidx.compose.foundation.layout.Column(
+            modifier = androidx.compose.ui.Modifier
+                .padding(16.dp)
+        ) {
+            Text("Contents", style = MaterialTheme.typography.titleMedium)
+            androidx.compose.foundation.layout.Spacer(
+                Modifier.height(8.dp)
+            )
+            if (entries.isEmpty()) {
+                Text(
+                    "No table of contents.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn {
+                    items(entries.size) { i ->
+                        val e = entries[i]
+                        TextButton(
+                            onClick = { onEntry(e) },
+                            modifier = androidx.compose.ui.Modifier
+                                .padding(start = (e.depth * 16).dp)
+                        ) {
+                            Text(
+                                e.title,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         }
     }

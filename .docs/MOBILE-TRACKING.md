@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + EPUB covers (fb2cb20) + spec §4 Rule 2 recovery COMPLETE (damaged banner 59422ea + interrupted imports finish/delete 3f6cae6) + tags/collections (051c94c) + reader splash (e2f8181, L1 residue EMPTY) + collections management rename/delete (f8b80a0) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 164/164 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE + R1 (TOC + bookmarks + keep-awake + external links added) + R2 DONE + R2b PARTIAL + R3 DONE (bookmarks + selection toolbar added) + Settings screen + Notes screen + basic backup/restore + sort control + duplicate prompt + pace field added — 164/164 tests green (new code compiles; no new tests yet). TTS + PDF + audio dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 

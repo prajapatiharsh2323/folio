@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -17,8 +19,28 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            // Credentials live in keystore.properties (git-ignored). Fall back to
+            // the debug keystore so `assembleRelease` still works without it.
+            val props = Properties()
+            val propsFile = rootProject.file("keystore.properties")
+            if (propsFile.exists()) {
+                propsFile.inputStream().use { props.load(it) }
+            }
+            val storeFile = props.getProperty("storeFile")
+            if (storeFile != null) {
+                this.storeFile = rootProject.file(storeFile)
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
