@@ -35,7 +35,8 @@
 | M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
 | M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
-| R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | **step 1-2 DONE** — toolchain wired + ReaderActivity skeleton (on-device run pending); themes/prefs/flows next |
+| R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-3 DONE — toolchain + ReaderActivity + PWA-parity prefs (device smoke pending) |
+| ↳ step 3 | PWA-parity prefs mapper + library harness screen + PDFBox app init | **DONE** (9028907) — device smoke next |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
@@ -76,6 +77,27 @@
     `onExternalLinkActivated` (only); `Publication` 3.0.0 has NO
     locate/locateProgression helpers → use `findService(LocatorService)`; Activity
     uses `supportFragmentManager` (fragmentFactory before adding the fragment).
+12. **Readium 3.0.0 prefs quirks**: `EpubPreferences.fontFamily` is a
+    `FontFamily` VALUE class over String (map serif/sans/mono via
+    `FontFamily.SERIF/SANS_SERIF/MONOSPACE`; custom → `FontFamily(str)`);
+    `Color` is a value class over Int ARGB; enums `Theme{LIGHT,DARK,SEPIA}`,
+    `Spread{AUTO,NEVER,ALWAYS}`, `ColumnCount{AUTO,ONE,TWO}`,
+    `TextAlign{JUSTIFY,...}`, `ReadingProgression{LTR,RTL}`. Typography prefs
+    (lineHeight/textAlign/hyphens/letterSpacing/paragraphSpacing) only take
+    effect with `publisherStyles=false` — we default to false (PWA's styles
+    always apply). Initial prefs passed as `initialPreferences` on
+    `createFragmentFactory`; EpubDefaults via
+    `EpubNavigatorFactory.Configuration(defaults=...)`.
+13. **ReadingPrefs value semantics (mapping locked in ReaderPrefsMapper)**:
+    schema `fontSize`/`margin` are PX → divide by 16 into Readium relative
+    fontSize factor / pageMargins em-factor (v1 approximation marked);
+    lineHeight passthrough; theme keys resolve via PWA THEME_COLORS tokens
+    (exact hex identical to `epub-engine.ts`), warm→SEPIA,
+    dark+true-black→DARK, system→light on native v1; spread none→NEVER,
+    both→ALWAYS; `fontFamily: publisher` → null override.
+14. **Importers are `object`s** (companion-less) with sync `import(bytes, name)`
+    — NOT constructors; `LibraryManager.listDocuments(): List<DocMeta>`
+    (metadata), NOT ManifestDoc (file-hashes).
 
 ## Environment facts (fresh sessions: re-verify, don't assume)
 
@@ -137,10 +159,21 @@
     ready for the library UI (no nav yet — import UI is a later phase).
   - 68/68 tests green. Commits: ea670a6 (docs), b5642d9 (toolchain), 1bbb5d8 (reader
     + bridge), a24c770 (cleanup). All pushed.
-  - **Next session**: FIRST verify green build. Then R1 step 3: on-device smoke —
-    run a test-app-derived import + read flow via emulator (adb), fix runtime
-    issues (PDFBoxResourceLoader still not wired; EpubPreferences defaults for
-    PWA parity 18px/1.6/20 serif paginated come next), then 5 themes + typography.
+  - **R1 step 3 (same session, 9028907)**: `ReaderPrefsMapper` (pure, 5 tests) —
+    ReadingPrefs → Readium knobs with PWA parity (see hot notes 12-13);
+    `ReaderPrefsAndroid.toEpubInitialPreferences/Defaults` thin adapter;
+    ReaderActivity now passes initialPreferences + Configuration(defaults).
+    MainActivity=Library harness (list docs → reader; debug button imports an
+    original short sample text via TxtImporter so device E2E needs no files).
+    FolioApplication registers `PDFBoxResourceLoader.init` (manifest
+    android:name wired). 73/73 tests green.
+  - **Next session**: FIRST verify green build. Then R1 step 4: device smoke —
+    `adb install`; tap "Import sample text" → open doc → reader must render,
+    prefs defaults visible (serif 18px-equivalent/1.6/margins), progress saves;
+    fix runtime crashes BEFORE any new feature. Then: 5-theme switcher + font
+    families + typography UI (R2) reading prefs persistence (ReadingPrefs
+    store in user/settings.json), and the ReadingProgression RTL/CJK language
+    handling when Devanagari fonts land.
 
 - **Session M-4 continued (Oct 17, 2026)** — M3 phases 2+3: HTML + PDF importers. M3 COMPLETE.
   - `HtmlImporter` + jsoup (`org.jsoup:jsoup:1.18.1`): `articleSafelist()` = DOMPurify
