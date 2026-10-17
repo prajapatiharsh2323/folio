@@ -1,5 +1,6 @@
 package dev.folio.mobile.core.library
 
+import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.model.DocFiles
 import dev.folio.mobile.core.model.DocKind
 import dev.folio.mobile.core.model.DocMeta
@@ -127,6 +128,66 @@ class LibraryUiTest {
         assertFalse(notice.items[0].finishable)
         assertEquals("Real", notice.items[1].label)
         assertTrue(notice.items[1].finishable)
+    }
+
+    @Test
+    fun `item carries tags and collectionIds`() {
+        val m = meta("d1", "B", "A").copy(
+            tags = listOf("sci-fi", "  "),
+            collectionIds = listOf("c1")
+        )
+        val item = LibraryUi.item(m, null)
+        assertEquals(listOf("sci-fi"), item.tags)
+        assertEquals(listOf("c1"), item.collectionIds)
+    }
+
+    @Test
+    fun `applyFilter by tag and collection, null shows all`() {
+        val items = listOf(
+            LibraryUi.item(meta("d1", "Alpha", "A").copy(tags = listOf("sci-fi")), null),
+            LibraryUi.item(meta("d2", "Beta", "B").copy(collectionIds = listOf("c1")), null),
+            LibraryUi.item(meta("d3", "Gamma", "C"), null)
+        )
+        assertEquals(3, LibraryUi.applyFilter(items, null).size)
+        assertEquals(
+            listOf("d1"),
+            LibraryUi.applyFilter(items, LibraryUi.LibraryFilter.TagFilter("sci-fi")).map { it.id }
+        )
+        assertEquals(
+            listOf("d2"),
+            LibraryUi.applyFilter(
+                items,
+                LibraryUi.LibraryFilter.CollectionFilter("c1", "Fiction")
+            ).map { it.id }
+        )
+    }
+
+    @Test
+    fun `available filters are collections in order then unique sorted tags`() {
+        val collections = listOf(
+            Collection("c2", "Zeta", emptyList(), "t"),
+            Collection("c1", "Alpha", emptyList(), "t")
+        )
+        val items = listOf(
+            LibraryUi.item(meta("d1", "A", "x").copy(tags = listOf("zebra", "apple")), null),
+            LibraryUi.item(meta("d2", "B", "x").copy(tags = listOf("apple")), null)
+        )
+        val filters = LibraryUi.filters(collections, items)
+        assertEquals(
+            listOf("Zeta", "Alpha"),
+            filters.filterIsInstance<LibraryUi.LibraryFilter.CollectionFilter>().map { it.name }
+        )
+        assertEquals(
+            listOf("apple", "zebra"),
+            filters.filterIsInstance<LibraryUi.LibraryFilter.TagFilter>().map { it.tag }
+        )
+    }
+
+    @Test
+    fun `normalizeTag trims lowercases and rejects blanks and dupes`() {
+        assertNull(LibraryUi.normalizeTag("  ", emptyList()))
+        assertEquals("sci-fi", LibraryUi.normalizeTag("  Sci-Fi ", emptyList()))
+        assertNull(LibraryUi.normalizeTag("Sci-Fi", listOf("sci-fi")))
     }
 
     @Test

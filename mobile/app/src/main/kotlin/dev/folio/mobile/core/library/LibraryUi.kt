@@ -1,5 +1,6 @@
 package dev.folio.mobile.core.library
 
+import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.model.DocKind
 import dev.folio.mobile.core.model.DocMeta
 import dev.folio.mobile.core.model.ManifestDoc
@@ -25,7 +26,11 @@ object LibraryUi {
         /** stable color seed for the placeholder cover. */
         val colorSeed: Int,
         /** store-relative cover path (e.g. "library/docs/<slug>/cover.jpg"), when present. */
-        val cover: String? = null
+        val cover: String? = null,
+        /** doc tags (lowercase, PWA contract) for filtering + the details dialog. */
+        val tags: List<String> = emptyList(),
+        /** collection ids the doc belongs to (kept in sync by setDocCollections). */
+        val collectionIds: List<String> = emptyList()
     )
 
     fun item(meta: DocMeta, progress: Progress?): LibraryItem {
@@ -42,7 +47,9 @@ object LibraryUi {
             percentLabel = progress?.let { "${(it.percent.coerceIn(0.0, 1.0) * 100).toInt()}%" } ?: "",
             colorSeed = titleSeed(meta.title.ifBlank { meta.slug }),
             cover = meta.files.cover?.takeIf { it.isNotBlank() }
-                ?.let { "library/docs/${meta.slug}/$it" }
+                ?.let { "library/docs/${meta.slug}/$it" },
+            tags = meta.tags.filter { it.isNotBlank() },
+            collectionIds = meta.collectionIds
         )
     }
 
@@ -116,5 +123,34 @@ object LibraryUi {
             "${items.size} interrupted imports found — finish or delete them."
         }
         return OrphanNotice(items.size, text, items)
+    }
+
+    /** One chip in the library filter row (exclusive selection). */
+    sealed interface LibraryFilter {
+        data class TagFilter(val tag: String) : LibraryFilter
+        data class CollectionFilter(val id: String, val name: String) : LibraryFilter
+    }
+
+    /** Filter chips: collections in file order, then unique tags A→Z (PWA parity). */
+    fun filters(collections: List<Collection>, items: List<LibraryItem>): List<LibraryFilter> {
+        val tags = items.flatMap { it.tags }.filter { it.isNotBlank() }.distinct().sorted()
+        return collections.map { LibraryFilter.CollectionFilter(it.id, it.name) } +
+            tags.map { LibraryFilter.TagFilter(it) }
+    }
+
+    /** Applies the active filter (null = show everything). */
+    fun applyFilter(items: List<LibraryItem>, filter: LibraryFilter?): List<LibraryItem> = when (filter) {
+        null -> items
+        is LibraryFilter.TagFilter -> items.filter { filter.tag in it.tags }
+        is LibraryFilter.CollectionFilter -> items.filter { filter.id in it.collectionIds }
+    }
+
+    /**
+     * Tag input rule (PWA DocumentSheet parity): trim + lowercase; null when
+     * empty or already present.
+     */
+    fun normalizeTag(input: String, existing: List<String>): String? {
+        val clean = input.trim().lowercase()
+        return clean.takeIf { it.isNotEmpty() && it !in existing }
     }
 }

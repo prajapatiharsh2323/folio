@@ -350,4 +350,58 @@ class LibraryManagerTest {
         assertTrue(threw)
         assertTrue(store.exists("library/docs/${meta.slug}/meta.json"))
     }
+
+    @Test
+    fun `collection CRUD round-trips and refuses unknown rename`() = runBlocking {
+        val created = manager.createCollection("Fiction")
+        assertTrue(created.id.isNotBlank())
+        assertEquals("Fiction", created.name)
+        assertTrue(created.docIds.isEmpty())
+        assertEquals(listOf(created.id), manager.getCollections().map { it.id })
+
+        val renamed = manager.renameCollection(created.id, "Sci-Fi")
+        assertEquals("Sci-Fi", renamed.name)
+        assertEquals("Sci-Fi", manager.getCollections().first().name)
+
+        var threw = false
+        try {
+            manager.renameCollection("nope", "x")
+        } catch (_: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw)
+
+        manager.deleteCollection(created.id)
+        assertTrue(manager.getCollections().isEmpty())
+    }
+
+    @Test
+    fun `setDocCollections syncs collection docIds and doc meta`() = runBlocking {
+        val meta = manager.addDocument(importResult())
+        val a = manager.createCollection("A")
+        val b = manager.createCollection("B")
+
+        manager.setDocCollections(meta.id, listOf(a.id))
+        var byId = manager.getCollections().associateBy { it.id }
+        assertEquals(listOf(meta.id), byId[a.id]!!.docIds)
+        assertTrue(byId[b.id]!!.docIds.isEmpty())
+        var onDisk = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertEquals(listOf(a.id), onDisk.collectionIds)
+
+        // switching collections moves membership both ways
+        manager.setDocCollections(meta.id, listOf(b.id))
+        byId = manager.getCollections().associateBy { it.id }
+        assertTrue(byId[a.id]!!.docIds.isEmpty())
+        assertEquals(listOf(meta.id), byId[b.id]!!.docIds)
+
+        // empty assignment clears membership everywhere
+        manager.setDocCollections(meta.id, emptyList())
+        assertTrue(manager.getCollections().all { it.docIds.isEmpty() })
+        onDisk = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertTrue(onDisk.collectionIds.isEmpty())
+    }
 }

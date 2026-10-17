@@ -490,4 +490,50 @@ class LibraryManager(
     suspend fun saveCollections(collections: List<Collection>) {
         store.write("library/user/collections.json", json.encodeToString(collections))
     }
+
+    /** Creates a collection (PWA parity: fresh id, empty docIds, now). */
+    suspend fun createCollection(name: String): Collection {
+        val coll = Collection(
+            id = uuidProvider(),
+            name = name,
+            docIds = emptyList(),
+            createdAt = nowIso()
+        )
+        saveCollections(getCollections() + coll)
+        return coll
+    }
+
+    /** Renames a collection; throws when the id is unknown (PWA parity). */
+    suspend fun renameCollection(id: String, name: String): Collection {
+        val collections = getCollections()
+        val coll = collections.firstOrNull { it.id == id }
+            ?: throw IllegalArgumentException("Collection not found: $id")
+        val renamed = coll.copy(name = name)
+        saveCollections(collections.map { if (it.id == id) renamed else it })
+        return renamed
+    }
+
+    /** Deletes a collection; document meta keeps its ids until reassigned (PWA parity). */
+    suspend fun deleteCollection(id: String) {
+        saveCollections(getCollections().filter { it.id != id })
+    }
+
+    /**
+     * Assigns a document to exactly [collectionIds] (spec §5): syncs membership
+     * in every collection file, then the doc's meta/manifest/search text.
+     */
+    suspend fun setDocCollections(docId: String, collectionIds: List<String>) {
+        val collections = getCollections()
+        val updates = collections.map { coll ->
+            val has = docId in coll.docIds
+            val shouldHave = coll.id in collectionIds
+            when {
+                shouldHave && !has -> coll.copy(docIds = coll.docIds + docId)
+                !shouldHave && has -> coll.copy(docIds = coll.docIds - docId)
+                else -> coll
+            }
+        }
+        saveCollections(updates)
+        updateDocMeta(docId, collectionIds = collectionIds)
+    }
 }

@@ -12,6 +12,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Close
@@ -38,12 +41,15 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -79,6 +85,7 @@ import dev.folio.mobile.core.importer.UnsupportedFormatException
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryUi
+import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.search.SearchService
 import dev.folio.mobile.core.search.SearchUi
 import dev.folio.mobile.core.store.AppFileStore
@@ -190,6 +197,9 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var damagedDialogOpen by remember { mutableStateOf(false) }
     var orphanNotice by remember { mutableStateOf<LibraryUi.OrphanNotice?>(null) }
     var orphanDialogOpen by remember { mutableStateOf(false) }
+    var collections by remember { mutableStateOf<List<Collection>>(emptyList()) }
+    var activeFilter by remember { mutableStateOf<LibraryUi.LibraryFilter?>(null) }
+    var detailsTarget by remember { mutableStateOf<LibraryUi.LibraryItem?>(null) }
 
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
@@ -203,6 +213,11 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         withContext(Dispatchers.IO) {
             damagedNotice = LibraryUi.damagedNotice(library.damagedDocuments())
             orphanNotice = LibraryUi.orphanNotice(library.scanInterruptedImports())
+        }
+        collections = withContext(Dispatchers.IO) { library.getCollections() }
+        // Drop a stale filter (e.g. the selected collection was deleted).
+        if (activeFilter != null && activeFilter !in LibraryUi.filters(collections, entries)) {
+            activeFilter = null
         }
         libraryVersion += 1
         loading = false
@@ -239,6 +254,9 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let(::runImport) }
+
+    val filterOptions = LibraryUi.filters(collections, entries)
+    val visibleEntries = LibraryUi.applyFilter(entries, activeFilter)
 
     Scaffold(
         topBar = {
@@ -280,6 +298,30 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 }
                 orphanNotice?.let { notice ->
                     RecoveryBanner(notice.bannerText, onReview = { orphanDialogOpen = true })
+                }
+                if (filterOptions.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = activeFilter == null,
+                            onClick = { activeFilter = null },
+                            label = { Text("All") }
+                        )
+                        for (option in filterOptions) {
+                            FilterChip(
+                                selected = activeFilter == option,
+                                onClick = {
+                                    activeFilter = if (activeFilter == option) null else option
+                                },
+                                label = { Text(filterLabel(option)) }
+                            )
+                        }
+                    }
                 }
                 if (loading) {
                     Box(
@@ -324,13 +366,23 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                             }
                         }
                     }
+                } else if (visibleEntries.isEmpty()) {
+                    Box(
+                        Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "No documents match this filter.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 } else {
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(entries, key = { it.id }) { item ->
+                        items(visibleEntries, key = { it.id }) { item ->
                             LibraryCard(
                                 item = item,
                                 onOpen = {
@@ -338,6 +390,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                         ReaderActivity.createIntent(context, item.id)
                                     )
                                 },
+                                onDetails = { detailsTarget = item },
                                 onDelete = { deleteTarget = item }
                             )
                         }
@@ -430,6 +483,203 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 }
             },
             onClose = { orphanDialogOpen = false }
+        )
+    }
+
+    // Details dialog: tags + collections (PWA DocumentSheet parity).
+    detailsTarget?.let { target ->
+        DetailsDialog(
+            item = target,
+            collections = collections,
+            onSave = { tags, collectionIds ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val library = appLibrary(context)
+                            library.updateDocMeta(
+                                target.id,
+                                tags = tags,
+                                collectionIds = collectionIds
+                            )
+                            library.setDocCollections(target.id, collectionIds)
+                        }
+                        detailsTarget = null
+                        refresh()
+                        snackbar.showSnackbar("Saved")
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Save failed")
+                    }
+                }
+            },
+            onCreateCollection = { name ->
+                withContext(Dispatchers.IO) { appLibrary(context).createCollection(name) }
+            },
+            onDismiss = { detailsTarget = null }
+        )
+    }
+}
+
+private fun filterLabel(filter: LibraryUi.LibraryFilter): String = when (filter) {
+    is LibraryUi.LibraryFilter.TagFilter -> "#${filter.tag}"
+    is LibraryUi.LibraryFilter.CollectionFilter -> filter.name
+}
+
+/** Details dialog (PWA DocumentSheet parity): tag chips + collection checkboxes + create. */
+@Composable
+private fun DetailsDialog(
+    item: LibraryUi.LibraryItem,
+    collections: List<Collection>,
+    onSave: (tags: List<String>, collectionIds: List<String>) -> Unit,
+    onCreateCollection: suspend (String) -> Collection,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var tags by remember(item.id) { mutableStateOf(item.tags) }
+    var selected by remember(item.id) { mutableStateOf(item.collectionIds.toSet()) }
+    var tagInput by remember { mutableStateOf("") }
+    var newCollName by remember { mutableStateOf("") }
+    var localCollections by remember(collections) { mutableStateOf(collections) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Details") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Text("Tags", style = MaterialTheme.typography.labelLarge)
+                if (tags.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        for (tag in tags) {
+                            InputChip(
+                                selected = false,
+                                onClick = { tags = tags - tag },
+                                label = { Text("#$tag") },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Remove tag"
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DialogTextField(
+                        value = tagInput,
+                        onValueChange = { tagInput = it },
+                        placeholder = "Add a tag…",
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        LibraryUi.normalizeTag(tagInput, tags)?.let { clean ->
+                            tags = tags + clean
+                            tagInput = ""
+                        }
+                    }) { Text("Add") }
+                }
+
+                Text("Collections", style = MaterialTheme.typography.labelLarge)
+                if (localCollections.isEmpty()) {
+                    Text(
+                        "No collections yet — create one below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                } else {
+                    Column {
+                        for (coll in localCollections) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = coll.id in selected,
+                                    onCheckedChange = { checked ->
+                                        selected = if (checked) selected + coll.id
+                                        else selected - coll.id
+                                    }
+                                )
+                                Text(
+                                    coll.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DialogTextField(
+                        value = newCollName,
+                        onValueChange = { newCollName = it },
+                        placeholder = "New collection…",
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        val name = newCollName.trim()
+                        if (name.isNotEmpty()) {
+                            scope.launch {
+                                try {
+                                    val created = onCreateCollection(name)
+                                    localCollections = localCollections + created
+                                    selected = selected + created.id
+                                    newCollName = ""
+                                } catch (_: Throwable) {
+                                    // surface nothing here: the save below will fail loudly
+                                }
+                            }
+                        }
+                    }) { Text("Create") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(tags, localCollections.filter { it.id in selected }.map { it.id })
+            }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/** Small filled input used inside dialogs (BasicTextField + placeholder). */
+@Composable
+private fun DialogTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 10.dp, vertical = 10.dp)
+    ) {
+        if (value.isEmpty()) {
+            Text(
+                placeholder,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+            )
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface
+            )
         )
     }
 }
@@ -763,12 +1013,14 @@ private fun SearchHitRow(
 /**
  * Library card: tinted spine placeholder keyed off the title, title/author/kind
  * and (when previously opened) a progress bar with a % label. Three-dot menu:
- * Open / Delete (delete waits for a confirm dialog upstream).
+ * Open / Details (tags + collections) / Delete (delete waits for a confirm
+ * dialog upstream).
  */
 @Composable
 fun LibraryCard(
     item: LibraryUi.LibraryItem,
     onOpen: () -> Unit,
+    onDetails: () -> Unit,
     onDelete: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -865,6 +1117,16 @@ fun LibraryCard(
                         onClick = {
                             menuOpen = false
                             onOpen()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Details") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Edit, contentDescription = null)
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onDetails()
                         }
                     )
                     DropdownMenuItem(
