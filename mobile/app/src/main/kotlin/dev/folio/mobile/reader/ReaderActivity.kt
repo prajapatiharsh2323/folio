@@ -18,6 +18,7 @@ import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.HighlightColor
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.ReadingPrefs
+import dev.folio.mobile.core.reader.PageTurnKeys
 import dev.folio.mobile.core.reader.ProgressBridge
 import dev.folio.mobile.core.reader.ReaderPrefsMapper
 import dev.folio.mobile.core.store.AppFileStore
@@ -76,6 +77,7 @@ class ReaderActivity : FragmentActivity() {
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressJob: Job? = null
     private var navigatorRef: EpubNavigatorFragment? = null
+    private var publicationRef: Publication? = null
     private var highlightManager: HighlightManager? = null
     private var currentDocId: String = ""
     private lateinit var prefsStore: PrefsStore
@@ -117,12 +119,17 @@ class ReaderActivity : FragmentActivity() {
         val chrome = findViewById<ComposeView>(R.id.reader_chrome)
         chrome.setContent {
             Box {
+                // Brightness scrim sits UNDER the chrome so controls stay crisp;
+                // no pointerInput, touches fall through to the navigator.
+                BrightnessOverlay(prefsState.value.brightness)
                 ReaderChrome(
                     visible = chromeVisible.value,
                     prefs = prefsState.value,
                     onBack = { onBackPressedDispatcher.onBackPressed() },
                     onPrefsChange = { updated -> onPrefsChanged(updated) },
                     onHighlight = { onHighlightTapped() },
+                    onScrub = { p -> pillarPercent.value = p },
+                    onScrubFinished = { p -> scrubTo(p) },
                     pillarTitle = pillarTitle.value,
                     pillarPercent = pillarPercent.value
                 )
@@ -251,6 +258,7 @@ class ReaderActivity : FragmentActivity() {
         val navigator = supportFragmentManager.findFragmentByTag(NAV_TAG)
             as? EpubNavigatorFragment ?: return
         navigatorRef = navigator
+        publicationRef = publication
         navigator.addInputListener(chromeTapListener())
         val manager = HighlightManager(navigator, publication, docId).also { it.installListener() }
         highlightManager = manager
@@ -427,4 +435,42 @@ class ReaderActivity : FragmentActivity() {
 
     /** Last persisted progress — guards the write throttling above. */
     private var lastSavedProgress: Progress? = null
+
+    /**
+     * R2b hardware page-turner: volume keys, Bluetooth media buttons, hardware
+     * page keys and DPAD. First press only (no key-repeat flooding). Consumed
+     * keys never reach the WebView, so no double-turn.
+     */
+    @OptIn(org.readium.r2.shared.ExperimentalReadiumApi::class)
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        val direction = PageTurnKeys.fromKeyCode(keyCode)
+        if (event?.action == android.view.KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0 &&
+            direction != null
+        ) {
+            val navigator = navigatorRef
+            when (direction) {
+                PageTurnKeys.Direction.FORWARD -> navigator?.goForward(false)
+                PageTurnKeys.Direction.BACKWARD -> navigator?.goBackward(false)
+            }
+            if (navigator != null) return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    /** R2b scrubber: jump to a total-publication progression (0..1). */
+    @OptIn(org.readium.r2.shared.ExperimentalReadiumApi::class)
+    private fun scrubTo(percent: Double) {
+        val navigator = navigatorRef ?: return
+        val publication = publicationRef ?: return
+        loadScope.launch {
+            val locator = publication.findService(LocatorService::class)
+                ?.locateProgression(percent.coerceIn(0.0, 1.0))
+                ?: return@launch
+            // go() mutates the view pager — must run on the main thread.
+            withContext(Dispatchers.Main) {
+                navigator.go(locator, false)
+            }
+        }
+    }
 }

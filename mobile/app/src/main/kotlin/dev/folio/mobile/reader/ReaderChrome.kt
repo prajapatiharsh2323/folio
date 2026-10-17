@@ -6,9 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,8 +26,10 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +61,8 @@ fun ReaderChrome(
     onBack: () -> Unit,
     onPrefsChange: (ReadingPrefs) -> Unit,
     onHighlight: () -> Unit = {},
+    onScrub: (Double) -> Unit = {},
+    onScrubFinished: (Double) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val surface = chromeSurface(prefs.theme)
@@ -75,7 +82,7 @@ fun ReaderChrome(
             }
         }
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) // spacer over the canvas
-        Pillar(pillarTitle, pillarPercent, surface, text)
+        Pillar(pillarTitle, pillarPercent, surface, text, onScrub, onScrubFinished)
     }
 }
 
@@ -217,6 +224,20 @@ private fun TypographyRow(
                 .padding(horizontal = 10.dp, vertical = 5.dp)
                 .clickable { onPrefsChange(prefs.copy(justify = !prefs.justify)) }
         )
+        Stepper(
+            label = "br ${prefs.brightness.toInt()}",
+            onDown = {
+                onPrefsChange(
+                    prefs.copy(brightness = (prefs.brightness - 10.0).coerceIn(30.0, 100.0))
+                )
+            },
+            onUp = {
+                onPrefsChange(
+                    prefs.copy(brightness = (prefs.brightness + 10.0).coerceIn(30.0, 100.0))
+                )
+            },
+            tint = tint
+        )
     }
 }
 
@@ -243,27 +264,46 @@ private fun Pillar(
     title: String,
     percent: Double,
     surface: Color,
-    text: Color
+    text: Color,
+    onScrub: (Double) -> Unit,
+    onScrubFinished: (Double) -> Unit
 ) {
     if (title.isBlank() && percent <= 0.0) return
-    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = surface.copy(alpha = 0.92f),
-            tonalElevation = 1.dp,
-            modifier = Modifier.align(Alignment.Center)
+
+    // Local drag value so the thumb doesn't fight live progression updates.
+    var scrub by remember { mutableStateOf<Double?>(null) }
+
+    Box(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .background(surface.copy(alpha = 0.92f), RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 4.dp)
         ) {
             Text(
                 text = if (title.isBlank()) {
-                    "${(percent * 100).toInt()}%"
+                    "${((scrub ?: percent) * 100).toInt()}%"
                 } else {
-                    "${title.take(24)} — ${(percent * 100).toInt()}%"
+                    "${title.take(24)} — ${((scrub ?: percent) * 100).toInt()}%"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = text.copy(alpha = 0.85f),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                overflow = TextOverflow.Ellipsis
+            )
+            Slider(
+                value = (scrub ?: percent.coerceIn(0.0, 1.0)).toFloat(),
+                onValueChange = {
+                    scrub = it.toDouble()
+                    onScrub(it.toDouble())
+                },
+                onValueChangeFinished = {
+                    scrub?.let { s -> onScrubFinished(s) }
+                    scrub = null
+                },
+                modifier = Modifier
+                    .width(280.dp)
+                    .height(22.dp)
             )
         }
     }
@@ -292,6 +332,26 @@ private fun chromeSurface(theme: String): Color = when (theme) {
     "true-black" -> Color(0xFF0B0B0E)
     else -> Color(0xFFFFFFFF)
 }
+
+/**
+ * R2b brightness scrim: darkens the page content when prefs.brightness < 100.
+ * Maps 100..30 to alpha 0..0.56 — never fully black so text stays readable.
+ * The mapping ([brightnessAlpha]) is pure and JVM-testable; this is the paint.
+ */
+@Composable
+fun BrightnessOverlay(brightness: Double) {
+    val alpha = brightnessAlpha(brightness)
+    if (alpha > 0f) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(alpha = alpha, red = 0f, green = 0f, blue = 0f))
+        )
+    }
+}
+
+fun brightnessAlpha(brightness: Double): Float =
+    (((100.0 - brightness) / 100.0) * 0.7).coerceIn(0.0, 0.7).toFloat()
 
 private fun chromeText(theme: String): Color = when (theme) {
     "warm" -> Color(0xFF3B3226)
