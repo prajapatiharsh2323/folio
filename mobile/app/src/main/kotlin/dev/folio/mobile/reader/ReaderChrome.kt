@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -302,7 +303,8 @@ private fun Pillar(
                     scrub = null
                 },
                 modifier = Modifier
-                    .width(280.dp)
+                    .widthIn(max = 280.dp)
+                    .fillMaxWidth(0.9f)
                     .height(22.dp)
             )
         }

@@ -98,12 +98,14 @@ class LibraryManagerTest {
     }
 
     @Test
-    fun `corrupted manifest reinitializes cleanly`() = runBlocking {
+    fun `corrupted manifest is preserved, not overwritten`() = runBlocking {
         manager.getManifest()
         store.write(MANIFEST_PATH, "{corrupted json!!")
         val manifest = manager.getManifest()
         assertEquals(1, manifest.schema)
         assertTrue(manifest.docs.isEmpty())
+        // The corrupt file must survive so recovery/inspection can see it.
+        assertEquals("{corrupted json!!", store.readText(MANIFEST_PATH))
     }
 
     @Test

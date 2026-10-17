@@ -38,12 +38,12 @@ object QuoteCard {
         else -> 0xFFFFE58A.toInt()
     }
 
-    fun share(
+    suspend fun share(
         context: Context,
         annotation: Annotation,
         bookTitle: String?,
         author: String?
-    ): Uri? {
+    ): Uri? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val layout = QuoteCardContent.of(
             quote = annotation.quote,
             note = annotation.note,
@@ -55,10 +55,10 @@ object QuoteCard {
         val dir = File(context.cacheDir, "quote-card").apply { mkdirs() }
         val file = File(dir, "quote-${annotation.id.substringBefore('-')}.png")
         file.outputStream().use { out ->
-            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) return null
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) return@withContext null
         }
         bitmap.recycle()
-        return FileProvider.getUriForFile(
+        FileProvider.getUriForFile(
             context,
             context.packageName + ".fileprovider",
             file

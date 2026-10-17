@@ -70,8 +70,17 @@ class LibraryManager(
         if (store.exists(MANIFEST_PATH)) {
             try {
                 return json.decodeFromString<Manifest>(store.readText(MANIFEST_PATH))
-            } catch (_: Exception) {
-                // corrupted manifest: fall through to clean initialization
+            } catch (e: Exception) {
+                // Corrupted/unreadable manifest: do NOT overwrite it (that would
+                // silently drop every document). Preserve the file for recovery and
+                // surface an empty in-memory view; the caller's recovery scan will
+                // re-register orphan folders.
+                android.util.Log.e("LibraryManager", "Manifest unreadable; preserving file", e)
+                return Manifest(
+                    libraryId = uuidProvider(),
+                    updatedAt = nowIso(),
+                    docs = emptyList()
+                )
             }
         }
         val initial = Manifest(
@@ -89,7 +98,7 @@ class LibraryManager(
     /**
      * Commits an imported document with the exact Section 4 write order.
      */
-    suspend fun addDocument(importResult: ImportResult): DocMeta = mutexFor("add").withLock {
+    suspend fun addDocument(importResult: ImportResult): DocMeta = mutexFor("manifest").withLock {
         val manifest = getManifest()
         val id = uuidProvider()
         val now = nowIso()
@@ -260,7 +269,7 @@ class LibraryManager(
     /**
      * Deletes a document and every trace of it, then rewrites the manifest last (spec §4 Rule 5).
      */
-    suspend fun deleteDocument(id: String) = mutexFor("delete-$id").withLock {
+    suspend fun deleteDocument(id: String) = mutexFor("manifest").withLock {
         val manifest = getManifest()
         val mDoc = manifest.docs.firstOrNull { it.id == id } ?: return@withLock
         val docDir = "library/docs/${mDoc.slug}"

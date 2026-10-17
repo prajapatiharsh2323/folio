@@ -23,10 +23,11 @@ class ImportDispatchTest {
     }
 
     @Test
-    fun `pdf signature routes to pdf importer`() {
-        val result = ImportDispatch.import(PdfFixtures.titledPdf("Report Title", null), "doc.pdf")
-        assertEquals(SourceFormat.Pdf, result.meta.sourceFormat)
-        assertEquals("Report Title", result.meta.title)
+    fun `pdf signature is unsupported in v1 (epub-focused)`() {
+        val ex = assertThrows(UnsupportedFormatException::class.java) {
+            ImportDispatch.import(PdfFixtures.titledPdf("Report Title", null), "doc.pdf")
+        }
+        assertEquals("doc.pdf", ex.fileName)
     }
 
     @Test

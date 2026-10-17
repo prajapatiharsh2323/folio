@@ -59,6 +59,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +76,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +93,7 @@ import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.search.SearchService
 import dev.folio.mobile.core.search.SearchUi
 import dev.folio.mobile.core.store.AppFileStore
+import dev.folio.mobile.BuildConfig
 import dev.folio.mobile.reader.ReaderActivity
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import kotlinx.coroutines.Dispatchers
@@ -108,7 +113,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         val IMPORT_MIMES = arrayOf(
             "application/epub+zip",
-            "application/pdf",
             "application/octet-stream",
             "text/html",
             "text/plain"
@@ -144,6 +148,10 @@ private suspend fun importFromUri(
 ): Boolean = withContext(Dispatchers.IO) {
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         ?: throw IOException("Cannot read the selected file")
+    // Guard against OOM on huge files (no streaming reader exists yet).
+    if (bytes.size > 50 * 1024 * 1024) {
+        throw IOException("File too large (max 50 MB)")
+    }
     val displayName = uri.lastPathSegment?.substringAfterLast('/')
         ?.takeIf { it.isNotBlank() } ?: "import"
     val result = ImportDispatch.import(bytes, displayName)
@@ -172,12 +180,14 @@ private suspend fun runSample(context: android.content.Context) {
             appendLine()
             appendLine("By the third evening she was quoting the book to the mirror, which is, the lantern agreed, the whole point of owning one.")
         }
-        appLibrary(context).addDocument(
-            dev.folio.mobile.core.importer.TxtImporter.import(
-                sample.toByteArray(Charsets.UTF_8),
-                "sample.txt"
-            )
+        val result = dev.folio.mobile.core.importer.TxtImporter.import(
+            sample.toByteArray(Charsets.UTF_8),
+            "sample.txt"
         )
+        val library = appLibrary(context)
+        if (library.findDuplicate(result.meta.contentHash) == null) {
+            library.addDocument(result)
+        }
     }
 }
 
@@ -222,7 +232,18 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         loading = false
     }
 
-    LaunchedEffect(Unit) { refresh() }
+    // Refresh on every resume (initial open + return from the reader) so progress
+    // bars and sort buckets reflect writes made in ReaderActivity.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch { refresh() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     fun runImport(uri: Uri) {
         scope.launch {
@@ -236,7 +257,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                     snackbar.showSnackbar("Already in library — skipped")
                 }
             } catch (e: UnsupportedFormatException) {
-                snackbar.showSnackbar("Unsupported format — EPUB, PDF, HTML or TXT only")
+                snackbar.showSnackbar("Unsupported format — EPUB, HTML or TXT only")
             } catch (t: Throwable) {
                 snackbar.showSnackbar(t.message ?: "Import failed")
             } finally {
@@ -362,7 +383,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(horizontal = 32.dp)
                             )
-                            if (!importing) {
+                            if (!importing && BuildConfig.DEBUG) {
                                 TextButton(
                                     onClick = {
                                         scope.launch {
@@ -513,12 +534,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                     try {
                         withContext(Dispatchers.IO) {
                             val library = appLibrary(context)
-                            library.updateDocMeta(
-                                target.id,
-                                tags = tags,
-                                collectionIds = collectionIds
-                            )
                             library.setDocCollections(target.id, collectionIds)
+                            library.updateDocMeta(target.id, tags = tags)
                         }
                         detailsTarget = null
                         refresh()

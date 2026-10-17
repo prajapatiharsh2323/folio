@@ -113,6 +113,7 @@ class ReaderActivity : FragmentActivity() {
 
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressJob: Job? = null
+    private var saveJob: Job? = null
     private var navigatorRef: EpubNavigatorFragment? = null
     private var publicationRef: Publication? = null
     private var highlightManager: HighlightManager? = null
@@ -206,6 +207,15 @@ class ReaderActivity : FragmentActivity() {
 
     override fun onDestroy() {
         progressJob?.cancel()
+        // Flush the last debounced progress write before the scope goes away.
+        saveJob?.cancel()
+        lastSavedProgress?.let { p ->
+            runCatching {
+                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                    LibraryManager(AppFileStore(filesDir)).saveProgress(p)
+                }
+            }
+        }
         loadScope.cancel()
         super.onDestroy()
     }
@@ -402,25 +412,29 @@ class ReaderActivity : FragmentActivity() {
     }
 
     private fun shareQuoteCard(annotation: Annotation) {
-        val uri = QuoteCard.share(
-            context = this,
-            annotation = annotation,
-            bookTitle = pillarTitle.value.ifBlank { null },
-            author = null
-        ) ?: return
-        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = "image/png"
-            putExtra(android.content.Intent.EXTRA_STREAM, uri)
-            putExtra(
-                android.content.Intent.EXTRA_TEXT,
-                listOfNotNull(annotation.quote, annotation.note)
-                    .joinToString("\n\n")
-            )
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        loadScope.launch {
+            val uri = QuoteCard.share(
+                context = this@ReaderActivity,
+                annotation = annotation,
+                bookTitle = pillarTitle.value.ifBlank { null },
+                author = null
+            ) ?: return@launch
+            withContext(Dispatchers.Main) {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "image/png"
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    putExtra(
+                        android.content.Intent.EXTRA_TEXT,
+                        listOfNotNull(annotation.quote, annotation.note)
+                            .joinToString("\n\n")
+                    )
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(
+                    android.content.Intent.createChooser(send, "Share quote")
+                )
+            }
         }
-        startActivity(
-            android.content.Intent.createChooser(send, "Share quote")
-        )
     }
 
     /**
@@ -508,7 +522,12 @@ class ReaderActivity : FragmentActivity() {
                         abs(last.percent - p.percent) >= 0.004
                     if (changed) {
                         lastSavedProgress = p
-                        withContext(Dispatchers.IO) { library.saveProgress(p) }
+                        // Debounce disk writes: coalesce rapid locator emissions.
+                        saveJob?.cancel()
+                        saveJob = loadScope.launch {
+                            delay(500)
+                            withContext(Dispatchers.IO) { library.saveProgress(p) }
+                        }
                     }
                 }
             }
