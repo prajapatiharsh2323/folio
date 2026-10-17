@@ -7,7 +7,27 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 COMPLETE (64-test import pipeline) + R1 step 1&2 wired (Readium 3.0.0 + ReaderActivity skeleton, 68/68 green); TTS dropped from v1 scope
+## Status: M3 COMPLETE (64-test import pipeline) + R1 steps 1–4 DONE + R2 DONE (reader chrome + typography + selection→highlight groundwork) — 82/82 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+
+## NEXT SESSION — what to build (pick one, verify green build first)
+
+1. **R3 proper (recommended next)** — annotations:
+   - annotation context menu on `onDecorationActivated` (edit note / change color /
+     delete) — `HighlightManager` already holds the session map + listener stub;
+   - render PERSISTED highlights on reopen — needs the CFI parser (see note 17);
+     without it only session-made highlights render;
+   - quote-card share images (R3 deliverable, schema-1 Annotation is the source).
+2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
+   Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
+   `avdmanager create avd`; budget it as its own step. Then: `adb install`,
+   tap "Import sample text" → open doc → verify rendering, prefs, progress saves.
+3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+   upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
+   Decision needed (own session).
+
+**Carried constraints:** TTS is DROPPED (post-v1 backlog, not debt). PWA schema-1
+contracts (manifest, user/*.json, backup ZIP, annotation anchors, Drive sync) must
+stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 
 ## The locked plan (agreed with user, Oct 17 2026)
 
@@ -37,9 +57,8 @@
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-4 DONE — core rendering + prefs + chrome + chapter-accurate restore (strict within-chapter CFI + fonts pending; device smoke blocked) |
 | R2 | reader comfort polish (chrome toggle, page pillar, typography controls) | **DONE** (cb7ed34) |
-| ↳ step 3 | PWA-parity prefs mapper + library harness screen + PDFBox app init | **DONE** (9028907) — device smoke next |
-| R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
-| R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
+| R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
+| R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending (groundwork DONE — see note 17) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
 | M4 | Search: SQLDelight FTS5 + normaliser port; manifest+index single transaction; Hindi fixture suite | pending |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
