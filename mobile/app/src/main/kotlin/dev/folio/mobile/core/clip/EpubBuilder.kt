@@ -84,15 +84,20 @@ object EpubBuilder {
 
         // 1. Rewrite images in sanitized content to local hashed names
         val namedImages = payload.images.map { img ->
-            val hash = sha256Hex(img.bytes)
-            val prefix = hash.substring(0, 16)
-            val ext = when {
-                img.name.endsWith(".png") -> "png"
-                img.name.endsWith(".webp") -> "webp"
-                img.name.endsWith(".gif") -> "gif"
-                else -> "jpg"
+            val finalPattern = Regex("^[0-9a-f]{16}\\.(jpg|png|webp|gif)$")
+            if (finalPattern.matches(img.name)) {
+                img // caller already finalized the name (HTML data-URI extraction)
+            } else {
+                val hash = sha256Hex(img.bytes)
+                val prefix = hash.substring(0, 16)
+                val ext = when {
+                    img.name.endsWith(".png") -> "png"
+                    img.name.endsWith(".webp") -> "webp"
+                    img.name.endsWith(".gif") -> "gif"
+                    else -> "jpg"
+                }
+                ImportImage("$prefix.$ext", img.bytes)
             }
-            ImportImage("$prefix.$ext", img.bytes)
         }
 
         val sanitized = payload.contentHtml
