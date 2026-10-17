@@ -1,11 +1,13 @@
 package dev.folio.mobile.core.library
 
+import dev.folio.mobile.core.model.DocFiles
 import dev.folio.mobile.core.model.DocKind
 import dev.folio.mobile.core.model.DocMeta
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.SourceFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,6 +54,19 @@ class LibraryUiTest {
     fun `title seed is stable and differentiates titles`() {
         assertEquals(LibraryUi.titleSeed("Book"), LibraryUi.titleSeed("Book"))
         assertTrue(LibraryUi.titleSeed("Alpha") != LibraryUi.titleSeed("Beta"))
+    }
+
+    @Test
+    fun `cover path resolves against the doc slug`() {
+        val m = meta("d1", "B", "A").copy(files = DocFiles(cover = "cover.jpg"))
+        assertEquals("library/docs/d1-slug/cover.jpg", LibraryUi.item(m, null).cover)
+    }
+
+    @Test
+    fun `absent or blank cover yields null`() {
+        assertNull(LibraryUi.item(meta("d1", "B", "A"), null).cover)
+        val blank = meta("d1", "B", "A").copy(files = DocFiles(cover = "  "))
+        assertNull(LibraryUi.item(blank, null).cover)
     }
 
     @Test

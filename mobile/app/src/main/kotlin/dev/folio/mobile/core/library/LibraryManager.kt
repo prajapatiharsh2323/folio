@@ -115,7 +115,16 @@ class LibraryManager(
             readingRel = "reading/${reading.name}"
         }
 
-        // 4. meta.json (full DocMeta)
+        // 4. Cover (optional) — content, before meta.json; spec layout: cover.*
+        var coverRel: String? = null
+        importResult.cover?.let { cover ->
+            val coverPath = "$docDir/${cover.name}"
+            store.write(coverPath, cover.bytes)
+            manifestFiles += ManifestFile(coverPath, cover.bytes.size.toLong(), sha256Hex(cover.bytes))
+            coverRel = cover.name
+        }
+
+        // 5. meta.json (full DocMeta)
         val meta = importResult.meta.copy(
             id = id,
             slug = slug,
@@ -123,7 +132,8 @@ class LibraryManager(
             files = importResult.meta.files.copy(
                 original = "original/${importResult.original.name}",
                 clean = cleanRel,
-                reading = readingRel
+                reading = readingRel,
+                cover = coverRel
             )
         )
         val metaText = json.encodeToString(meta)
@@ -131,13 +141,13 @@ class LibraryManager(
         store.write(metaPath, metaText)
         manifestFiles += ManifestFile(metaPath, metaText.toByteArray(Charsets.UTF_8).size.toLong(), sha256Hex(metaText.toByteArray(Charsets.UTF_8)))
 
-        // 5. Search text (index/text/<id>.json) — the per-chapter corpus the
+        // 6. Search text (index/text/<id>.json) — the per-chapter corpus the
         //    in-memory search index (M4) rebuilds from; PWA-identical path
         if (importResult.searchText.isNotEmpty()) {
             store.write("library/index/text/$id.json", json.encodeToString(importResult.searchText))
         }
 
-        // 6. Manifest LAST — the commit point
+        // 7. Manifest LAST — the commit point
         val manifestDoc = ManifestDoc(
             id = id,
             slug = slug,

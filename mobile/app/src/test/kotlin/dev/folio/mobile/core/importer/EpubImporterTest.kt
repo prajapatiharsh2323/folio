@@ -32,6 +32,58 @@ class EpubImporterTest {
     }
 
     @Test
+    fun `epub3 properties cover-image is extracted`() {
+        val result = EpubImporter.import(EpubFixtures.epubWithCover())
+        assertEquals("cover.jpg", result.cover?.name)
+        assertEquals("JPEG-COVER-BYTES", result.cover?.bytes?.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `cover extension follows the source image`() {
+        val result = EpubImporter.import(
+            EpubFixtures.epubWithCover(
+                coverHref = "images/art.png",
+                coverMediaType = "image/png",
+                coverBytes = "PNG-BYTES".toByteArray()
+            )
+        )
+        assertEquals("cover.png", result.cover?.name)
+        assertEquals("PNG-BYTES", result.cover?.bytes?.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `epub2 meta name cover is extracted`() {
+        // Neither id nor href contains "cover": only the meta tag can find it.
+        val result = EpubImporter.import(
+            EpubFixtures.epubWithCover(
+                coverHref = "pics/artwork.jpg",
+                coverId = "img1",
+                coverProperties = null,
+                viaMetaName = true
+            )
+        )
+        assertEquals("cover.jpg", result.cover?.name)
+        assertEquals("JPEG-COVER-BYTES", result.cover?.bytes?.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `heuristic catches id containing cover without epub3 properties`() {
+        val result = EpubImporter.import(
+            EpubFixtures.epubWithCover(
+                coverHref = "pics/artwork.jpg",
+                coverId = "cover-pic",
+                coverProperties = null
+            )
+        )
+        assertEquals("cover.jpg", result.cover?.name)
+    }
+
+    @Test
+    fun `epub without cover yields null`() {
+        assertNull(EpubImporter.import(EpubFixtures.simpleEpub()).cover)
+    }
+
+    @Test
     fun `drm protected epub is refused`() {
         assertThrows(DrmProtectedError::class.java) {
             EpubImporter.import(EpubFixtures.drmEpub())

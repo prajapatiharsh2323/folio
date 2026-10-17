@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -54,14 +55,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -70,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.importer.ImportDispatch
 import dev.folio.mobile.core.importer.UnsupportedFormatException
+import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryUi
 import dev.folio.mobile.core.search.SearchService
@@ -578,6 +584,20 @@ fun LibraryCard(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
+    // Cover thumbnail: decoded off the main thread, LRU-cached in CoverLoader.
+    val context = LocalContext.current
+    val store = remember { AppFileStore(context.filesDir) }
+    val coverBitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        initialValue = null,
+        item.cover
+    ) {
+        value = item.cover?.let { rel ->
+            withContext(Dispatchers.IO) {
+                CoverLoader.decode(store, rel)?.asImageBitmap()
+            }
+        }
+    }
+
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -590,15 +610,28 @@ fun LibraryCard(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .width(6.dp)
-                    .height(58.dp)
-                    .background(
-                        Color(SPINE_TINTS[item.colorSeed and 7]),
-                        RoundedCornerShape(3.dp)
-                    )
-            )
+            val bmp = coverBitmap
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(58.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .width(6.dp)
+                        .height(58.dp)
+                        .background(
+                            Color(SPINE_TINTS[item.colorSeed and 7]),
+                            RoundedCornerShape(3.dp)
+                        )
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(

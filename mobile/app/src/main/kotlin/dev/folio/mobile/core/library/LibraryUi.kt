@@ -22,7 +22,9 @@ object LibraryUi {
         /** "42%" for the trailing progress label. Empty when never opened. */
         val percentLabel: String,
         /** stable color seed for the placeholder cover. */
-        val colorSeed: Int
+        val colorSeed: Int,
+        /** store-relative cover path (e.g. "library/docs/<slug>/cover.jpg"), when present. */
+        val cover: String? = null
     )
 
     fun item(meta: DocMeta, progress: Progress?): LibraryItem {
@@ -37,7 +39,9 @@ object LibraryUi {
             kindLabel = kindLabel,
             percent = progress?.percent?.coerceIn(0.0, 1.0),
             percentLabel = progress?.let { "${(it.percent.coerceIn(0.0, 1.0) * 100).toInt()}%" } ?: "",
-            colorSeed = titleSeed(meta.title.ifBlank { meta.slug })
+            colorSeed = titleSeed(meta.title.ifBlank { meta.slug }),
+            cover = meta.files.cover?.takeIf { it.isNotBlank() }
+                ?.let { "library/docs/${meta.slug}/$it" }
         )
     }
 

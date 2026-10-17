@@ -117,6 +117,28 @@ object EpubImporter {
         return resolved.joinToString("/")
     }
 
+    /** Image extensions accepted for covers (kept as the stored file extension). */
+    private val IMAGE_EXTS = setOf("jpg", "jpeg", "png", "gif", "webp")
+
+    /** Reads a cover candidate from the zip; null when missing/empty. */
+    private fun loadCover(
+        zip: Map<String, ByteArray>,
+        opfDir: String,
+        href: String
+    ): ImportCover? {
+        val fullHref = resolvePath(opfDir, href)
+        val bytes = zip[fullHref]
+            ?: zip["$opfDir$href"]
+            ?: zip[href]
+            ?: zip[runCatching { java.net.URLDecoder.decode(fullHref, "UTF-8") }.getOrDefault(fullHref)]
+            ?: zip.entries.firstOrNull { it.key.lowercase() == fullHref.lowercase() }?.value
+            ?: return null
+        if (bytes.isEmpty()) return null
+        val ext = fullHref.substringAfterLast('.', "").lowercase()
+            .takeIf { it in IMAGE_EXTS } ?: "jpg"
+        return ImportCover("cover.$ext", bytes)
+    }
+
     /** Imports an EPUB archive conforming to spec §6. */
     fun import(bytes: ByteArray, originalName: String = "book.epub"): ImportResult {
         val zip = unzip(bytes)
@@ -167,16 +189,54 @@ object EpubImporter {
 
         val opfDir = if (opfPath.contains("/")) opfPath.substring(0, opfPath.lastIndexOf("/") + 1) else ""
 
-        // Manifest items: id → decoded href
+        // Manifest items: id → decoded href, plus cover candidates captured in
+        // the same pass (properties="cover-image" wins over the heuristic).
         val manifestMap = LinkedHashMap<String, String>()
+        var coverByProps: String? = null
+        var coverByHeuristic: String? = null
         Regex("<item\\b([^>]*)/?>", RegexOption.IGNORE_CASE).findAll(opfText).forEach { m ->
             val attrs = m.groupValues[1]
-            val id = Regex("\\bid\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE).find(attrs)?.groupValues?.get(1)
-            val href = Regex("\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE).find(attrs)?.groupValues?.get(1)
+            fun attr(name: String): String? =
+                Regex("\\b$name\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+                    .find(attrs)?.groupValues?.get(1)
+            val id = attr("id")
+            val href = attr("href")
             if (id != null && href != null) {
-                manifestMap[id] = runCatching { java.net.URLDecoder.decode(href, "UTF-8") }.getOrDefault(href)
+                val decoded = runCatching { java.net.URLDecoder.decode(href, "UTF-8") }
+                    .getOrDefault(href)
+                manifestMap[id] = decoded
+                val mediaType = attr("media-type")?.lowercase()
+                val isImage = mediaType?.startsWith("image/") == true ||
+                    decoded.substringAfterLast('.', "").lowercase() in IMAGE_EXTS
+                if (isImage) {
+                    val props = attr("properties")
+                    if (props != null &&
+                        props.split(Regex("\\s+")).any { it.equals("cover-image", true) }
+                    ) {
+                        if (coverByProps == null) coverByProps = decoded
+                    } else if (coverByHeuristic == null &&
+                        (id.contains("cover", true) || decoded.contains("cover", true))
+                    ) {
+                        coverByHeuristic = decoded
+                    }
+                }
             }
         }
+
+        // EPUB2 fallback: <meta name="cover" content="id"/>
+        val metaCoverHref = Regex(
+            "<meta\\s+[^>]*\\bname\\s*=\\s*[\"']cover[\"'][^>]*>", RegexOption.IGNORE_CASE
+        ).find(opfText)
+            ?.let { tag ->
+                Regex("\\bcontent\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+                    .find(tag.value)?.groupValues?.get(1)
+            }
+            ?.let { manifestMap[it] }
+
+        val cover = sequenceOf(coverByProps, metaCoverHref, coverByHeuristic)
+            .filterNotNull()
+            .distinct()
+            .firstNotNullOfOrNull { loadCover(zip, opfDir, it) }
 
         // Spine reading order
         val spineItems = Regex(
@@ -235,6 +295,7 @@ object EpubImporter {
             ),
             original = ImportOriginal(originalName, bytes),
             reading = ImportReading("book.epub", bytes),
+            cover = cover,
             searchText = searchTextList
         )
     }

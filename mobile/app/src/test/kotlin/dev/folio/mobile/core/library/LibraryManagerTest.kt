@@ -1,6 +1,7 @@
 package dev.folio.mobile.core.library
 
 import dev.folio.mobile.core.importer.ImportClean
+import dev.folio.mobile.core.importer.ImportCover
 import dev.folio.mobile.core.importer.ImportImage
 import dev.folio.mobile.core.importer.ImportOriginal
 import dev.folio.mobile.core.importer.ImportResult
@@ -28,6 +29,10 @@ import org.junit.rules.TemporaryFolder
 
 class LibraryManagerTest {
 
+    private companion object {
+        val jsonCodec = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    }
+
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -43,7 +48,11 @@ class LibraryManagerTest {
         )
     }
 
-    private fun importResult(title: String = "Test Book", withClean: Boolean = true) = ImportResult(
+    private fun importResult(
+        title: String = "Test Book",
+        withClean: Boolean = true,
+        withCover: Boolean = false
+    ) = ImportResult(
         meta = DocMeta(
             id = "pending", // filled by LibraryManager at commit time
             slug = "pending",
@@ -60,6 +69,7 @@ class LibraryManagerTest {
             images = listOf(ImportImage("img1.png", "PNG-BYTES".toByteArray()))
         ) else null,
         reading = ImportReading("book.epub", "READING-BYTES".toByteArray()),
+        cover = if (withCover) ImportCover("cover.jpg", "JPEG-COVER-BYTES".toByteArray()) else null,
         searchText = listOf(SearchChapterText("ch1", "Chapter One", "Searchable text here"))
     )
 
@@ -94,6 +104,7 @@ class LibraryManagerTest {
         assertEquals("original/book.epub", meta.files.original)
         assertEquals("clean/index.html", meta.files.clean)
         assertEquals("reading/book.epub", meta.files.reading)
+        assertNull("no cover in this result", meta.files.cover)
 
         // All content files exist at their manifest paths
         assertTrue(store.exists("library/docs/${meta.slug}/original/book.epub"))
@@ -114,6 +125,28 @@ class LibraryManagerTest {
             val actual = dev.folio.mobile.core.util.sha256Hex(store.read(path))
             assertEquals("sha256 mismatch for $path", recorded[path], actual)
         }
+    }
+
+    @Test
+    fun `cover is written, hashed and recorded in files`() = runBlocking {
+        val meta = manager.addDocument(importResult(withCover = true))
+
+        assertEquals("cover.jpg", meta.files.cover)
+        val coverPath = "library/docs/${meta.slug}/cover.jpg"
+        assertTrue(store.exists(coverPath))
+        assertEquals("JPEG-COVER-BYTES", store.read(coverPath).toString(Charsets.UTF_8))
+
+        // manifest lists the cover with a correct sha256
+        val mDoc = manager.getManifest().docs[0]
+        val coverEntry = mDoc.files.firstOrNull { it.path == coverPath }
+        assertTrue("cover missing from manifest files", coverEntry != null)
+        assertEquals(sha256Of("JPEG-COVER-BYTES"), coverEntry!!.sha256)
+
+        // meta.json on disk carries files.cover too (PWA-compatible contract)
+        val metaJson = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertEquals("cover.jpg", metaJson.files.cover)
     }
 
     @Test

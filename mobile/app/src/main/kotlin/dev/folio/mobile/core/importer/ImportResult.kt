@@ -33,6 +33,13 @@ data class ImportReading(val name: String, val bytes: ByteArray) {
 }
 
 @Serializable
+data class ImportCover(val name: String, val bytes: ByteArray) {
+    override fun equals(other: Any?): Boolean =
+        other is ImportCover && other.name == name && other.bytes.contentEquals(bytes)
+    override fun hashCode(): Int = 31 * name.hashCode() + bytes.contentHashCode()
+}
+
+@Serializable
 data class SearchChapterText(
     val chapterId: String,
     val title: String,
@@ -45,6 +52,8 @@ data class ImportResult(
     val original: ImportOriginal,
     val clean: ImportClean? = null,
     val reading: ImportReading? = null,
+    /** optional cover image (EPUB: extracted at import; spec layout: docs/<slug>/cover.*) */
+    val cover: ImportCover? = null,
     val searchText: List<SearchChapterText> = emptyList()
 )
 

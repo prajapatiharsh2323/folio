@@ -80,6 +80,46 @@ object EpubFixtures {
         return zipEntries(entries)
     }
 
+    /**
+     * One-chapter EPUB with a cover item. [coverProperties] null omits the
+     * EPUB3 properties attribute; [viaMetaName] adds the EPUB2
+     * `<meta name="cover">` tag pointing at [coverId].
+     */
+    fun epubWithCover(
+        coverHref: String = "cover.jpg",
+        coverId: String = "cover-img",
+        coverProperties: String? = "cover-image",
+        coverMediaType: String = "image/jpeg",
+        viaMetaName: Boolean = false,
+        coverBytes: ByteArray = "JPEG-COVER-BYTES".toByteArray()
+    ): ByteArray {
+        val props = coverProperties?.let { " properties=\"$it\"" } ?: ""
+        val metaTag = if (viaMetaName) "\n    <meta name=\"cover\" content=\"$coverId\"/>" else ""
+        val opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="id">urn:uuid:test</dc:identifier>
+    <dc:title>Covered Book</dc:title>
+    <dc:creator>Cover Author</dc:creator>
+    <dc:language>en</dc:language>$metaTag
+  </metadata>
+  <manifest>
+    <item id="ch1" href="chapter_1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="$coverId" href="$coverHref" media-type="$coverMediaType"$props/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"""
+        return zipEntries(
+            listOf(
+                "mimetype" to "application/epub+zip".toByteArray(),
+                "META-INF/container.xml" to container(),
+                "OEBPS/content.opf" to opf.toByteArray(Charsets.UTF_8),
+                "OEBPS/chapter_1.xhtml" to chapterDoc("Covered", "Covered text."),
+                "OEBPS/$coverHref" to coverBytes
+            )
+        )
+    }
+
     /** EPUB with synthetic DRM encryption.xml (only for the refusal test). */
     fun drmEpub(algo: String = "http://example.com/unknown-algo"): ByteArray = zipEntries(
         listOf(
