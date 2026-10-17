@@ -7,17 +7,21 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + EPUB covers (fb2cb20) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 148/148 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + EPUB covers (fb2cb20) + damaged-doc recovery banner (59422ea) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 152/152 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **L1 residue #2 — damaged-doc recovery banner (recommended next)**: the
-   data side exists (`LibraryManager.damagedDocuments()`); wire the banner
-   into `LibraryScreen` and an action to remove/ignore the broken doc (the
-   PWA parity behavior). Alternatively: **tags/collections UI** (model +
-   PWA-compatible `user/*.json` contracts exist) or **reader splash image**
-   (show extracted cover while the reader loads — cover bytes are now
-   available, display-only).
+1. **L1 residue #3 (recommended next)**: either
+   (a) **interrupted-import recovery UI** — spec §4 Rule 2 first half; the
+   data side exists (`recoverInterruptedImports()` returns doc dirs not in the
+   manifest); needs a small new data API to "finish" a parseable orphan (re-
+   register its meta.json into the manifest) + banner rows "Finish"/"Delete"
+   (reuse the M-13 banner pattern), OR
+   (b) **tags/collections UI** — models + PWA-compatible `user/*.json`
+   contracts exist in `LibraryManager`; needs library-screen UI (filter chips,
+   assign tags via edit dialog; collections create/rename/assign), OR
+   (c) **reader splash image** — show the extracted cover (bytes now stored at
+   `files.cover`, display path `CoverLoader`) while the reader loads.
 2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
@@ -25,7 +29,8 @@
    highlight reopen-rendering + context menu + quote-card share (R3),
    volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1),
    search panel → hit tap → reader opens at chapter (M4), launcher icon look,
-   cover thumbnail on a cover-bearing EPUB.
+   cover thumbnail on a cover-bearing EPUB, damaged banner (corrupt a
+   meta.json via adb).
 3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
@@ -67,7 +72,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, **brightness overlay**, **interactive scrubbing pillar**, page-turn anims, paragraph-snap, tap-zone config, chapter-aware time-left, per-book typography overrides, image zoom | **PARTIAL** (01ce6e5 — keys/brightness/scrubber/predictive-back done; remainder pending) |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
-| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4); EPUB covers: extraction + card thumbnails (fb2cb20 — `.docs/results/L1-covers.md`) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon done M-11; covers done M-12; collections/tags UI, damaged-doc banner, reader splash pending) |
+| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4); EPUB covers: extraction + card thumbnails (fb2cb20); damaged-doc recovery banner + review dialog (59422ea) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon M-11; covers M-12; damaged banner M-13 — `.docs/results/L1-recovery.md`; collections/tags UI, interrupted-import UI, reader splash pending) |
 | M4 | Search: in-memory MiniSearch port (normalise + Hindi stems + boosts 4/3/3/1 + snippet) + library search UI + reader jump; PWA `search.test.ts` golden cases all ported (SQLDelight/FTS5 dropped — decision 3) | **DONE** (da75560 + ecff505 — `.docs/results/M4-search.md`) |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
@@ -201,6 +206,19 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-13 (Oct 17, 2026)** — L1 residue slice: **damaged-doc recovery
+  banner + review dialog** (commit 59422ea, pushed). Full summary in
+  `.docs/results/L1-recovery.md`.
+  - `LibraryUi.damagedNotice()` (pure: singular/plural banner text,
+    title-or-slug labels); `LibraryScreen.refresh()` loads
+    `damagedDocuments()`; errorContainer banner above the list with Review →
+    dialog (Remove reuses `deleteDocument`; auto-closes when clean).
+  - Tests +4 → **152/152 green**; the corrupt-meta → remove flow is covered
+    end-to-end in `LibraryManagerTest`.
+  - **Left for next**: interrupted-import UI (spec §4 Rule 2 first half;
+    `recoverInterruptedImports()` exists, no UI — needs a "finish" data API);
+    tags/collections UI; reader splash image.
 
 - **Session M-12 (Oct 17, 2026)** — L1 residue slice: **EPUB covers
   (extraction + card display)** (commit fb2cb20, pushed). Full summary in
