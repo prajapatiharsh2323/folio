@@ -18,6 +18,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".reader.ReaderActivity"
+            android:theme="@style/Theme.FolioMobile"
+            android:exported="false" />
     </application>
 
 </manifest>
