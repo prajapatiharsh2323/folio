@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: PHASE M1 (scaffold) — in progress
+## Status: M1 scaffold COMPLETE + M2 started (model port green)
 
 ## The locked plan (agreed with user, Oct 17 2026)
 
@@ -30,9 +30,9 @@
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| M1 | Scaffold: Gradle project, Compose shell, theme tokens, adaptive icon, wrapper, first successful `assembleDebug` | **in progress** |
-| M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | pending |
-| M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | pending |
+| M1 | Scaffold: Gradle project, Compose shell, theme tokens, adaptive icon, wrapper, first successful `assembleDebug` | **DONE** (build green, APK 16.2 MB) |
+| M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
+| M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **started** — Types.kt + 5 contract tests green; FileStore/LibraryManager next |
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | pending |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | pending |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
@@ -88,7 +88,24 @@
   iframe coordinate gymnastics, lazy locations generation (percent flicker),
   rendition rebuild on flow switch.
 
+8. kotlinx.serialization gotcha (hit once, don't repeat): enum classes serialize by
+   ENTRY NAME, not by constructor properties — always use `@SerialName("lowercase")`
+   per entry. And `kotlinx-serialization-json` must be `implementation`, not
+   `testImplementation`, if main-source models use it.
+
 ## Session log
+
+- **Session M-2 (Oct 17, 2026)** — M1 verified green + M2 model port.
+  - `.\gradlew assembleDebug` GREEN: app-debug.apk 16.2 MB produced.
+  - Added kotlinx.serialization plugin 1.7.3 (catalog) + schema-1 model port
+    `dev.folio.mobile.core.model.Types.kt` (DocMeta/Manifest/Annotation/Progress/
+    Collection/ReadingPrefs — field names identical to packages/core/src/types.ts).
+  - Added `TypesContractTest` (5 tests): PWA JSON literals parse, enum strings match,
+    compact-JSON tolerance, unknown-enum fails loudly.
+  - Fixes en route: XML comment `--` ban (colors.xml), dropped compileOptions restored
+    (JVM-target 1.8 vs 17 mismatch), serialization-json moved testImplementation→
+    implementation, enum @SerialName rewrite.
+  - Commits: 27b1155 (pushed). Session log M-1 below. Result: `.docs/results/M1-scaffold.md`.
 
 - **Session M-1 (Oct 17, 2026)** — M1 scaffold.
   - Created `mobile/` Gradle project (separate from PWA code, user instruction):

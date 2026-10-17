@@ -51,12 +51,13 @@ mobile/
 ## Verification status
 
 - Gradle configuration: **GREEN** (wrapper task ran).
-- `.\gradlew assembleDebug`: launched at session end (first run downloads Gradle dist +
-  AGP deps) — **check result on next session start; must be green before M2.**
+- `.\gradlew testDebugUnitTest assembleDebug`: **GREEN** — app-debug.apk 16.2 MB,
+  5/5 contract tests passing. (Verified in session M-2; see `.docs/MOBILE-TRACKING.md`.)
+- Mid-build file edits caused one red build (stale catalog snapshot) — lesson: never
+  edit build files while a background build is running; tracked in session log.
 
 ## Next session
 
 1. Read `.docs/MOBILE-TRACKING.md` first.
-2. Confirm/fix `assembleDebug` green.
-3. Start M2: port `packages/core/src/types.ts` to Kotlin (kotlinx.serialization),
-   `FileStore` interface + native impl, port core fixture tests.
+2. Continue M2: `FileStore` interface + app-private implementation (atomic temp+rename),
+   `LibraryManager` port (manifest commit-point, recovery scan), more fixture tests.
