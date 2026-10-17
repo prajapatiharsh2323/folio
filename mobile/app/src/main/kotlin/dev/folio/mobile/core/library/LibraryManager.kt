@@ -1,0 +1,372 @@
+package dev.folio.mobile.core.library
+
+import dev.folio.mobile.core.importer.ImportResult
+import dev.folio.mobile.core.model.Annotation
+import dev.folio.mobile.core.model.Collection
+import dev.folio.mobile.core.model.DocMeta
+import dev.folio.mobile.core.model.Manifest
+import dev.folio.mobile.core.model.ManifestDoc
+import dev.folio.mobile.core.model.ManifestFile
+import dev.folio.mobile.core.model.Progress
+import dev.folio.mobile.core.util.createDocSlug
+import dev.folio.mobile.core.util.sha256Hex
+import dev.folio.mobile.core.store.FileStore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+const val MANIFEST_PATH = "library/manifest.json"
+
+/**
+ * Port of packages/core/src/library/library-manager.ts.
+ *
+ * Spec §4 rules implemented here:
+ *  - Rule 1 (write order): original/clean/reading files → meta.json → manifest LAST
+ *    (the manifest is the commit point).
+ *  - Rule 2 (recovery): docs/ folders not in the manifest are interrupted imports
+ *    (recoverInterruptedImports()); damaged entries are surfaced, never dropped.
+ *  - Rule 3 (duplicates): findDuplicate() by contentHash — the caller prompts
+ *    skip/replace/keep-both.
+ *  - Rule 5 (deletion): folder + annotations + progress + collections + index text,
+ *    then manifest rewrite.
+ */
+class LibraryManager(
+    private val store: FileStore,
+    private val uuidProvider: () -> String = { UUID.randomUUID().toString() },
+    private val nowIso: () -> String = { java.time.Instant.now().toString().take(24) + "Z" }
+) {
+
+    private val json = Json {
+        prettyPrint = true // JSON.stringify(x, null, 2) parity with the PWA
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false
+    }
+
+    private val mutexMap = ConcurrentHashMap<String, Mutex>()
+
+    private fun mutexFor(key: String): Mutex =
+        mutexMap.computeIfAbsent(key) { Mutex() }
+
+    // --- Manifest ---
+
+    /** Reads the current manifest or initializes a new one (corruption-safe). */
+    suspend fun getManifest(): Manifest {
+        if (store.exists(MANIFEST_PATH)) {
+            try {
+                return json.decodeFromString<Manifest>(store.readText(MANIFEST_PATH))
+            } catch (_: Exception) {
+                // corrupted manifest: fall through to clean initialization
+            }
+        }
+        val initial = Manifest(
+            libraryId = uuidProvider(),
+            updatedAt = nowIso(),
+            docs = emptyList()
+        )
+        store.write(MANIFEST_PATH, json.encodeToString(initial))
+        return initial
+    }
+
+    suspend fun findDuplicate(contentHash: String): ManifestDoc? =
+        getManifest().docs.firstOrNull { it.contentHash == contentHash }
+
+    /**
+     * Commits an imported document with the exact Section 4 write order.
+     */
+    suspend fun addDocument(importResult: ImportResult): DocMeta = mutexFor("add").withLock {
+        val manifest = getManifest()
+        val id = uuidProvider()
+        val now = nowIso()
+        val slug = createDocSlug(importResult.meta.title)
+
+        val docDir = "library/docs/$slug"
+        val manifestFiles = mutableListOf<ManifestFile>()
+
+        // 1. Original file
+        val origPath = "$docDir/original/${importResult.original.name}"
+        store.write(origPath, importResult.original.bytes)
+        manifestFiles += ManifestFile(origPath, importResult.original.bytes.size.toLong(), sha256Hex(importResult.original.bytes))
+
+        // 2. Clean files (articles)
+        var cleanRel: String? = null
+        importResult.clean?.let { clean ->
+            val cleanPath = "$docDir/clean/index.html"
+            store.write(cleanPath, clean.indexHtml)
+            manifestFiles += ManifestFile(cleanPath, clean.indexHtml.toByteArray(Charsets.UTF_8).size.toLong(), sha256Hex(clean.indexHtml.toByteArray(Charsets.UTF_8)))
+            cleanRel = "clean/index.html"
+            for (img in clean.images) {
+                val imgPath = "$docDir/clean/images/${img.name}"
+                store.write(imgPath, img.bytes)
+                manifestFiles += ManifestFile(imgPath, img.bytes.size.toLong(), sha256Hex(img.bytes))
+            }
+        }
+
+        // 3. Reading edition
+        var readingRel: String? = null
+        importResult.reading?.let { reading ->
+            val readingPath = "$docDir/reading/${reading.name}"
+            store.write(readingPath, reading.bytes)
+            manifestFiles += ManifestFile(readingPath, reading.bytes.size.toLong(), sha256Hex(reading.bytes))
+            readingRel = "reading/${reading.name}"
+        }
+
+        // 4. meta.json (full DocMeta)
+        val meta = importResult.meta.copy(
+            id = id,
+            slug = slug,
+            importedAt = now,
+            files = importResult.meta.files.copy(
+                original = "original/${importResult.original.name}",
+                clean = cleanRel,
+                reading = readingRel
+            )
+        )
+        val metaText = json.encodeToString(meta)
+        val metaPath = "$docDir/meta.json"
+        store.write(metaPath, metaText)
+        manifestFiles += ManifestFile(metaPath, metaText.toByteArray(Charsets.UTF_8).size.toLong(), sha256Hex(metaText.toByteArray(Charsets.UTF_8)))
+
+        // 5. Search text (index/text/<id>.json) — FTS5 store supersedes in M4
+        if (importResult.searchText.isNotEmpty()) {
+            store.write("library/index/text/$id.json", json.encodeToString(importResult.searchText))
+        }
+
+        // 6. Manifest LAST — the commit point
+        val manifestDoc = ManifestDoc(
+            id = id,
+            slug = slug,
+            title = meta.title,
+            contentHash = meta.contentHash,
+            updatedAt = now,
+            files = manifestFiles
+        )
+        store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = manifest.docs + manifestDoc, updatedAt = now)))
+
+        meta
+    }
+
+    /** Lists all documents with intact meta.json (damaged entries are skipped here; recovery surfaces them). */
+    suspend fun listDocuments(): List<DocMeta> {
+        val manifest = getManifest()
+        val docs = mutableListOf<DocMeta>()
+        for (d in manifest.docs) {
+            val metaPath = "library/docs/${d.slug}/meta.json"
+            if (store.exists(metaPath)) {
+                try {
+                    docs += json.decodeFromString<DocMeta>(store.readText(metaPath))
+                } catch (_: Exception) {
+                    // damaged: surfaced by recovery, never silently dropped from manifest
+                }
+            }
+        }
+        return docs
+    }
+
+    /** Manifest entries whose meta.json is missing or unparsable — shown as damaged, never dropped. */
+    suspend fun damagedDocuments(): List<ManifestDoc> {
+        val manifest = getManifest()
+        return manifest.docs.filter { d ->
+            val metaPath = "library/docs/${d.slug}/meta.json"
+            !store.exists(metaPath) || runCatching {
+                json.decodeFromString<DocMeta>(store.readText(metaPath))
+            }.isFailure
+        }
+    }
+
+    /**
+     * Updates editable metadata (title/author/tags/collectionIds) and keeps the
+     * manifest entry and search text consistent (spec §5).
+     */
+    suspend fun updateDocMeta(
+        id: String,
+        title: String? = null,
+        author: String? = null,
+        tags: List<String>? = null,
+        collectionIds: List<String>? = null
+    ): DocMeta {
+        val manifest = getManifest()
+        val mDoc = manifest.docs.firstOrNull { it.id == id }
+            ?: throw IllegalArgumentException("Document not found in manifest: $id")
+        val metaPath = "library/docs/${mDoc.slug}/meta.json"
+        val current = json.decodeFromString<DocMeta>(store.readText(metaPath))
+
+        val updated = current.copy(
+            title = title ?: current.title,
+            author = author ?: current.author,
+            tags = tags ?: current.tags,
+            collectionIds = collectionIds ?: current.collectionIds
+        )
+        val updatedText = json.encodeToString(updated)
+        store.write(metaPath, updatedText)
+
+        val now = nowIso()
+        val newFiles = manifest.docs.map {
+            if (it.id != id) it else it.copy(
+                title = updated.title,
+                updatedAt = now,
+                files = it.files.map { f ->
+                    if (f.path == metaPath) f.copy(
+                        size = updatedText.toByteArray(Charsets.UTF_8).size.toLong(),
+                        sha256 = sha256Hex(updatedText.toByteArray(Charsets.UTF_8))
+                    ) else f
+                }
+            )
+        }
+        store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = newFiles, updatedAt = now)))
+        return updated
+    }
+
+    /**
+     * Deletes a document and every trace of it, then rewrites the manifest last (spec §4 Rule 5).
+     */
+    suspend fun deleteDocument(id: String) = mutexFor("delete-$id").withLock {
+        val manifest = getManifest()
+        val mDoc = manifest.docs.firstOrNull { it.id == id } ?: return@withLock
+        val docDir = "library/docs/${mDoc.slug}"
+
+        // 1. Remove folder
+        try {
+            store.remove(docDir, recursive = true)
+        } catch (_: Exception) {
+            // removal failure is non-fatal; manifest will still drop the entry
+        }
+
+        // 2. Search text
+        try {
+            if (store.exists("library/index/text/$id.json")) {
+                store.remove("library/index/text/$id.json")
+            }
+        } catch (_: Exception) {
+        }
+
+        // 3. Progress
+        try {
+            val progressPath = "library/user/progress.json"
+            if (store.exists(progressPath)) {
+                val map = json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))
+                if (map.containsKey(id)) {
+                    store.write(progressPath, json.encodeToString(map - id))
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // 4. Annotations
+        try {
+            val annotPath = "library/user/annotations.json"
+            if (store.exists(annotPath)) {
+                val all = json.decodeFromString<List<Annotation>>(store.readText(annotPath))
+                store.write(annotPath, json.encodeToString(all.filter { it.docId != id }))
+            }
+        } catch (_: Exception) {
+        }
+
+        // 5. Collections membership
+        try {
+            val collPath = "library/user/collections.json"
+            if (store.exists(collPath)) {
+                val all = json.decodeFromString<List<Collection>>(store.readText(collPath))
+                var changed = false
+                val updated = all.map { c ->
+                    if (id in c.docIds) {
+                        changed = true
+                        c.copy(docIds = c.docIds - id)
+                    } else c
+                }
+                if (changed) store.write(collPath, json.encodeToString(updated))
+            }
+        } catch (_: Exception) {
+        }
+
+        // 6. Manifest last
+        val now = nowIso()
+        store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = manifest.docs - mDoc, updatedAt = now)))
+    }
+
+    /**
+     * Startup recovery per spec §4 Rule 2: docs/ folders not listed in the
+     * manifest are interrupted imports (caller offers finish or delete).
+     */
+    suspend fun recoverInterruptedImports(): List<String> {
+        val manifest = getManifest()
+        val registered = manifest.docs.map { it.slug }.toSet()
+        return store.list("library/docs").filter { it !in registered }
+    }
+
+    // --- Progress ---
+
+    suspend fun saveProgress(progress: Progress) {
+        val progressPath = "library/user/progress.json"
+        val map: Map<String, Progress> = runCatching {
+            if (store.exists(progressPath)) {
+                json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))
+            } else emptyMap()
+        }.getOrElse { emptyMap() }
+        store.write(progressPath, json.encodeToString(map + (progress.docId to progress)))
+    }
+
+    suspend fun getProgress(docId: String): Progress? {
+        val progressPath = "library/user/progress.json"
+        if (!store.exists(progressPath)) return null
+        return runCatching {
+            json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))[docId]
+        }.getOrNull()
+    }
+
+    suspend fun getAllProgress(): Map<String, Progress> {
+        val progressPath = "library/user/progress.json"
+        if (!store.exists(progressPath)) return emptyMap()
+        return runCatching {
+            json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))
+        }.getOrElse { emptyMap() }
+    }
+
+    // --- Annotations ---
+
+    suspend fun getAnnotations(docId: String? = null): List<Annotation> {
+        val annotPath = "library/user/annotations.json"
+        if (!store.exists(annotPath)) return emptyList()
+        return runCatching {
+            val all = json.decodeFromString<List<Annotation>>(store.readText(annotPath))
+            docId?.let { filter -> all.filter { it.docId == filter } } ?: all
+        }.getOrElse { emptyList() }
+    }
+
+    suspend fun saveAnnotation(annotation: Annotation) {
+        val annotPath = "library/user/annotations.json"
+        val all = runCatching {
+            if (store.exists(annotPath)) {
+                json.decodeFromString<List<Annotation>>(store.readText(annotPath))
+            } else emptyList()
+        }.getOrElse { emptyList() }
+        val without = all.filter { it.id != annotation.id }
+        store.write(annotPath, json.encodeToString(without + annotation))
+    }
+
+    suspend fun removeAnnotation(id: String) {
+        val annotPath = "library/user/annotations.json"
+        if (!store.exists(annotPath)) return
+        val all = runCatching {
+            json.decodeFromString<List<Annotation>>(store.readText(annotPath))
+        }.getOrElse { return }
+        store.write(annotPath, json.encodeToString(all.filter { it.id != id }))
+    }
+
+    // --- Collections ---
+
+    suspend fun getCollections(): List<Collection> {
+        val collPath = "library/user/collections.json"
+        if (!store.exists(collPath)) return emptyList()
+        return runCatching {
+            json.decodeFromString<List<Collection>>(store.readText(collPath))
+        }.getOrElse { emptyList() }
+    }
+
+    suspend fun saveCollections(collections: List<Collection>) {
+        store.write("library/user/collections.json", json.encodeToString(collections))
+    }
+}

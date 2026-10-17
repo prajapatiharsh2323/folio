@@ -1,0 +1,27 @@
+package dev.folio.mobile.core.store
+
+/**
+ * Direct Kotlin port of packages/core/src/store/file-store.ts.
+ *
+ * Paths are library-relative POSIX (e.g. "library/manifest.json"), never absolute,
+ * and must never contain ".." segments — implementations enforce this.
+ *
+ * Kotlin note: implementations do blocking IO; callers must invoke from
+ * Dispatchers.IO (suspend functions here make that the natural call pattern).
+ */
+data class FileStat(val size: Long, val modifiedAt: Long)
+
+interface FileStore {
+    suspend fun read(path: String): ByteArray
+    suspend fun readText(path: String): String
+
+    /** Atomic: write a temp file in the same directory, fsync, then rename over. */
+    suspend fun write(path: String, data: ByteArray)
+    suspend fun write(path: String, data: String)
+    suspend fun exists(path: String): Boolean
+
+    /** Names of entries directly inside [dir] (not recursive, not full paths). */
+    suspend fun list(dir: String): List<String>
+    suspend fun stat(path: String): FileStat
+    suspend fun remove(path: String, recursive: Boolean = false)
+}
