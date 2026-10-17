@@ -3,6 +3,7 @@ package dev.folio.mobile.core.library
 import dev.folio.mobile.core.model.DocFiles
 import dev.folio.mobile.core.model.DocKind
 import dev.folio.mobile.core.model.DocMeta
+import dev.folio.mobile.core.model.ManifestDoc
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.SourceFormat
 import org.junit.Assert.assertEquals
@@ -31,6 +32,14 @@ class LibraryUiTest {
     )
 
     private fun progress(percent: Double) = Progress("d1", "/c1", percent, "2026-10-17T00:00:00Z")
+
+    private fun mdoc(id: String, title: String, slug: String = "$id-slug") = ManifestDoc(
+        id = id,
+        slug = slug,
+        title = title,
+        contentHash = "hash-$id",
+        updatedAt = "2026-10-17T00:00:00Z"
+    )
 
     @Test
     fun `item falls back to kind label when author missing`() {
@@ -67,6 +76,34 @@ class LibraryUiTest {
         assertNull(LibraryUi.item(meta("d1", "B", "A"), null).cover)
         val blank = meta("d1", "B", "A").copy(files = DocFiles(cover = "  "))
         assertNull(LibraryUi.item(blank, null).cover)
+    }
+
+    @Test
+    fun `damaged notice is null when nothing is damaged`() {
+        assertNull(LibraryUi.damagedNotice(emptyList()))
+    }
+
+    @Test
+    fun `damaged notice text is singular for one and plural for many`() {
+        val one = LibraryUi.damagedNotice(listOf(mdoc("d1", "A Book")))!!
+        assertEquals(1, one.count)
+        assertTrue(one.bannerText.contains("1 document"))
+        val two = LibraryUi.damagedNotice(listOf(mdoc("d1", "A"), mdoc("d2", "B")))!!
+        assertEquals(2, two.count)
+        assertTrue(two.bannerText.contains("2 documents"))
+    }
+
+    @Test
+    fun `damaged item label falls back to slug when title blank`() {
+        val notice = LibraryUi.damagedNotice(
+            listOf(
+                mdoc("d1", "  ", slug = "2026-10-17-slug-abcd"),
+                mdoc("d2", "Real Title")
+            )
+        )!!
+        assertEquals("2026-10-17-slug-abcd", notice.items[0].label)
+        assertEquals("Real Title", notice.items[1].label)
+        assertEquals(listOf("d1", "d2"), notice.items.map { it.id })
     }
 
     @Test

@@ -2,6 +2,7 @@ package dev.folio.mobile.core.library
 
 import dev.folio.mobile.core.model.DocKind
 import dev.folio.mobile.core.model.DocMeta
+import dev.folio.mobile.core.model.ManifestDoc
 import dev.folio.mobile.core.model.Progress
 
 /**
@@ -67,5 +68,26 @@ object LibraryUi {
         item.percent == null -> 1
         item.percent >= 1.0 - 1e-9 -> 2
         else -> 0
+    }
+
+    /** One damaged-doc row in the recovery banner/dialog (display-only). */
+    data class DamagedItem(val id: String, val label: String)
+
+    /** Recovery-banner content; null when nothing is damaged. */
+    data class DamagedNotice(val count: Int, val bannerText: String, val items: List<DamagedItem>)
+
+    /**
+     * Pure display model for damaged docs (spec §4 Rule 2: shown, never
+     * silently dropped). Removal reuses [LibraryManager.deleteDocument].
+     */
+    fun damagedNotice(damaged: List<ManifestDoc>): DamagedNotice? {
+        if (damaged.isEmpty()) return null
+        val items = damaged.map { DamagedItem(it.id, it.title.ifBlank { it.slug }) }
+        val text = if (items.size == 1) {
+            "1 document is damaged — its files are incomplete."
+        } else {
+            "${items.size} documents are damaged — their files are incomplete."
+        }
+        return DamagedNotice(items.size, text, items)
     }
 }

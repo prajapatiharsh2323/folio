@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -185,6 +186,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var importing by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<LibraryUi.LibraryItem?>(null) }
     var searchActive by remember { mutableStateOf(false) }
+    var damagedNotice by remember { mutableStateOf<LibraryUi.DamagedNotice?>(null) }
+    var damagedDialogOpen by remember { mutableStateOf(false) }
 
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
@@ -194,6 +197,10 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         val docs = withContext(Dispatchers.IO) { library.listDocuments() }
         val progress = withContext(Dispatchers.IO) { library.getAllProgress() }
         entries = LibraryUi.sort(docs.map { LibraryUi.item(it, progress[it.id]) })
+        // Damaged entries (spec §4 Rule 2): surfaced in a banner, never dropped.
+        damagedNotice = withContext(Dispatchers.IO) {
+            LibraryUi.damagedNotice(library.damagedDocuments())
+        }
         libraryVersion += 1
         loading = false
     }
@@ -264,65 +271,70 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                     },
                     onClose = { searchActive = false }
                 )
-            } else if (loading) {
-                Box(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
+            } else {
+                damagedNotice?.let { notice ->
+                    DamagedBanner(notice = notice, onReview = { damagedDialogOpen = true })
                 }
-            } else if (entries.isEmpty()) {
-                Box(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            if (importing) {
-                                "Importing…"
-                            } else {
-                                "Library is empty.\nAdd a book or article with the + button."
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(horizontal = 32.dp)
-                        )
-                        if (!importing) {
-                            TextButton(
-                                onClick = {
-                                    scope.launch {
-                                        importing = true
-                                        try {
-                                            runSample(context)
-                                            refresh()
-                                        } catch (t: Throwable) {
-                                            snackbar.showSnackbar(t.message ?: "Import failed")
-                                        } finally {
-                                            importing = false
+                if (loading) {
+                    Box(
+                        Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (entries.isEmpty()) {
+                    Box(
+                        Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                if (importing) {
+                                    "Importing…"
+                                } else {
+                                    "Library is empty.\nAdd a book or article with the + button."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(horizontal = 32.dp)
+                            )
+                            if (!importing) {
+                                TextButton(
+                                    onClick = {
+                                        scope.launch {
+                                            importing = true
+                                            try {
+                                                runSample(context)
+                                                refresh()
+                                            } catch (t: Throwable) {
+                                                snackbar.showSnackbar(t.message ?: "Import failed")
+                                            } finally {
+                                                importing = false
+                                            }
                                         }
                                     }
+                                ) {
+                                    Text("Import sample text (debug)")
                                 }
-                            ) {
-                                Text("Import sample text (debug)")
                             }
                         }
                     }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(entries, key = { it.id }) { item ->
-                        LibraryCard(
-                            item = item,
-                            onOpen = {
-                                context.startActivity(
-                                    ReaderActivity.createIntent(context, item.id)
-                                )
-                            },
-                            onDelete = { deleteTarget = item }
-                        )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(entries, key = { it.id }) { item ->
+                            LibraryCard(
+                                item = item,
+                                onOpen = {
+                                    context.startActivity(
+                                        ReaderActivity.createIntent(context, item.id)
+                                    )
+                                },
+                                onDelete = { deleteTarget = item }
+                            )
+                        }
                     }
                 }
             }
@@ -356,6 +368,100 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             }
         )
     }
+
+    // Recovery dialog (spec §4 Rule 2): remove damaged docs or dismiss.
+    damagedNotice?.takeIf { damagedDialogOpen }?.let { notice ->
+        DamagedDocsDialog(
+            notice = notice,
+            onRemove = { item ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            appLibrary(context).deleteDocument(item.id)
+                        }
+                        refresh()
+                        if (damagedNotice == null) damagedDialogOpen = false
+                        snackbar.showSnackbar("Removed “${item.label}”")
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Remove failed")
+                    }
+                }
+            },
+            onClose = { damagedDialogOpen = false }
+        )
+    }
+}
+
+/** Recovery banner: damaged manifest entries are shown, never silently dropped (spec §4 Rule 2). */
+@Composable
+private fun DamagedBanner(notice: LibraryUi.DamagedNotice, onReview: () -> Unit) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Text(
+                notice.bannerText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 10.dp)
+            )
+            TextButton(onClick = onReview) { Text("Review") }
+        }
+    }
+}
+
+/** Lists damaged docs; Remove deletes the entry's remaining files (reuses deleteDocument). */
+@Composable
+private fun DamagedDocsDialog(
+    notice: LibraryUi.DamagedNotice,
+    onRemove: (LibraryUi.DamagedItem) -> Unit,
+    onClose: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Damaged documents") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "These documents are missing files or metadata. Removing one deletes all of its remaining files.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(8.dp))
+                for (item in notice.items) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            item.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { onRemove(item) }) { Text("Remove") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClose) { Text("Close") }
+        }
+    )
 }
 
 /**

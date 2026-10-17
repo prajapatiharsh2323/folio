@@ -223,4 +223,18 @@ class LibraryManagerTest {
         // not silently dropped: manifest still lists it
         assertEquals(1, manager.getManifest().docs.size)
     }
+
+    @Test
+    fun `removing a damaged doc clears manifest and recovery`() = runBlocking {
+        // Banner flow: corrupt meta.json → entry is damaged → Remove → clean.
+        val meta = manager.addDocument(importResult())
+        store.write("library/docs/${meta.slug}/meta.json", "{corrupted json!!")
+        assertEquals(listOf(meta.id), manager.damagedDocuments().map { it.id })
+
+        manager.deleteDocument(meta.id)
+
+        assertTrue(manager.damagedDocuments().isEmpty())
+        assertTrue(manager.getManifest().docs.isEmpty())
+        assertFalse(store.exists("library/docs/${meta.slug}"))
+    }
 }
