@@ -33,7 +33,7 @@
 | M1 | Scaffold: Gradle project, Compose shell, theme tokens, adaptive icon, wrapper, first successful `assembleDebug` | **DONE** (build green, APK 16.2 MB) |
 | M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
 | M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
-| M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | pending |
+| M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **phase 1 DONE** — detect+EPUB+TXT+builder, 43/43 tests; HTML+PDF next |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | pending |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
@@ -94,6 +94,27 @@
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-4 (Oct 17, 2026)** — M3 phase 1: import pipeline core.
+  - `FileDetector`: magic bytes (%PDF-, PK zip+`mimetype`), HTML markers, strict
+    UTF-8 fatal decode (TextDecoder parity — plain zips → unknown, matches TS).
+  - `EpubBuilder`: escapeXhtml, toXhtml (void-tag self-closing + bare-amp escape +
+    named entities), clean/index.html template (deterministic, no volatile stamps),
+    buildArticleEpub (mimetype STORED first, container.xml, style, nav, chapter_xhtml,
+    content.opf, stored images).
+  - `EpubImporter`: unzip, DRM detection (rights.xml; encryption.xml non-font algos;
+    CipherData w/o algo), OPF locate (exact/decoded/case-insensitive), title/creator/
+    language regex parse (prefix-tolerant), manifest id→href map, spine order,
+    href resolution with dot-segments, per-chapter plain text + word count.
+    `extractPlainText` ported with tag→space rule so words never concatenate (TS parity).
+  - `TxtImporter`: BOM strip, blank-line paragraph split, escaping, Devanagari >30%
+    letters → hi, deterministic template → stable contentHash, EPUB 3 reading edition.
+  - `EpubFixtures` (test helper): synthetic EPUBs built in-test (2-chapter novel, DRM
+    variants, article epub round-trip) — no copyrighted files committed.
+  - 43/43 tests green (19 new). Commit fb6be02 pushed. Summary: `.docs/results/M3-import-phase1.md`.
+  - Next session: M3 phase 2 — HTML importer (jsoup sanitizer allow-list port +
+    Readability-independent single-file path) + PDF importer (PDFBox dependency,
+    ≥50 chars/page searchable heuristic).
 
 - **Session M-3 (Oct 17, 2026)** — M2 storage layer complete.
   - `FileStore` interface port (suspend fns; blocking IO → Dispatchers.IO by caller).
