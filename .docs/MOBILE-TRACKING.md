@@ -11,20 +11,20 @@
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **Library phase (recommended next)** — polish MainActivity (real list UI with
-   delete/rename/covers, per-chapter highlight list screen, library search later
-   gated on M4), import UI beyond the debug button (SAF intent filters for
-   .epub/.pdf/.html/.txt with FileDetector).
-2. **R2b remainder** — chapter-aware scrubber labels + time-left (needs the
-   ReadingPace/stats port from packages/core reading/stats.ts), page-turn anims,
-   paragraph-snap, tap-zone config, per-book typography overrides, image zoom,
-   volume-key on/off setting (needs a schema-1 settings decision if added).
+1. **M4 search (recommended next)** — SQLDelight + FTS5, pre-normalized shadow
+   text (Devanagari-safe), normaliser port, boosts title4/author3/tags3/text1,
+   Hindi fixtures (`packages/core/tests/fixtures/hindi/`), manifest+index single
+   transaction, search UI in the library screen.
+2. **L1 residue** — covers (EPUB cover into the card + reader splash), icon
+   generation from `folio-logo.png` (user-provided canonical logo at repo root),
+   damaged-doc recovery banner, tags/collections UI, R2b remainder (time-left
+   needs the ReadingPace/stats port).
 3. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
-   tap "Import sample text" → open doc → verify rendering, prefs, progress,
+   run through: SAF import (or sample button), open doc, prefs, progress,
    highlight reopen-rendering + context menu + quote-card share (R3),
-   volume-key turning + seek + brightness (R2b — all untested on-device so far).
+   volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1).
 4. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
@@ -64,6 +64,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, **brightness overlay**, **interactive scrubbing pillar**, page-turn anims, paragraph-snap, tap-zone config, chapter-aware time-left, per-book typography overrides, image zoom | **PARTIAL** (01ce6e5 — keys/brightness/scrubber/predictive-back done; remainder pending) |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
+| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch | **DONE** (01f5dfb — `.docs/results/L1-library.md`; covers/collections/tags UI, damaged-doc banner, icon-from-logo pending) |
 | M4 | Search: SQLDelight FTS5 + normaliser port; manifest+index single transaction; Hindi fixture suite | pending |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
@@ -190,6 +191,22 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-9 (Oct 17, 2026)** — L1 library phase (commits a9787af, 01f5dfb,
+  pushed).
+  - `folio-logo.png` at the repo root committed — user confirmed it IS the
+    canonical logo, to be used for icons later (location TBD; currently at
+    root, untracked-then-tracked after the double-commit dance described in
+    the R3/M-9 git noise).
+  - `LibraryUi` (pure, 6 tests) + `ImportDispatch` (pure, 4 tests) — details in
+    `.docs/results/L1-library.md`; MainActivity is now the real screen (cards
+    + progress + menus + SAF import + ACTION_VIEW + delete confirm).
+  - Gotchas recorded: FNV literal is Long; route tests need REAL pdf fixtures;
+    use `git commit -F file` for multiline messages on this VM (PowerShell
+    quoting splits multiline `-m`).
+  - 109/109 tests green. Device smoke still blocked.
+  - **Next session**: M4 search (recommended) / L1 residue (incl. favicon+icon
+    work from folio-logo.png) / device smoke / font packaging.
 
 - **Session M-8 (Oct 17, 2026)** — R2b comfort slice (commit 01ce6e5, pushed).
   - `PageTurnKeys` (pure, 4 tests): volume up=backward / down=forward
