@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M1 scaffold COMPLETE + M2 started (model port green)
+## Status: M3 COMPLETE (import pipeline: detect + EPUB + TXT + HTML + PDF, 64/64 green); next R1 reader or M4 search
 
 ## The locked plan (agreed with user, Oct 17 2026)
 
@@ -33,7 +33,7 @@
 | M1 | Scaffold: Gradle project, Compose shell, theme tokens, adaptive icon, wrapper, first successful `assembleDebug` | **DONE** (build green, APK 16.2 MB) |
 | M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
 | M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
-| M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **phase 1 DONE** — detect+EPUB+TXT+builder, 43/43 tests; HTML+PDF next |
+| M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | pending |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
@@ -95,26 +95,44 @@
 
 ## Session log
 
-- **Session M-4 (Oct 17, 2026)** — M3 phase 1: import pipeline core.
-  - `FileDetector`: magic bytes (%PDF-, PK zip+`mimetype`), HTML markers, strict
-    UTF-8 fatal decode (TextDecoder parity — plain zips → unknown, matches TS).
-  - `EpubBuilder`: escapeXhtml, toXhtml (void-tag self-closing + bare-amp escape +
-    named entities), clean/index.html template (deterministic, no volatile stamps),
-    buildArticleEpub (mimetype STORED first, container.xml, style, nav, chapter_xhtml,
-    content.opf, stored images).
-  - `EpubImporter`: unzip, DRM detection (rights.xml; encryption.xml non-font algos;
-    CipherData w/o algo), OPF locate (exact/decoded/case-insensitive), title/creator/
-    language regex parse (prefix-tolerant), manifest id→href map, spine order,
-    href resolution with dot-segments, per-chapter plain text + word count.
-    `extractPlainText` ported with tag→space rule so words never concatenate (TS parity).
-  - `TxtImporter`: BOM strip, blank-line paragraph split, escaping, Devanagari >30%
-    letters → hi, deterministic template → stable contentHash, EPUB 3 reading edition.
-  - `EpubFixtures` (test helper): synthetic EPUBs built in-test (2-chapter novel, DRM
-    variants, article epub round-trip) — no copyrighted files committed.
-  - 43/43 tests green (19 new). Commit fb6be02 pushed. Summary: `.docs/results/M3-import-phase1.md`.
-  - Next session: M3 phase 2 — HTML importer (jsoup sanitizer allow-list port +
-    Readability-independent single-file path) + PDF importer (PDFBox dependency,
-    ≥50 chars/page searchable heuristic).
+- **Session M-4 continued (Oct 17, 2026)** — M3 phases 2+3: HTML + PDF importers. M3 COMPLETE.
+  - `HtmlImporter` + jsoup (`org.jsoup:jsoup:1.18.1`): `articleSafelist()` = DOMPurify
+    allow-list port (tags h1-6/p/list/blockquote/pre/code/table/figure/img/a/em/strong/
+    sup/sub/hr/br/span/abbr/cite/q/mark/del/ins/u; td/th colspan/rowspan/scope; enforced
+    a[rel=noopener noreferrer][target=_blank]; **explicit protocol allow-lists on
+    a[href] and img[src]** — jsoup permits ALL schemes on attrs without them, incl.
+    `file:`; `preserveRelativeLinks(true)`).
+  - Sanitizer tests: script content removed, on* handlers stripped, javascript: href
+    removed, iframe/object/form/svg/math/style stripped, safe protocols, hostile page
+    end-to-end (clean html AND epub bytes contain no forbidden strings).
+  - Structural article extraction (`<article>` → `<main>` → `[itemprop=articleBody]` →
+    `[role=main]` → `div#content` → body; non-blank check only). DECISION: Readability
+    scoring NOT ported; revisit with clipper. NOTE: a 200-char gate fell through to
+    `<body>` for short saved pages — that gate was removed.
+  - SingleFile data-URI images: regex extraction, cap 40, **content-hash names**
+    (sha256-prefix.ext), `src="images/<name>"` rewrite, beyond-cap srcs blanked,
+    **identical images deduped to one stored file** (zip duplicate-entry guard).
+  - `PdfImporter` (`com.tom-roush:pdfbox-android:2.0.27.0`, namespace
+    **com.tom_roush.pdfbox**, NOT org.apache): Info-dict title/author → filename
+    fallback, per-page chapters "Page N" href `#page=N`, avg ≥50 chars/page →
+    searchable, locked pdf → `PdfLockedException("This PDF is locked")`,
+    no reading/clean editions (parity with TS). App must call
+    `PDFBoxResourceLoader.init(context)` before use (noted in KDoc).
+  - **PDFBox-on-JVM test infra gotchas (do not repeat)**: tom-roush loads resources
+    from Android assets; on JVM it falls back to `getResourceAsStream`. Fixed by
+    copying AAR `assets/com/tom_roush/{pdfbox/fontbox}` subset into
+    `mobile/app/src/test/resources/` (glyphlist, text, afm, ttf/LiberationSans,
+    fontbox unicode); CJK cmaps (~3.2 MB) intentionally omitted. Plus
+    `testOptions { unitTests.isReturnDefaultValues = true }` for android.util stubs.
+    `PDType1Font` static init NEEDS those resources — raw-PDF fixtures are written
+    by hand (`PdfFixtures.buildPdf`) to avoid PDFBox writer+fonts in tests.
+  - Fixture-builder gotcha: keep object-ref arithmetic inside parens
+    (`${3 + (it - 1) * 2}`) — precedence bug made Kids point at wrong objects.
+  - 64/64 tests green. Commits: 9c1ec65 (HTML), d5ca39d (PDF + test resources),
+    98a263a (stray-dir cleanup). All pushed. Full result: `.docs/results/M3-import.md`.
+  - **Next session: confirm green build, then start R1 EPUB reader (Readium Kotlin
+    Toolkit) — add readium deps per `.docs/results/M3-import.md` next-steps, or M4
+    search if R1 toolchain is delayed.**
 
 - **Session M-3 (Oct 17, 2026)** — M2 storage layer complete.
   - `FileStore` interface port (suspend fns; blocking IO → Dispatchers.IO by caller).
