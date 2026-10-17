@@ -7,32 +7,25 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 137/137 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + EPUB covers (fb2cb20) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 148/148 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **L1 residue — covers slice (recommended next)**: EPUB cover extraction at
-   import + card display. Contract: file `docs/<slug>/cover.jpg` (spec §layout),
-   `meta.files.cover` = doc-dir-relative path (mobile model already has it;
-   `DocFiles.cover`). Plan: (a) `EpubImporter` — the OPF manifest map already
-   exists; detect cover via `<item properties="cover-image">` → `<meta
-   name="cover" content=id>` → id/href contains "cover" + image media type;
-   (b) `ImportResult.cover` bytes + `LibraryManager` writes it after
-   reading/ before meta.json, adds to manifestFiles, sets files.cover;
-   (c) fixture EPUBs have NO covers — build a cover EPUB in-test (java.util.zip
-   in-memory), do NOT modify `english-novel.epub` (shared byte golden with the
-   PWA suite); (d) card: async decode via a pure `sampleSize` helper
-   (inJustDecodeBounds + inSampleSize, JVM-testable) + small in-memory cache.
-   Remaining L1 residue after this: damaged-doc recovery banner (uses existing
-   `LibraryManager.damagedDocuments()`), tags/collections UI, reader splash
-   image, R2b remainder (time-left needs the ReadingPace/stats port).
+1. **L1 residue #2 — damaged-doc recovery banner (recommended next)**: the
+   data side exists (`LibraryManager.damagedDocuments()`); wire the banner
+   into `LibraryScreen` and an action to remove/ignore the broken doc (the
+   PWA parity behavior). Alternatively: **tags/collections UI** (model +
+   PWA-compatible `user/*.json` contracts exist) or **reader splash image**
+   (show extracted cover while the reader loads — cover bytes are now
+   available, display-only).
 2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
    run through: SAF import (or sample button), open doc, prefs, progress,
    highlight reopen-rendering + context menu + quote-card share (R3),
    volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1),
-   search panel → hit tap → reader opens at chapter (M4), launcher icon look.
+   search panel → hit tap → reader opens at chapter (M4), launcher icon look,
+   cover thumbnail on a cover-bearing EPUB.
 3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
@@ -74,7 +67,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, **brightness overlay**, **interactive scrubbing pillar**, page-turn anims, paragraph-snap, tap-zone config, chapter-aware time-left, per-book typography overrides, image zoom | **PARTIAL** (01ce6e5 — keys/brightness/scrubber/predictive-back done; remainder pending) |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
-| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon done M-11; covers/collections/tags UI, damaged-doc banner, reader splash pending) |
+| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4); EPUB covers: extraction + card thumbnails (fb2cb20 — `.docs/results/L1-covers.md`) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon done M-11; covers done M-12; collections/tags UI, damaged-doc banner, reader splash pending) |
 | M4 | Search: in-memory MiniSearch port (normalise + Hindi stems + boosts 4/3/3/1 + snippet) + library search UI + reader jump; PWA `search.test.ts` golden cases all ported (SQLDelight/FTS5 dropped — decision 3) | **DONE** (da75560 + ecff505 — `.docs/results/M4-search.md`) |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
@@ -208,6 +201,26 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-12 (Oct 17, 2026)** — L1 residue slice: **EPUB covers
+  (extraction + card display)** (commit fb2cb20, pushed). Full summary in
+  `.docs/results/L1-covers.md`.
+  - Import: `ImportResult.cover` (`ImportCover(name, bytes)`); `EpubImporter`
+    detection chain = `properties="cover-image"` → `<meta name="cover"
+    content=id>` → id/href contains "cover" + image type; first candidate
+    that loads bytes from the zip wins; stored as `cover.<source-ext>`
+    (jpg/png/gif/webp/jpeg kept; unknown → jpg).
+  - `LibraryManager` writes `cover.*` right after reading (content before
+    meta.json), hashes it into `manifestFiles`, sets `files.cover`;
+    delete cascade already removes the whole doc dir (no change needed).
+  - UI: `LibraryItem.cover` = store-relative path; new `CoverLoader`
+    (pure `sampleSize` power-of-two math + `inJustDecodeBounds`/`inSampleSize`
+    decode at 132×174 px + 8 MB bitmap LRU); `LibraryCard` shows a 44×58 dp
+    `ContentScale.Crop` thumb when present, tinted spine bar stays as fallback.
+  - Tests +11 → **148/148 green**; cover EPUBs built in-test
+    (`EpubFixtures.epubWithCover`); shared PWA fixture untouched.
+  - **Not done (next)**: damaged-doc banner (data side exists), tags/collections
+    UI, reader splash image; R2b time-left remainder still pending.
 
 - **Session M-11 (Oct 17, 2026)** — L1 residue slice: **launcher icon from the
   canonical logo** (commit b0863c4, pushed).
