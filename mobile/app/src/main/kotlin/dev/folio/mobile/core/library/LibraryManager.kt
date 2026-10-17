@@ -1,6 +1,7 @@
 package dev.folio.mobile.core.library
 
 import dev.folio.mobile.core.importer.ImportResult
+import dev.folio.mobile.core.importer.SearchChapterText
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.model.DocMeta
@@ -164,6 +165,20 @@ class LibraryManager(
             }
         }
         return docs
+    }
+
+    /**
+     * Per-chapter searchable text (library/index/text/<id>.json), or empty.
+     * Used by the in-memory search index (M4) and nothing else.
+     */
+    suspend fun getSearchText(docId: String): List<SearchChapterText> {
+        val path = "library/index/text/$docId.json"
+        if (!store.exists(path)) return emptyList()
+        return try {
+            json.decodeFromString<List<SearchChapterText>>(store.readText(path))
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /** Manifest entries whose meta.json is missing or unparsable — shown as damaged, never dropped. */

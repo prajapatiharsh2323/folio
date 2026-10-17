@@ -67,11 +67,19 @@ class ReaderActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_DOC_ID = "dev.folio.mobile.READER_DOC_ID"
+        /** 1-based spine order for a search-hit jump; 0 = resume normally. */
+        const val EXTRA_TARGET_ORDER = "dev.folio.mobile.READER_TARGET_ORDER"
         private const val NAV_TAG = "EpubNavigatorFragment"
 
         fun createIntent(context: Context, docId: String): Intent =
             Intent(context, ReaderActivity::class.java)
                 .putExtra(EXTRA_DOC_ID, docId)
+
+        /** Search-hit path (M4): open the chapter by spine order. */
+        fun createIntent(context: Context, docId: String, targetOrder: Int): Intent =
+            Intent(context, ReaderActivity::class.java)
+                .putExtra(EXTRA_DOC_ID, docId)
+                .putExtra(EXTRA_TARGET_ORDER, targetOrder)
     }
 
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -192,24 +200,33 @@ class ReaderActivity : FragmentActivity() {
 
         // v1 restore: chapter-accurate via the saved CFI's spine component;
         // percent fallback when the location has no CFI (TXT-era/href fallback).
+        // An explicit search-hit jump (EXTRA_TARGET_ORDER) beats any restore.
         val savedProgress: Progress? = library.getProgress(docId)
         var initialLocator: Locator? = null
-        if (savedProgress != null && savedProgress.location.startsWith(ProgressBridge.CFI_PREFIX)) {
-            val spineIdx = ProgressBridge.cfiSpineIndex(savedProgress.location)
-            if (spineIdx != null) {
-                publication.readingOrder.getOrNull(spineIdx)?.let { link ->
-                    initialLocator = chapterLocator(link)
+        val targetOrder = intent?.getIntExtra(EXTRA_TARGET_ORDER, 0) ?: 0
+        val targetSpine = targetOrder - 1
+        if (targetOrder > 0 && publication.readingOrder.getOrNull(targetSpine) != null) {
+            publication.readingOrder[targetSpine].let { link ->
+                initialLocator = chapterLocator(link)
+            }
+        } else {
+            if (savedProgress != null && savedProgress.location.startsWith(ProgressBridge.CFI_PREFIX)) {
+                val spineIdx = ProgressBridge.cfiSpineIndex(savedProgress.location)
+                if (spineIdx != null) {
+                    publication.readingOrder.getOrNull(spineIdx)?.let { link ->
+                        initialLocator = chapterLocator(link)
+                    }
                 }
             }
-        }
-        if (initialLocator == null && savedProgress != null) {
-            publication.findService(LocatorService::class)
-                ?.locateProgression(savedProgress.percent)
-                ?.let { initialLocator = it }
-        }
-        if (initialLocator == null) {
-            publication.readingOrder.firstOrNull()?.let { link ->
-                initialLocator = chapterLocator(link)
+            if (initialLocator == null && savedProgress != null) {
+                publication.findService(LocatorService::class)
+                    ?.locateProgression(savedProgress.percent)
+                    ?.let { initialLocator = it }
+            }
+            if (initialLocator == null) {
+                publication.readingOrder.firstOrNull()?.let { link ->
+                    initialLocator = chapterLocator(link)
+                }
             }
         }
         val initial = initialLocator ?: run {

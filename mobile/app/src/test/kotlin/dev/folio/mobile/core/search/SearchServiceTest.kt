@@ -60,6 +60,7 @@ class SearchServiceTest {
 
     @Test
     fun `apostrophe and quote entities decode`() {
-        assertEquals("'x'", SearchUi.decodeEntities("&#039;x&quot;"))
+        // &#039; -> ' and &quot; -> " : both entities fully decode
+        assertEquals("'x\"", SearchUi.decodeEntities("&#039;x&quot;"))
     }
 }
