@@ -7,21 +7,23 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 COMPLETE (64-test import pipeline) + R1 steps 1–4 DONE + R2 DONE (reader chrome + typography + selection→highlight groundwork) — 82/82 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 COMPLETE (64-test import pipeline) + R1 steps 1–4 DONE + R2 DONE + R3 DONE (annotations: persisted-highlight rendering + context menu + quote-card share) — 93/93 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **R3 proper (recommended next)** — annotations:
-   - annotation context menu on `onDecorationActivated` (edit note / change color /
-     delete) — `HighlightManager` already holds the session map + listener stub;
-   - render PERSISTED highlights on reopen — needs the CFI parser (see note 17);
-     without it only session-made highlights render;
-   - quote-card share images (R3 deliverable, schema-1 Annotation is the source).
-2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
+1. **R2b reading comfort (recommended next)** — volume-key + BT page-turner,
+   chapter-aware scrubber + time-left, brightness overlay, page-turn anims,
+   paragraph-snap, per-book typography overrides, tap-zone config, image zoom,
+   predictive back.
+2. **Library phase** — polish MainActivity (list UI, delete/rename, per-chapter
+   highlight list screen also lands naturally here), import UI beyond the debug
+   button (intent filters for .epub/.pdf/.html/.txt with FileDetector).
+3. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
-   tap "Import sample text" → open doc → verify rendering, prefs, progress saves.
-3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+   tap "Import sample text" → open doc → verify rendering, prefs, progress,
+   **highlights reopen-rendering + context menu + quote-card share (R3, new)**.
+4. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
 
@@ -58,7 +60,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-4 DONE — core rendering + prefs + chrome + chapter-accurate restore (strict within-chapter CFI + fonts pending; device smoke blocked) |
 | R2 | reader comfort polish (chrome toggle, page pillar, typography controls) | **DONE** (cb7ed34) |
 | R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
-| R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending (groundwork DONE — see note 17) |
+| R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
 | M4 | Search: SQLDelight FTS5 + normaliser port; manifest+index single transaction; Hindi fixture suite | pending |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
@@ -132,10 +134,21 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     Kotlin metadata (javap shows non-null; use `.orEmpty()`). PWA annotation
     parity: `prefix = before.takeLast(32)`, `suffix = after.take(32)`,
     `location` = CFI string.
-17. **HighlightManager (R3 groundwork)**: saved annotations carry only a CFI
-    string (schema-1), which 3.0.0 cannot parse → v1 renders only session-made
-    highlights (keeps full Locator in memory). Reopening-render needs the CFI
-    parser. Group name `"highlights"`.
+17. **HighlightManager (R3, post-session M-7)**: persisted annotations render on
+    reopen **without a CFI parser** — first assumption here was wrong. Verified
+    in toolkit 3.0.0 source: the WebView `rangeFromLocator()` anchors decoration
+    ranges from `locator.text` (highlight/before/after) using Hypothesis
+    `TextQuoteAnchor`; decoration routing is keyed by `decoration.locator.href`
+    (`DecorableNavigator.changesByHref`, exact Url equality). Recipe: parse
+    `Annotation.location` → spine index (`AnnotationLocators.anchorIndex`:
+    `ProgressBridge.cfiSpineIndex` for epubcfi, exact/leading-slash href match
+    as fallback), rebuild
+    `Locator(href = readingOrder[idx].url(), text = quote/prefix/suffix)` and
+    `applyDecorations`. `EpubNavigatorFragment.publication` is protected — pass
+    the `Publication` explicitly (HighlightManager constructor). Quote-card
+    share = pure `QuoteCardContent` (clamps 280/160, wrap) + Bitmap painter →
+    cacheDir PNG → FileProvider (`${applicationId}.fileprovider`,
+    `file_provider_paths.xml` cache-path `quote-card/`) → ACTION_SEND.
 
 ## Environment facts (fresh sessions: re-verify, don't assume)
 
@@ -175,6 +188,32 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-7 (Oct 17, 2026)** — R3 annotations COMPLETE (commit 7ffd693, pushed).
+  - **Key finding (already in note 17):** Readium 3.0.0 `rangeFromLocator()`
+    anchors decorations from `locator.text` (Hypothesis TextQuoteAnchor) — the
+    "CFI parser needed for reopen-rendering" premise from M-5/M-6 was wrong;
+    no new parser subsystem.
+  - `AnnotationLocators` (pure, 5 tests): annotation.location → reading-order
+    spine index (epubcfi base ref or href exact/leading-slash match).
+  - `HighlightManager`: `boot(saved)` hydrates persisted annotations at attach
+    (ReaderActivity reads `LibraryManager.getAnnotations(docId)` after
+    navigator mount); `update(annotation)`/`remove(id)` re-apply; activation
+    event surfaced via `onDecorationActivated` callback (runOnUiThread) with
+    `event.decoration.id` → live annotation lookup.
+  - `AnnotationMenuSheet`: color chips (4 PWA hexes), note editor, delete,
+    share — edits bump `updatedAt` + upsert via `saveAnnotation` (newer-wins
+    merge contract intact).
+  - `QuoteCardContent` (pure, 6 tests) + `QuoteCard` painter: shareable PNG
+    quote-card (1200×630 charcoal/violet brand) via new FileProvider →
+    ACTION_SEND. `FileProvider` added to manifest (authority
+    `${applicationId}.fileprovider`).
+  - 93/93 tests green (CANNOT device-smoke: no AVDs — verify
+    `mobile/app/build/test-results/testDebugUnitTest`, 93 cases).
+  - Full result: `.docs/results/R3-annotations.md`.
+  - **Next session**: R2b comfort list / library phase / device smoke — see
+    NEXT SESSION above. R3 remainder (dictionary/translate, per-chapter
+    highlight list) intentionally deferred.
 
 - **Session M-5 (Oct 17, 2026)** — R1 steps 1-2 + TTS dropped from v1 scope.
   - **TTS dropped** (user decision): R4 scope = footnote popups + media overlays.
