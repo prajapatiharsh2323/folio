@@ -7,28 +7,25 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + EPUB covers (fb2cb20) + spec §4 Rule 2 recovery COMPLETE (damaged banner 59422ea + interrupted imports finish/delete 3f6cae6) + tags/collections (051c94c) + reader splash (e2f8181, L1 residue now EMPTY) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 163/163 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + EPUB covers (fb2cb20) + spec §4 Rule 2 recovery COMPLETE (damaged banner 59422ea + interrupted imports finish/delete 3f6cae6) + tags/collections (051c94c) + reader splash (e2f8181, L1 residue EMPTY) + collections management rename/delete (f8b80a0) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 164/164 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **Collections management UI (recommended next)**: rename/delete exist as data
-   APIs (tested, M-15) but have no screen entry point; ADD rename + delete to
-   the tags/collections filter chips (long-press → rename/delete menu) or a
-   manage-dialog in the details flow. Small slice.
-2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
-   Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
-   `avdmanager create avd`; budget it as its own step. Then: `adb install`,
-   run through: SAF import (or sample button), open doc, prefs, progress,
-   highlight reopen-rendering + context menu + quote-card share (R3),
-   volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1),
-   search panel → hit tap → reader opens at chapter (M4), launcher icon look,
-   cover thumbnail + reader splash on a cover-bearing EPUB, damaged banner +
-   interrupted-import banner (corrupt a meta.json / drop a stray folder via
-   adb), tags/collections (details dialog, chips filtering).
-3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+1. **Device smoke test (recommended if the ~1 GB download is acceptable)** —
+   still BLOCKED: no AVDs/system images on this VM. Unblock =
+   `sdkmanager "system-images;android-34;google_apis;x86_64"` + `avdmanager
+   create avd`; budget it as its own step. Then: `adb install`, run through:
+   SAF import (or sample button), open doc, prefs, progress, highlight
+   reopen-rendering + context menu + quote-card share (R3), volume-key turning
+   + seek + brightness (R2b), delete + duplicate skip (L1), search panel → hit
+   tap → reader opens at chapter (M4), launcher icon look, cover thumbnail +
+   reader splash on a cover-bearing EPUB, damaged banner + interrupted-import
+   banner (corrupt a meta.json / drop a stray folder via adb), tags/collections
+   (details dialog, chips filtering, rename/delete from the overflow menu).
+2. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
-4. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
+3. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
 
 **Carried constraints:** TTS is DROPPED (post-v1 backlog, not debt). PWA schema-1
 contracts (manifest, user/*.json, backup ZIP, annotation anchors, Drive sync) must
@@ -66,7 +63,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, **brightness overlay**, **interactive scrubbing pillar**, page-turn anims, paragraph-snap, tap-zone config, chapter-aware time-left, per-book typography overrides, image zoom | **PARTIAL** (01ce6e5 — keys/brightness/scrubber/predictive-back done; remainder pending) |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
-| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4); EPUB covers: extraction + card thumbnails (fb2cb20); spec §4 Rule 2 recovery: damaged banner (59422ea) + interrupted imports finish/delete (3f6cae6); tags + collections: CRUD data APIs, details dialog, filter chips (051c94c); reader splash: cover + spinner while the navigator mounts (e2f8181) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon M-11; covers M-12; recovery M-13/M-14; tags/collections M-15 — `.docs/results/L1-tags-collections.md`; reader splash M-16 — `.docs/results/L1-reader-splash.md`; collections rename/delete UI pending) |
+| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4); EPUB covers: extraction + card thumbnails (fb2cb20); spec §4 Rule 2 recovery: damaged banner (59422ea) + interrupted imports finish/delete (3f6cae6); tags + collections: CRUD data APIs, details dialog, filter chips (051c94c); reader splash: cover + spinner while the navigator mounts (e2f8181); collections management: rename/delete dialog + filter rebind (f8b80a0) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon M-11; covers M-12; recovery M-13/M-14; tags/collections M-15 — `.docs/results/L1-tags-collections.md`; reader splash M-16 — `.docs/results/L1-reader-splash.md`; collections management M-17 — `.docs/results/L1-collections-manage.md`) |
 | M4 | Search: in-memory MiniSearch port (normalise + Hindi stems + boosts 4/3/3/1 + snippet) + library search UI + reader jump; PWA `search.test.ts` golden cases all ported (SQLDelight/FTS5 dropped — decision 3) | **DONE** (da75560 + ecff505 — `.docs/results/M4-search.md`) |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
@@ -200,6 +197,17 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-17 (Oct 17, 2026)** — L1 follow-up slice: **collections
+  management — rename/delete** (commit f8b80a0, pushed). Full summary in
+  `.docs/results/L1-collections-manage.md`.
+  - Top-bar overflow → ManageCollectionsDialog: per-row name + doc count,
+    rename (prefilled sub-dialog) + delete (confirm sub-dialog); empty state
+    points at the Details dialog.
+  - Pure: `LibraryUi.sameTarget` + `rebind` — filter refresh now keeps a
+    renamed collection selected (id-matched) and drops deleted targets.
+  - Tests +1 → **164/164 green**.
+  - **Not done**: device smoke (blocked), font packaging, R4.
 
 - **Session M-16 (Oct 17, 2026)** — L1 residue slice: **reader splash** (commit
   e2f8181, pushed). Full summary in `.docs/results/L1-reader-splash.md`.
