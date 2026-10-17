@@ -149,22 +149,26 @@ class ReaderActivity : FragmentActivity() {
             return
         }
 
-        // v1 restore: by saved percent (see class KDoc for the restore-by-CFI note).
+        // v1 restore: chapter-accurate via the saved CFI's spine component;
+        // percent fallback when the location has no CFI (TXT-era/href fallback).
         val savedProgress: Progress? = library.getProgress(docId)
         var initialLocator: Locator? = null
-        if (savedProgress != null) {
+        if (savedProgress != null && savedProgress.location.startsWith(ProgressBridge.CFI_PREFIX)) {
+            val spineIdx = ProgressBridge.cfiSpineIndex(savedProgress.location)
+            if (spineIdx != null) {
+                publication.readingOrder.getOrNull(spineIdx)?.let { link ->
+                    initialLocator = chapterLocator(link)
+                }
+            }
+        }
+        if (initialLocator == null && savedProgress != null) {
             publication.findService(LocatorService::class)
                 ?.locateProgression(savedProgress.percent)
                 ?.let { initialLocator = it }
         }
         if (initialLocator == null) {
             publication.readingOrder.firstOrNull()?.let { link ->
-                // Link.href is an Href object; resolve against root into a plain
-                // Url for the Locator (mediaType = chapter is xhtml)
-                initialLocator = Locator(
-                    href = link.href.resolve(Url("/")),
-                    mediaType = MediaType.XHTML
-                )
+                initialLocator = chapterLocator(link)
             }
         }
         val initial = initialLocator ?: run {
@@ -215,6 +219,13 @@ class ReaderActivity : FragmentActivity() {
         navigatorRef = navigator
         observeProgress(docId, navigator)
     }
+
+    /** Link.href is an Href object; resolve against root for a plain-Url Locator. */
+    private fun chapterLocator(link: org.readium.r2.shared.publication.Link): Locator =
+        Locator(
+            href = link.href.resolve(Url("/")),
+            mediaType = MediaType.XHTML
+        )
 
     /** Navigator wires external links only via this listener (v1: no-op). */
     private fun readerListener() = object : EpubNavigatorFragment.Listener {

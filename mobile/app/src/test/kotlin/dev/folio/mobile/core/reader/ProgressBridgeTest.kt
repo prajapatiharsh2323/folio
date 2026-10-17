@@ -31,6 +31,18 @@ class ProgressBridgeTest {
     }
 
     @Test
+    fun `cfi spine index decodes the first path component`() {
+        assertEquals(1, ProgressBridge.cfiSpineIndex("epubcfi(/6/4!/4/2,/1:2)"))
+        assertEquals(0, ProgressBridge.cfiSpineIndex("epubcfi(/6/2)"))
+        assertEquals(7, ProgressBridge.cfiSpineIndex("epubcfi(/6/16!/4[section,:last]/2)"))
+        // odd / non-positive refs and garbage are rejected
+        assertNull(ProgressBridge.cfiSpineIndex("epubcfi(/6/3!)"))
+        assertNull(ProgressBridge.cfiSpineIndex("epubcfi(/6/0)"))
+        assertNull(ProgressBridge.cfiSpineIndex("not-a-cfi"))
+        assertNull(ProgressBridge.cfiSpineIndex(""))
+    }
+
+    @Test
     fun `percent is total publication progression defaulting to zero`() {
         assertEquals(0.4291, ProgressBridge.locationPercent(0.4291), 0.00001)
         assertEquals(0.0, ProgressBridge.locationPercent(null), 0.00001)
