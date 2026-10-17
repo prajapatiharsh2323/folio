@@ -35,7 +35,7 @@
 | M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
 | M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
-| R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-3 DONE — toolchain + ReaderActivity + PWA-parity prefs (device smoke pending) |
+| R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-4 DONE — core rendering + prefs + chrome + chapter-accurate restore (strict within-chapter CFI + fonts pending; device smoke blocked) |
 | ↳ step 3 | PWA-parity prefs mapper + library harness screen + PDFBox app init | **DONE** (9028907) — device smoke next |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
@@ -167,15 +167,36 @@
     original short sample text via TxtImporter so device E2E needs no files).
     FolioApplication registers `PDFBoxResourceLoader.init` (manifest
     android:name wired). 73/73 tests green.
-  - **Next session**: FIRST verify green build. Device smoke is **BLOCKED on
-    this VM**: no AVDs and no android-sdk/system-images (checked via
-    `emulator -list-avds` + filesystem). To unblock: download a system image
-    (~1GB, e.g. `sdkmanager "system-images;android-34;google_apis;x86_64"`)
-    + `avdmanager create avd` — budget it as its own step. Until then, continue
-    emulator-free work: R1 step 4 = reader chrome + theme switcher + typography
-    UI (R2 start), ReadingPrefs persistence (user/settings.json, schema-1), CFI
-    exact-restore investigation, font family declarations (Literata stack /
-    Devanagari).
+  - **R1 step 4 (6add9cc, d694339)**: prefs persistence + reader chrome +
+    chapter-accurate restore.
+    - `PrefsStore` (core/store): ReadingPrefs at **library/user/settings.json**
+      (schema-1 backup contract path; all-fields present; unknown keys
+      tolerated on read; kotlinx prettyPrint=4-space accepted at value-level
+      parity). 5 tests incl. full-key-shape lock.
+    - `ReaderChrome` (Compose overlay in activity_reader.xml): back, theme
+      menu (PWA token dots, light/warm/dark/true-black/system), Aa stepper
+      (2px steps, clamp 14-32), flow toggle → `onPrefsChanged` → live
+      `submitPreferences` + IO save to settings.json. Chrome surface/text
+      colors follow the active theme.
+    - `ProgressBridge.cfiSpineIndex`: decodes epub.js CFI spine ref
+      (/6/<even>, ref=2*(spine+1)) → `ReaderActivity` restores chapter-accurate
+      when location is CFI; percent fallback otherwise. Within-chapter offset
+      restore stays OPEN (Readium 3.0.0 has NO CFI parser classes — verified;
+      full-CFI restore needs own parser or the Readium 3.4 cfi module after a
+      Kotlin 2.1 toolchain upgrade).
+    - Fonts: 3.0.0 `Configuration` has only `defaults` — no
+      FontFamilyDeclaration (3.1.2+). Custom profiles (Literata/Lora stacks,
+      Devanagari fonts) require the toolchain upgrade OR @font-face injection;
+      serif/sans/mono generic families work via FontFamily enum value class.
+    - 79/79 tests green.
+  - **Next session**: FIRST verify green build. Options in priority order:
+    1. Device smoke (still blocked: no AVDs/system images on VM).
+    2. R2: reader chrome polish — toggle-by-tap (hidden chrome), page-number
+       pillar, within-chapter CFI offset investigation, annotation highlight
+       engine (R3 needs DecorableNavigator.addDecorations — available in 3.0).
+    3. Font packaging for Devanagari (bundled ttf + @font-face in the streamer
+       resources) — decide vs Kotlin 2.1 upgrade to unlock Readium 3.1.2+
+       FontFamilyDeclaration (cleaner).
 
 - **Session M-4 continued (Oct 17, 2026)** — M3 phases 2+3: HTML + PDF importers. M3 COMPLETE.
   - `HtmlImporter` + jsoup (`org.jsoup:jsoup:1.18.1`): `articleSafelist()` = DOMPurify
