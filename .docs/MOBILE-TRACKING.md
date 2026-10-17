@@ -7,21 +7,32 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE (annotations + quote-card share) — 137/137 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + launcher icon from canonical logo (b0863c4) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE — 137/137 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **L1 residue** — covers (EPUB cover into the card + reader splash), icon
-   generation from `folio-logo.png` (user-provided canonical logo at repo root),
-   damaged-doc recovery banner, tags/collections UI, R2b remainder (time-left
-   needs the ReadingPace/stats port).
+1. **L1 residue — covers slice (recommended next)**: EPUB cover extraction at
+   import + card display. Contract: file `docs/<slug>/cover.jpg` (spec §layout),
+   `meta.files.cover` = doc-dir-relative path (mobile model already has it;
+   `DocFiles.cover`). Plan: (a) `EpubImporter` — the OPF manifest map already
+   exists; detect cover via `<item properties="cover-image">` → `<meta
+   name="cover" content=id>` → id/href contains "cover" + image media type;
+   (b) `ImportResult.cover` bytes + `LibraryManager` writes it after
+   reading/ before meta.json, adds to manifestFiles, sets files.cover;
+   (c) fixture EPUBs have NO covers — build a cover EPUB in-test (java.util.zip
+   in-memory), do NOT modify `english-novel.epub` (shared byte golden with the
+   PWA suite); (d) card: async decode via a pure `sampleSize` helper
+   (inJustDecodeBounds + inSampleSize, JVM-testable) + small in-memory cache.
+   Remaining L1 residue after this: damaged-doc recovery banner (uses existing
+   `LibraryManager.damagedDocuments()`), tags/collections UI, reader splash
+   image, R2b remainder (time-left needs the ReadingPace/stats port).
 2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
    run through: SAF import (or sample button), open doc, prefs, progress,
    highlight reopen-rendering + context menu + quote-card share (R3),
    volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1),
-   search panel → hit tap → reader opens at chapter (M4).
+   search panel → hit tap → reader opens at chapter (M4), launcher icon look.
 3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
@@ -63,7 +74,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, **brightness overlay**, **interactive scrubbing pillar**, page-turn anims, paragraph-snap, tap-zone config, chapter-aware time-left, per-book typography overrides, image zoom | **PARTIAL** (01ce6e5 — keys/brightness/scrubber/predictive-back done; remainder pending) |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
-| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch | **DONE** (01f5dfb — `.docs/results/L1-library.md`; covers/collections/tags UI, damaged-doc banner, icon-from-logo pending) |
+| L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon done M-11; covers/collections/tags UI, damaged-doc banner, reader splash pending) |
 | M4 | Search: in-memory MiniSearch port (normalise + Hindi stems + boosts 4/3/3/1 + snippet) + library search UI + reader jump; PWA `search.test.ts` golden cases all ported (SQLDelight/FTS5 dropped — decision 3) | **DONE** (da75560 + ecff505 — `.docs/results/M4-search.md`) |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
@@ -197,6 +208,33 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-11 (Oct 17, 2026)** — L1 residue slice: **launcher icon from the
+  canonical logo** (commit b0863c4, pushed).
+  - Asset story (don't re-derive): the canonical brand mark is
+    **`folio-logo.png` at the repo root** (user-confirmed; transparent bg,
+    orange-gradient mark, 1254×1254, alpha bbox 825×992). It SUPERSEDES the
+    charcoal+violet `design/folio-icon` mark (that package traced
+    `apps/web/public/icons/logo.png` — keep for reference only) for launcher
+    purposes. Plate = charcoal #23242F (user choice, 3 previews reviewed).
+  - `scripts/generate-android-icons.js` (new, zero-dep, same style as
+    `scripts/generate-icons.js`): alpha-bbox trim → premultiplied-alpha bilinear
+    resample → mark at 60/108 of the adaptive canvas, centered →
+    `mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher_foreground.png` +
+    `ic_launcher_monochrome.png` (white RGB, alpha silhouette for themed
+    icons) → `design/folio-icon/android/play-store-512.png` (M6 upload asset).
+  - Adaptive XMLs now point at the raster layers; old
+    `drawable/ic_launcher_foreground.xml` vector deleted (minSdk 26 → no
+    legacy fallback needed). APK verified to carry all layers.
+  - **BUG HIT + FIXED (hot)**: un-premultiply must be `px[c] / alpha`, not
+    `px[c] * 255 / alpha` — the wrong form clamps every pixel to white (first
+    generated set came out white; caught visually before commit).
+  - Verification: launcher simulation (charcoal + 72/108 crop + circle mask)
+    from the REAL generated 432px file — looks correct; build green;
+    icon previews live in `%TEMP%\1\opencode\icon-preview` (scratch).
+  - **Not done (next)**: covers slice — full plan in NEXT SESSION #1; PWA and
+    mobile both still have NO cover code (mobile-first feature; schema-safe:
+    `files.cover` already in the model).
 
 - **Session M-10 (Oct 17, 2026)** — M4 search COMPLETE (commits da75560,
   ecff505 — pushed).
