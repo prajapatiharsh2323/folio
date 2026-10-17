@@ -32,7 +32,7 @@
 |---|---|---|
 | M1 | Scaffold: Gradle project, Compose shell, theme tokens, adaptive icon, wrapper, first successful `assembleDebug` | **DONE** (build green, APK 16.2 MB) |
 | M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
-| M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **started** — Types.kt + 5 contract tests green; FileStore/LibraryManager next |
+| M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | pending |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | pending |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
@@ -94,6 +94,21 @@
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-3 (Oct 17, 2026)** — M2 storage layer complete.
+  - `FileStore` interface port (suspend fns; blocking IO → Dispatchers.IO by caller).
+  - `AppFileStore`: app-private root (injectable File for tests), path-traversal
+    guards ("..", absolute, drive letters), atomic writes = sibling temp + fsync +
+    ATOMIC_MOVE, non-recursive dir remove rejected.
+  - `Hashing.kt`: sha256Hex (vector-tested) + createDocSlug exact port (60-char cap,
+    "doc" fallback for Hindi, 4 hex suffix).
+  - `ImportResult.kt`: importer output contract (pure bytes→result, save separate).
+  - `LibraryManager` port: getManifest (corrupt→reinit), findDuplicate, addDocument
+    (exact §4 write order, manifest LAST), listDocuments, damagedDocuments (never
+    silently dropped), updateDocMeta, deleteDocument cascade, recoverInterruptedImports,
+    progress/annotations/collections ops (mutex-serialized).
+  - 24/24 tests green. Commit b5d2a4a pushed. Summary: `.docs/results/M2-storage.md`.
+  - Next session: M3 import pipeline (EPUB DRM detect → pdf → html+sanitizer → txt).
 
 - **Session M-2 (Oct 17, 2026)** — M1 verified green + M2 model port.
   - `.\gradlew assembleDebug` GREEN: app-debug.apk 16.2 MB produced.
