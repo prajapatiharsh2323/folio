@@ -38,6 +38,12 @@ android {
             jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
         }
     }
+
+    // PDFBox-Android logs through android.util.Log; JVM unit tests have no
+    // Android runtime, so stubbed calls return defaults instead of throwing.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -54,6 +60,7 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jsoup)
+    implementation(libs.pdfbox.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
