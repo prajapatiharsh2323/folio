@@ -3,11 +3,13 @@ package dev.folio.mobile.reader
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import androidx.compose.ui.platform.ComposeView
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.mutableStateOf
 import dev.folio.mobile.R
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Progress
@@ -15,6 +17,7 @@ import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.reader.ProgressBridge
 import dev.folio.mobile.core.reader.ReaderPrefsMapper
 import dev.folio.mobile.core.store.AppFileStore
+import dev.folio.mobile.core.store.PrefsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,7 +30,6 @@ import kotlinx.coroutines.withContext
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.HyperlinkNavigator
-import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.LocatorService
@@ -46,6 +48,11 @@ import kotlin.math.abs
  * streamer, attaches an [EpubNavigatorFragment], and mirrors reading progression
  * into the schema-1 Progress store (locator → CFI via [ProgressBridge]).
  *
+ * Prefs: [ReadingPrefs] are loaded from user/settings.json via [PrefsStore],
+ * mapped to Readium by [ReaderPrefsMapper]; chrome edits re-submit preferences
+ * live ([EpubNavigatorFragment.submitPreferences]) and persist back to the same
+ * file — byte-compatible with the schema-1 backup contract.
+ *
  * Restore-by-CFI (exact) is an open R1 item; v1 restores by saved percent via
  * the publication's LocatorService.
  */
@@ -62,6 +69,11 @@ class ReaderActivity : FragmentActivity() {
 
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressJob: Job? = null
+    private var navigatorRef: EpubNavigatorFragment? = null
+    private lateinit var prefsStore: PrefsStore
+
+    /** Reading prefs live state (chrome edits, navigator consumes). */
+    private val prefsState = mutableStateOf(ReadingPrefs())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
@@ -80,14 +92,43 @@ class ReaderActivity : FragmentActivity() {
             return
         }
         setContentView(R.layout.activity_reader)
+        prefsStore = PrefsStore(AppFileStore(filesDir))
 
-        loadScope.launch { loadAndAttach(docId) }
+        // Chrome overlay (Compose hosting on a FragmentActivity via ComposeView)
+        val chrome = findViewById<ComposeView>(R.id.reader_chrome)
+        chrome.setContent {
+            ReaderChrome(
+                prefs = prefsState.value,
+                canGoBack = true,
+                onBack = { onBackPressedDispatcher.onBackPressed() },
+                onPrefsChange = { updated -> onPrefsChanged(updated) }
+            )
+        }
+
+        loadScope.launch {
+            // Prefs FIRST — the navigator gets the mapped values at attach time
+            prefsState.value = prefsStore.loadReadingPrefs()
+            loadAndAttach(docId)
+        }
     }
 
     override fun onDestroy() {
         progressJob?.cancel()
         loadScope.cancel()
         super.onDestroy()
+    }
+
+    /** Chrome → navigator → persistence (single source of truth: prefsState). */
+    private fun onPrefsChanged(updated: ReadingPrefs) {
+        prefsState.value = updated
+        navigatorRef?.submitPreferences(
+            ReaderPrefsAndroid.toEpubInitialPreferences(
+                ReaderPrefsMapper.mapPrefs(updated)
+            )
+        )
+        loadScope.launch(Dispatchers.IO) {
+            prefsStore.saveReadingPrefs(updated)
+        }
     }
 
     private suspend fun loadAndAttach(docId: String) {
@@ -145,31 +186,33 @@ class ReaderActivity : FragmentActivity() {
         )
         val asset = assetRetriever.retrieve(file).getOrNull() ?: return null
         // EPUB-only v1: the pdfium adapter (PDF navigator) is a later R-phase;
-        // the HTML/TXT/PDF reading editions route through different activities.
+        // TXT/HTML reading editions are EpubBuilder-built EPUBs, PDF later.
         val parser = EpubParser()
         val opener = PublicationOpener(publicationParser = parser)
         return opener.open(asset, allowUserInteraction = true).getOrNull()
     }
 
     private fun attachNavigator(publication: Publication, docId: String, initialLocator: Locator) {
-        val mappedPrefs = ReaderPrefsMapper.mapPrefs(ReadingPrefs())
+        val currentPrefs = prefsState.value
+        val mappedPrefs = ReaderPrefsMapper.mapPrefs(currentPrefs)
         val factory = EpubNavigatorFactory(
             publication = publication,
             configuration = EpubNavigatorFactory.Configuration(
                 defaults = ReaderPrefsAndroid.toEpubDefaults(mappedPrefs)
             )
         )
-        supportFragmentManager.fragmentFactory = factory.createFragmentFactory(
+        val factoryFragment = factory.createFragmentFactory(
             initialLocator = initialLocator,
             initialPreferences = ReaderPrefsAndroid.toEpubInitialPreferences(mappedPrefs),
             listener = readerListener(),
         )
-
+        supportFragmentManager.fragmentFactory = factoryFragment
         supportFragmentManager.commitNow {
             add(R.id.navigator_container, EpubNavigatorFragment::class.java, null, NAV_TAG)
         }
         val navigator = supportFragmentManager.findFragmentByTag(NAV_TAG)
             as? EpubNavigatorFragment ?: return
+        navigatorRef = navigator
         observeProgress(docId, navigator)
     }
 
