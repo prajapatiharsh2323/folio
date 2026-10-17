@@ -7,27 +7,25 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 COMPLETE (64-test import pipeline) + R1 steps 1–4 DONE + R2 DONE + R3 DONE (annotations: persisted-highlight rendering + context menu + quote-card share) — 93/93 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE (search = in-memory MiniSearch port + library search UI, NO SQLDelight — see decision 3) + R1 steps 1–4 DONE + R2 DONE + R2b PARTIAL + R3 DONE (annotations + quote-card share) — 137/137 tests green. TTS dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **M4 search (recommended next)** — SQLDelight + FTS5, pre-normalized shadow
-   text (Devanagari-safe), normaliser port, boosts title4/author3/tags3/text1,
-   Hindi fixtures (`packages/core/tests/fixtures/hindi/`), manifest+index single
-   transaction, search UI in the library screen.
-2. **L1 residue** — covers (EPUB cover into the card + reader splash), icon
+1. **L1 residue** — covers (EPUB cover into the card + reader splash), icon
    generation from `folio-logo.png` (user-provided canonical logo at repo root),
    damaged-doc recovery banner, tags/collections UI, R2b remainder (time-left
    needs the ReadingPace/stats port).
-3. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
+2. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
    run through: SAF import (or sample button), open doc, prefs, progress,
    highlight reopen-rendering + context menu + quote-card share (R3),
-   volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1).
-4. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+   volume-key turning + seek + brightness (R2b), delete + duplicate skip (L1),
+   search panel → hit tap → reader opens at chapter (M4).
+3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
+4. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
 
 **Carried constraints:** TTS is DROPPED (post-v1 backlog, not debt). PWA schema-1
 contracts (manifest, user/*.json, backup ZIP, annotation anchors, Drive sync) must
@@ -36,7 +34,8 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 ## The locked plan (agreed with user, Oct 17 2026)
 
 - **Route B chosen**: full native Kotlin/Compose rewrite (NOT Capacitor, NOT TWA).
-- Search: SQLite/FTS5 via SQLDelight + pre-normalized shadow text (Devanagari-safe).
+- Search: **in-memory MiniSearch port** over the PWA's `library/index/text/<id>.json`
+  corpus (chosen 2026-10-17 — supersedes SQLDelight/FTS5, see decision 3).
 - Distribution: **Play Store** (AAB, signing, Play App Signing, target API current).
 - PWA stays a **living companion** (Windows/web + clipper host): schema-1 JSON,
   backup ZIP format, annotation anchors, Drive `sync/state.json` protocol are
@@ -65,7 +64,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
 | L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch | **DONE** (01f5dfb — `.docs/results/L1-library.md`; covers/collections/tags UI, damaged-doc banner, icon-from-logo pending) |
-| M4 | Search: SQLDelight FTS5 + normaliser port; manifest+index single transaction; Hindi fixture suite | pending |
+| M4 | Search: in-memory MiniSearch port (normalise + Hindi stems + boosts 4/3/3/1 + snippet) + library search UI + reader jump; PWA `search.test.ts` golden cases all ported (SQLDelight/FTS5 dropped — decision 3) | **DONE** (da75560 + ecff505 — `.docs/results/M4-search.md`) |
 | M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
 | M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
 | M7 | CI: lint/detekt on PR, emulator instrumented job, AAB artifact, release-on-tag | pending |
@@ -75,7 +74,14 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 1. **Native rewrite, not Capacitor** — user explicitly chose Route B over recommendation.
 2. **Readium Kotlin Toolkit** for EPUB (replaces epub.js): native rendering, Locator model,
    no iframe/CSS-war, TTS + media-overlays support built in.
-3. **SQLDelight + FTS5** (not Room — Room only supports FTS4).
+3. **Search = in-memory MiniSearch port, NOT SQLDelight + FTS5** (reversed
+   2026-10-17, user-approved). Why: Android *platform* SQLite ships without
+   FTS5 (only FTS3/4), so SQLDelight FTS5 would need a bundled SQLite engine;
+   the PWA reference engine is MiniSearch in-memory anyway and the mobile index
+   rebuilds per screen-open from `library/index/text/<id>.json` (reading files
+   only — screen-open scale). Keeps search behavior 1:1 with the reference
+   (same boosts, prefix/fuzzy rules, BM25 constants, snippet markup) and
+   schema-1 untouched.
 4. Kotlin 2.0.21 + AGP 8.7.3 + Gradle 8.10.2 — battle-tested trio (installed Gradle is
    9.8.0; wrapper pins 8.10.2 so builds are reproducible anywhere).
 5. minSdk 26 / targetSdk 35 / compileSdk 35 (android-35 platform installed locally).
@@ -191,6 +197,36 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-10 (Oct 17, 2026)** — M4 search COMPLETE (commits da75560,
+  ecff505 — pushed).
+  - `core/search/`: `MiniSearch.kt` (MiniSearch 7.2.0 engine port: BM25
+    k1.2/b0.7/d0.5, weights fuzzy0.45/prefix0.375, quality multiplier,
+    Latin-only fuzzy 0.2 >4 chars), `SearchNormalise.kt` (NFC, ZWJ/ZWNJ strip,
+    Latin-only accent fold, `[^\p{L}\p{M}\p{N}]+` tokenizer, Hindi stems
+    `-यों/-ियों→-ी` + `-ों/-ें→∅` emitted alongside base), `SearchIndex.kt`
+    (boosts title4/author3/tags3/text1, AND combine, 50-doc cap, grouped hits,
+    snippet from raw text), `SearchSnippet.kt` (80-char window, `<mark>`,
+    HTML-escape), `SearchUi.kt` (snippet HTML → display parts for Compose),
+    `SearchService.kt` (library-wide build + query facade).
+  - UI: search icon in the library top bar → `SearchPanel` (250 ms debounce,
+    auto-focus, back closes, grouped by doc, highlighted snippets);
+    hit tap → `ReaderActivity` with `EXTRA_TARGET_ORDER` (1-based spine,
+    beats progress restore). `LibraryManager.getSearchText` reads the
+    PWA-identical `library/index/text/<id>.json`.
+  - Rewritten from the interrupted session's untracked draft: full M4 suite
+    (28 new tests; 137/137 green). All PWA `search.test.ts` golden cases ported
+    (inline Hindi fixtures; `packages/core/tests/fixtures/` has EPUBs only —
+    no `hindi/` dir, the tracking-doc pointer was wrong).
+  - **DECISION REVERSAL (user-approved 2026-10-17)**: SQLDelight + FTS5
+    dropped for search — Android platform SQLite has no FTS5; in-memory
+    MiniSearch port keeps 1:1 parity with the PWA reference. Decision 3 and
+    the locked plan updated; `LibraryManager` comment fixed (was "FTS5 store
+    supersedes in M4").
+  - Gotchas: `decodeEntities` order matters — `&amp;` first then the rest;
+    a ported test had a wrong expectation (`&#039;x&quot;` → `'x"` not `'x'`).
+    Test report XMLs at `app/build/test-results/testDebugUnitTest` for counts.
+  - **Next session**: L1 residue / device smoke / font packaging / R4.
 
 - **Session M-9 (Oct 17, 2026)** — L1 library phase (commits a9787af, 01f5dfb,
   pushed).

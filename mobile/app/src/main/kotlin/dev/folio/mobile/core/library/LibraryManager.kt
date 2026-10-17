@@ -131,7 +131,8 @@ class LibraryManager(
         store.write(metaPath, metaText)
         manifestFiles += ManifestFile(metaPath, metaText.toByteArray(Charsets.UTF_8).size.toLong(), sha256Hex(metaText.toByteArray(Charsets.UTF_8)))
 
-        // 5. Search text (index/text/<id>.json) — FTS5 store supersedes in M4
+        // 5. Search text (index/text/<id>.json) — the per-chapter corpus the
+        //    in-memory search index (M4) rebuilds from; PWA-identical path
         if (importResult.searchText.isNotEmpty()) {
             store.write("library/index/text/$id.json", json.encodeToString(importResult.searchText))
         }
