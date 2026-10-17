@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider scope: shareable cache artifacts only (quote-card PNGs).
+     Do NOT widen beyond this granularity (M5 backup should use its own entry
+     explicitly when it lands). -->
+<paths>
+    <cache-path name="quote_card" path="quote-card/" />
+</paths>

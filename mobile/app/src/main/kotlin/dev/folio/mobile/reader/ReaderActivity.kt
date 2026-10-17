@@ -9,10 +9,13 @@ import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.mutableStateOf
 import dev.folio.mobile.R
 import dev.folio.mobile.core.annotation.SelectionBridge
 import dev.folio.mobile.core.library.LibraryManager
+import dev.folio.mobile.core.model.Annotation
+import dev.folio.mobile.core.model.HighlightColor
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.reader.ProgressBridge
@@ -87,6 +90,9 @@ class ReaderActivity : FragmentActivity() {
     private val pillarTitle = mutableStateOf("")
     private val pillarPercent = mutableStateOf(0.0)
 
+    /** Annotation context menu target (R3) — null when closed. */
+    private val annotationMenu = mutableStateOf<Annotation?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
             // The OS killed the process mid-session: the navigator can only be
@@ -110,15 +116,27 @@ class ReaderActivity : FragmentActivity() {
         // Chrome overlay (Compose hosting on a FragmentActivity via ComposeView)
         val chrome = findViewById<ComposeView>(R.id.reader_chrome)
         chrome.setContent {
-            ReaderChrome(
-                visible = chromeVisible.value,
-                prefs = prefsState.value,
-                onBack = { onBackPressedDispatcher.onBackPressed() },
-                onPrefsChange = { updated -> onPrefsChanged(updated) },
-                onHighlight = { onHighlightTapped() },
-                pillarTitle = pillarTitle.value,
-                pillarPercent = pillarPercent.value
-            )
+            Box {
+                ReaderChrome(
+                    visible = chromeVisible.value,
+                    prefs = prefsState.value,
+                    onBack = { onBackPressedDispatcher.onBackPressed() },
+                    onPrefsChange = { updated -> onPrefsChanged(updated) },
+                    onHighlight = { onHighlightTapped() },
+                    pillarTitle = pillarTitle.value,
+                    pillarPercent = pillarPercent.value
+                )
+                annotationMenu.value?.let { annotation ->
+                    AnnotationMenuSheet(
+                        annotation = annotation,
+                        onColor = { color -> onAnnotationColor(color) },
+                        onSaveNote = { note -> onAnnotationNote(note) },
+                        onDelete = { onAnnotationDelete() },
+                        onShare = { onAnnotationShare() },
+                        onDismiss = { annotationMenu.value = null }
+                    )
+                }
+            }
         }
 
         loadScope.launch {
@@ -234,8 +252,89 @@ class ReaderActivity : FragmentActivity() {
             as? EpubNavigatorFragment ?: return
         navigatorRef = navigator
         navigator.addInputListener(chromeTapListener())
-        highlightManager = HighlightManager(navigator, docId).also { it.installListener() }
+        val manager = HighlightManager(navigator, publication, docId).also { it.installListener() }
+        highlightManager = manager
+        manager.onDecorationActivated = { event ->
+            runOnUiThread {
+                annotationMenu.value = manager.annotationById(event.decoration.id)
+            }
+        }
         observeProgress(docId, navigator)
+        // Hydrate persisted annotations (R3): rebuild Locators from the saved
+        // schema-1 annotations and paint them right after the navigator mounts.
+        lifecycleScope.launch {
+            val annotations = withContext(Dispatchers.IO) {
+                LibraryManager(AppFileStore(filesDir)).getAnnotations(docId)
+            }
+            manager.boot(annotations)
+        }
+    }
+
+    // ---- Annotation context-menu actions (R3) ----
+
+    private fun onAnnotationColor(color: HighlightColor) {
+        applyAnnotationEdit { it.copy(color = color) }
+    }
+
+    private fun onAnnotationNote(note: String) {
+        applyAnnotationEdit { it.copy(note = note.ifBlank { null }) }
+    }
+
+    private fun onAnnotationDelete() {
+        val annotation = annotationMenu.value ?: return
+        annotationMenu.value = null
+        highlightManager ?: return
+        loadScope.launch {
+            withContext(Dispatchers.IO) {
+                LibraryManager(AppFileStore(filesDir)).removeAnnotation(annotation.id)
+            }
+            highlightManager?.remove(annotation.id)
+        }
+    }
+
+    /** Placeholder until the quote-card renderer lands (same session). */
+    private fun onAnnotationShare() {
+        val annotation = annotationMenu.value ?: return
+        shareQuoteCard(annotation)
+    }
+
+    /** Menu → updatedAt bump → persist → re-apply decorations. */
+    private fun applyAnnotationEdit(
+        transform: (Annotation) -> Annotation
+    ) {
+        val annotation = annotationMenu.value ?: return
+        val updated = transform(annotation).copy(
+            updatedAt = java.time.Instant.now().toString()
+        )
+        annotationMenu.value = updated
+        loadScope.launch {
+            withContext(Dispatchers.IO) {
+                LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
+            }
+            highlightManager?.update(updated)
+        }
+    }
+
+    private fun shareQuoteCard(annotation: Annotation) {
+        val uri = QuoteCard.share(
+            context = this,
+            annotation = annotation,
+            bookTitle = pillarTitle.value.ifBlank { null },
+            author = null
+        ) ?: return
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(
+                android.content.Intent.EXTRA_TEXT,
+                listOfNotNull(annotation.quote, annotation.note)
+                    .joinToString("\n\n")
+            )
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(
+            android.content.Intent.createChooser(send, "Share quote")
+        )
     }
 
     /**
