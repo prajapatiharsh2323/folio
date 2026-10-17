@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 COMPLETE (import pipeline: detect + EPUB + TXT + HTML + PDF, 64/64 green); next R1 reader or M4 search
+## Status: M3 COMPLETE (64-test import pipeline) + R1 step 1&2 wired (Readium 3.0.0 + ReaderActivity skeleton, 68/68 green); TTS dropped from v1 scope
 
 ## The locked plan (agreed with user, Oct 17 2026)
 
@@ -35,7 +35,7 @@
 | M0-verify | (pre-M2 gate) `.\gradlew assembleDebug` green in `mobile/` | **DONE** |
 | M2 | Core data layer port: schema-1 serialization, FileStore (app-private, atomic), LibraryManager, conformance fixture suite ported from `packages/core/tests` | **storage layer DONE** (24/24 tests); import pipeline (M3) next |
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
-| R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | pending |
+| R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | **step 1-2 DONE** — toolchain wired + ReaderActivity skeleton (on-device run pending); themes/prefs/flows next |
 | R2 | Reading comfort: volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | pending |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
@@ -64,6 +64,18 @@
    Mobile writes CFI strings from Readium `Locator.locations.fragments` (or chapter
    href when no CFI). v1 restore uses `publication.locateProgression(percent)`;
    exact CFI-restore is an open R1 item.
+10. **Readium-on-JVM test facts (hots, don't repeat)**: constructing Readium
+    `Url`/`Locator` values in JVM unit tests fails — `Url` needs the real
+    `android.net.Uri` (stubbed android.jar returns null → NPE "encode(...) must
+    not be null") and companion factories resolve as nullable in the test
+    source set. Pattern: keep pure logic on primitive args (see
+    `ProgressBridge`); Locator overloads stay thin wrappers.
+11. **Readium 3.0.0 API quirks hit**: `Link.href` is an `Href` object (not `Url`)
+    — convert via `link.href.resolve(Url("/"))`; `Locator` constructors demand
+    `mediaType`/`type` (use `MediaType.XHTML`); Listener must override
+    `onExternalLinkActivated` (only); `Publication` 3.0.0 has NO
+    locate/locateProgression helpers → use `findService(LocatorService)`; Activity
+    uses `supportFragmentManager` (fragmentFactory before adding the fragment).
 
 ## Environment facts (fresh sessions: re-verify, don't assume)
 
@@ -103,6 +115,32 @@
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-5 (Oct 17, 2026)** — R1 steps 1-2 + TTS dropped from v1 scope.
+  - **TTS dropped** (user decision): R4 scope = footnote popups + media overlays.
+  - Readium Kotlin Toolkit **3.0.0** pinned (Kotlin 1.9.24-compiled — our Kotlin
+    2.0.21 cannot consume 3.1+ metadata). Shared/streamer/navigator only; NO lcp.
+  - Core library desugaring enabled (Readium AAR metadata check requires it);
+    desugar_jdk_libs 2.1.2.
+  - `ReaderActivity`: doc-id intent → LibraryManager → `library/docs/<slug>/<reading>`
+    via AppFileStore.resolve → `AssetRetriever` (DefaultHttpClient) + `EpubParser` +
+    `PublicationOpener` (suspend, Try.getOrNull) → `EpubNavigatorFactory` →
+    FragmentFactory → commitNow(EpubNavigatorFragment). Process-death path =
+    `createDummyFactory()` + finish (Readium guide recipe). Listens
+    `currentLocator` (StateFlow) → `ProgressBridge.buildProgress` →
+    `LibraryManager.saveProgress` on Dispatchers.IO (distinctUntilChanged with
+    0.4% noise gate + same-location gate).
+  - `ProgressBridge`: CFI extraction (`epubcfi(` prefix), href fallback, percent
+    default 0 — primitive-arg core (JVM-testable, 4 tests; Locator overloads thin
+    because Android Uri needed — see hot note 10).
+  - Manifest-registered; `activity_reader.xml` added; `ReaderActivity.createIntent`
+    ready for the library UI (no nav yet — import UI is a later phase).
+  - 68/68 tests green. Commits: ea670a6 (docs), b5642d9 (toolchain), 1bbb5d8 (reader
+    + bridge), a24c770 (cleanup). All pushed.
+  - **Next session**: FIRST verify green build. Then R1 step 3: on-device smoke —
+    run a test-app-derived import + read flow via emulator (adb), fix runtime
+    issues (PDFBoxResourceLoader still not wired; EpubPreferences defaults for
+    PWA parity 18px/1.6/20 serif paginated come next), then 5 themes + typography.
 
 - **Session M-4 continued (Oct 17, 2026)** — M3 phases 2+3: HTML + PDF importers. M3 COMPLETE.
   - `HtmlImporter` + jsoup (`org.jsoup:jsoup:1.18.1`): `articleSafelist()` = DOMPurify
