@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Light theme window background, matching tokens.css --bg #FAFAF7 -->
+    <!-- Light theme window background, matching tokens.css root background #FAFAF7 -->
     <color name="folio_window_background">#FAFAF7</color>
     <!-- Launcher icon background: brand charcoal #23242F -->
     <color name="ic_launcher_background">#23242F</color>
