@@ -23,13 +23,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.HyperlinkNavigator
+import org.readium.r2.navigator.input.DragEvent
+import org.readium.r2.navigator.input.InputListener
+import org.readium.r2.navigator.input.KeyEvent
+import org.readium.r2.navigator.input.TapEvent
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.LocatorService
@@ -75,6 +77,13 @@ class ReaderActivity : FragmentActivity() {
     /** Reading prefs live state (chrome edits, navigator consumes). */
     private val prefsState = mutableStateOf(ReadingPrefs())
 
+    /** Chrome overlay visibility — toggled by tapping the page's middle third. */
+    private val chromeVisible = mutableStateOf(true)
+
+    /** Bottom pillar: current chapter title + total percent. */
+    private val pillarTitle = mutableStateOf("")
+    private val pillarPercent = mutableStateOf(0.0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
             // The OS killed the process mid-session: the navigator can only be
@@ -98,10 +107,12 @@ class ReaderActivity : FragmentActivity() {
         val chrome = findViewById<ComposeView>(R.id.reader_chrome)
         chrome.setContent {
             ReaderChrome(
+                visible = chromeVisible.value,
                 prefs = prefsState.value,
-                canGoBack = true,
                 onBack = { onBackPressedDispatcher.onBackPressed() },
-                onPrefsChange = { updated -> onPrefsChanged(updated) }
+                onPrefsChange = { updated -> onPrefsChanged(updated) },
+                pillarTitle = pillarTitle.value,
+                pillarPercent = pillarPercent.value
             )
         }
 
@@ -217,7 +228,28 @@ class ReaderActivity : FragmentActivity() {
         val navigator = supportFragmentManager.findFragmentByTag(NAV_TAG)
             as? EpubNavigatorFragment ?: return
         navigatorRef = navigator
+        navigator.addInputListener(chromeTapListener())
         observeProgress(docId, navigator)
+    }
+
+    /**
+     * Tapping the page's middle third toggles the chrome (Readium's own page
+     * turns live in the left/right thirds). Consumes the middle tap so the
+     * navigator doesn't also treat it as a page turn.
+     */
+    private fun chromeTapListener() = object : InputListener {
+        override fun onTap(event: TapEvent): Boolean {
+            val width = resources.displayMetrics.widthPixels
+            val x = event.point.x
+            val inMiddleThird = x > width / 3f && x < width * 2f / 3f
+            if (inMiddleThird) {
+                chromeVisible.value = !chromeVisible.value
+            }
+            return inMiddleThird
+        }
+
+        override fun onDrag(event: DragEvent): Boolean = false
+        override fun onKey(event: KeyEvent): Boolean = false
     }
 
     /** Link.href is an Href object; resolve against root for a plain-Url Locator. */
@@ -239,21 +271,28 @@ class ReaderActivity : FragmentActivity() {
         progressJob?.cancel()
         progressJob = lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                navigator.currentLocator
-                    .map {
-                        ProgressBridge.buildProgress(
-                            docId, it, java.time.Instant.now().toString()
-                        )
-                    }
-                    .distinctUntilChanged { old, new ->
-                        // CFI changes per scroll/turn; collapse trailing noise but
-                        // keep saving once meaningful progression happened
-                        old.location == new.location && abs(old.percent - new.percent) < 0.004
-                    }
-                    .collect { p ->
+                navigator.currentLocator.collect { locator ->
+                    // Pillar: chapter title + total percent (cheap, no IO)
+                    pillarTitle.value = locator.title.orEmpty()
+                    pillarPercent.value = ProgressBridge.totalPercent(locator)
+
+                    val p = ProgressBridge.buildProgress(
+                        docId, locator, java.time.Instant.now().toString()
+                    )
+                    // Collapse trailing scroll noise but keep meaningful movement
+                    val last = lastSavedProgress
+                    val changed = last == null ||
+                        last.location != p.location ||
+                        abs(last.percent - p.percent) >= 0.004
+                    if (changed) {
+                        lastSavedProgress = p
                         withContext(Dispatchers.IO) { library.saveProgress(p) }
                     }
+                }
             }
         }
     }
+
+    /** Last persisted progress — guards the write throttling above. */
+    private var lastSavedProgress: Progress? = null
 }
