@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -54,6 +55,7 @@ fun ReaderChrome(
     pillarPercent: Double,
     onBack: () -> Unit,
     onPrefsChange: (ReadingPrefs) -> Unit,
+    onHighlight: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val surface = chromeSurface(prefs.theme)
@@ -67,7 +69,7 @@ fun ReaderChrome(
                 tonalElevation = 2.dp
             ) {
                 Column {
-                    TopBar(prefs, onBack, onPrefsChange)
+                    TopBar(prefs, onBack, onPrefsChange, onHighlight)
                     TypographyRow(prefs, text, onPrefsChange)
                 }
             }
@@ -81,7 +83,8 @@ fun ReaderChrome(
 private fun TopBar(
     prefs: ReadingPrefs,
     onBack: () -> Unit,
-    onPrefsChange: (ReadingPrefs) -> Unit
+    onPrefsChange: (ReadingPrefs) -> Unit,
+    onHighlight: () -> Unit
 ) {
     var themeMenuOpen by remember { mutableStateOf(false) }
 
@@ -129,6 +132,10 @@ private fun TopBar(
             )
         }) {
             Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Toggle flow")
+        }
+        // R3 groundwork: captures the current text selection as a highlight.
+        IconButton(onClick = onHighlight) {
+            Icon(Icons.Filled.Brush, contentDescription = "Highlight selection")
         }
     }
 }

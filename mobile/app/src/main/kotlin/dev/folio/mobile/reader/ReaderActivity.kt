@@ -11,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.mutableStateOf
 import dev.folio.mobile.R
+import dev.folio.mobile.core.annotation.SelectionBridge
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.ReadingPrefs
@@ -72,6 +73,8 @@ class ReaderActivity : FragmentActivity() {
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressJob: Job? = null
     private var navigatorRef: EpubNavigatorFragment? = null
+    private var highlightManager: HighlightManager? = null
+    private var currentDocId: String = ""
     private lateinit var prefsStore: PrefsStore
 
     /** Reading prefs live state (chrome edits, navigator consumes). */
@@ -102,6 +105,7 @@ class ReaderActivity : FragmentActivity() {
         }
         setContentView(R.layout.activity_reader)
         prefsStore = PrefsStore(AppFileStore(filesDir))
+        currentDocId = docId
 
         // Chrome overlay (Compose hosting on a FragmentActivity via ComposeView)
         val chrome = findViewById<ComposeView>(R.id.reader_chrome)
@@ -111,6 +115,7 @@ class ReaderActivity : FragmentActivity() {
                 prefs = prefsState.value,
                 onBack = { onBackPressedDispatcher.onBackPressed() },
                 onPrefsChange = { updated -> onPrefsChanged(updated) },
+                onHighlight = { onHighlightTapped() },
                 pillarTitle = pillarTitle.value,
                 pillarPercent = pillarPercent.value
             )
@@ -229,7 +234,35 @@ class ReaderActivity : FragmentActivity() {
             as? EpubNavigatorFragment ?: return
         navigatorRef = navigator
         navigator.addInputListener(chromeTapListener())
+        highlightManager = HighlightManager(navigator, docId).also { it.installListener() }
         observeProgress(docId, navigator)
+    }
+
+    /**
+     * R3 groundwork: capture the current selection as a schema-1 highlight.
+     * `currentSelection()` is a suspend read (no flow in 3.0.0), so the chrome
+     * button fetches it on tap; a null result means no active selection.
+     */
+    private fun onHighlightTapped() {
+        val navigator = navigatorRef ?: return
+        val docId = currentDocId
+        val manager = highlightManager ?: return
+        loadScope.launch {
+            val selection = navigator.currentSelection()
+            if (selection == null) return@launch
+            val now = java.time.Instant.now().toString()
+            val annotation = SelectionBridge.annotationFromSelection(
+                docId = docId,
+                locator = selection.locator,
+                id = java.util.UUID.randomUUID().toString(),
+                updatedAt = now
+            )
+            withContext(Dispatchers.IO) {
+                LibraryManager(AppFileStore(filesDir)).saveAnnotation(annotation)
+            }
+            manager.add(annotation, selection.locator)
+            navigator.clearSelection()
+        }
     }
 
     /**
