@@ -11,18 +11,20 @@
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **R2b reading comfort (recommended next)** — volume-key + BT page-turner,
-   chapter-aware scrubber + time-left, brightness overlay, page-turn anims,
-   paragraph-snap, per-book typography overrides, tap-zone config, image zoom,
-   predictive back.
-2. **Library phase** — polish MainActivity (list UI, delete/rename, per-chapter
-   highlight list screen also lands naturally here), import UI beyond the debug
-   button (intent filters for .epub/.pdf/.html/.txt with FileDetector).
+1. **Library phase (recommended next)** — polish MainActivity (real list UI with
+   delete/rename/covers, per-chapter highlight list screen, library search later
+   gated on M4), import UI beyond the debug button (SAF intent filters for
+   .epub/.pdf/.html/.txt with FileDetector).
+2. **R2b remainder** — chapter-aware scrubber labels + time-left (needs the
+   ReadingPace/stats port from packages/core reading/stats.ts), page-turn anims,
+   paragraph-snap, tap-zone config, per-book typography overrides, image zoom,
+   volume-key on/off setting (needs a schema-1 settings decision if added).
 3. **Device smoke test** — still BLOCKED: no AVDs/system images on this VM.
    Unblock = `sdkmanager "system-images;android-34;google_apis;x86_64"` (~1 GB) +
    `avdmanager create avd`; budget it as its own step. Then: `adb install`,
    tap "Import sample text" → open doc → verify rendering, prefs, progress,
-   **highlights reopen-rendering + context menu + quote-card share (R3, new)**.
+   highlight reopen-rendering + context menu + quote-card share (R3),
+   volume-key turning + seek + brightness (R2b — all untested on-device so far).
 4. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
@@ -59,7 +61,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | M3 | Import pipeline: EPUB (DRM detect), PDF, HTML+sanitizer, TXT; manifest commit-point + write-ahead journal; recovery scan; hash dedupe | **DONE** — 64/64 tests; full result in `.docs/results/M3-import.md` |
 | R1 | EPUB rendering: **Readium Kotlin Toolkit**; paginated/scrolled/dual-spread; 5 themes; full typography; Devanagari fonts; publisher-default honored; locator↔CFI compat tests | steps 1-4 DONE — core rendering + prefs + chrome + chapter-accurate restore (strict within-chapter CFI + fonts pending; device smoke blocked) |
 | R2 | reader comfort polish (chrome toggle, page pillar, typography controls) | **DONE** (cb7ed34) |
-| R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, tap-zone config, chapter-aware scrubber + time-left, brightness overlay, page-turn anims, paragraph-snap, per-book typography overrides, image zoom | pending |
+| R2b | Reading comfort (remaining): volume-key + BT page-turner, predictive back, **brightness overlay**, **interactive scrubbing pillar**, page-turn anims, paragraph-snap, tap-zone config, chapter-aware time-left, per-book typography overrides, image zoom | **PARTIAL** (01ce6e5 — keys/brightness/scrubber/predictive-back done; remainder pending) |
 | R3 | Annotations: cross-node anchoring, dictionary/translate (Hindi↔English), per-chapter highlight list, color edits, **quote-card share images** | **DONE** (annotation CRUD + reopen rendering + quote-card; dictionary and per-chapter list deferred — see `.docs/results/R3-annotations.md`) |
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
 | M4 | Search: SQLDelight FTS5 + normaliser port; manifest+index single transaction; Hindi fixture suite | pending |
@@ -188,6 +190,26 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-8 (Oct 17, 2026)** — R2b comfort slice (commit 01ce6e5, pushed).
+  - `PageTurnKeys` (pure, 4 tests): volume up=backward / down=forward
+    (Play Books/Moon convention), MEDIA_NEXT/PREVIOUS (Bluetooth page-turners),
+    PAGE_UP/DOWN, DPAD_LEFT/RIGHT → `OverflowableNavigator.goForward/goBackward`
+    (non-suspend). **Hot fact: `android` KEYCODE_VOLUME_UP=24, VOLUME_DOWN=25**
+    (I swapped them first — the JVM test caught it; don't trust memory here).
+    Activity-level `onKeyDown` consumes `ACTION_DOWN` + `repeatCount==0` so
+    keys never reach the WebView (no double-turn).
+  - Brightness overlay: scrim `Box` (no pointerInput → touches fall through)
+    UNDER the chrome so controls stay crisp; `br` stepper 30–100 in typography
+    row; mapping `brightnessAlpha` pure + 3 tests. No schema change
+    (`ReadingPrefs.brightness` pre-existed).
+  - Pillar → interactive scrubber: Slider with a local drag value (release =
+    seek via `LocatorService.locateProgression` → `navigator.go` on Main);
+    during drag the % label shows the thumb value.
+  - Manifest: `android:enableOnBackInvokedCallback="true"` (predictive back).
+  - 100/100 tests green. R2b remainder moved to NEXT SESSION (time-left needs
+    the ReadingPace/stats port).
+  - NOTE: none of R2/R2b/R3 reader UI is device-testable yet (AVD-blocked).
 
 - **Session M-7 (Oct 17, 2026)** — R3 annotations COMPLETE (commit 7ffd693, pushed).
   - **Key finding (already in note 17):** Readium 3.0.0 `rangeFromLocator()`
