@@ -167,13 +167,15 @@
     original short sample text via TxtImporter so device E2E needs no files).
     FolioApplication registers `PDFBoxResourceLoader.init` (manifest
     android:name wired). 73/73 tests green.
-  - **Next session**: FIRST verify green build. Then R1 step 4: device smoke —
-    `adb install`; tap "Import sample text" → open doc → reader must render,
-    prefs defaults visible (serif 18px-equivalent/1.6/margins), progress saves;
-    fix runtime crashes BEFORE any new feature. Then: 5-theme switcher + font
-    families + typography UI (R2) reading prefs persistence (ReadingPrefs
-    store in user/settings.json), and the ReadingProgression RTL/CJK language
-    handling when Devanagari fonts land.
+  - **Next session**: FIRST verify green build. Device smoke is **BLOCKED on
+    this VM**: no AVDs and no android-sdk/system-images (checked via
+    `emulator -list-avds` + filesystem). To unblock: download a system image
+    (~1GB, e.g. `sdkmanager "system-images;android-34;google_apis;x86_64"`)
+    + `avdmanager create avd` — budget it as its own step. Until then, continue
+    emulator-free work: R1 step 4 = reader chrome + theme switcher + typography
+    UI (R2 start), ReadingPrefs persistence (user/settings.json, schema-1), CFI
+    exact-restore investigation, font family declarations (Literata stack /
+    Devanagari).
 
 - **Session M-4 continued (Oct 17, 2026)** — M3 phases 2+3: HTML + PDF importers. M3 COMPLETE.
   - `HtmlImporter` + jsoup (`org.jsoup:jsoup:1.18.1`): `articleSafelist()` = DOMPurify
