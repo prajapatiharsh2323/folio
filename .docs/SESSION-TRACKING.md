@@ -4,6 +4,10 @@
 > (~30–40 min, AI memory erased); read this file FIRST at the start of every session,
 > commit + push (origin → `prajapatiharsh2323/folio`, branch `main`) after every
 > meaningful change, and update this file before the session ends.
+>
+> **Working on `mobile/` (native Android)?** Also read `.docs/MOBILE-TRACKING.md` —
+> it is the authoritative context file for the Android rewrite (plan, phase ladder,
+> contracts, decisions).
 
 ## Session log
 
