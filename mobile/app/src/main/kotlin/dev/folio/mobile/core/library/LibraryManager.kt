@@ -22,6 +22,17 @@ import java.util.concurrent.ConcurrentHashMap
 const val MANIFEST_PATH = "library/manifest.json"
 
 /**
+ * One orphan doc folder from startup recovery (spec §4 Rule 2). [finishable]
+ * when its meta.json parses — the import died after the meta write and can be
+ * re-registered; otherwise only deletion makes sense.
+ */
+data class InterruptedImport(
+    val slug: String,
+    val title: String?,
+    val finishable: Boolean
+)
+
+/**
  * Port of packages/core/src/library/library-manager.ts.
  *
  * Spec §4 rules implemented here:
@@ -321,6 +332,90 @@ class LibraryManager(
         val manifest = getManifest()
         val registered = manifest.docs.map { it.slug }.toSet()
         return store.list("library/docs").filter { it !in registered }
+    }
+
+    /** Reads an orphan folder's meta.json; null when missing or unparsable. */
+    private suspend fun readOrphanMeta(slug: String): DocMeta? {
+        val metaPath = "library/docs/$slug/meta.json"
+        if (!store.exists(metaPath)) return null
+        return runCatching { json.decodeFromString<DocMeta>(store.readText(metaPath)) }.getOrNull()
+    }
+
+    /** Recursive file list under [dir] (FileStore.list is non-recursive). */
+    private suspend fun walkFiles(dir: String): List<String> {
+        val out = mutableListOf<String>()
+        for (name in store.list(dir)) {
+            val child = "$dir/$name"
+            if (store.exists(child)) out += child else out += walkFiles(child)
+        }
+        return out
+    }
+
+    /**
+     * Inspects orphan folders: [InterruptedImport.finishable] when meta.json
+     * parses (the import reached the meta write, so it can be re-registered).
+     */
+    suspend fun scanInterruptedImports(): List<InterruptedImport> =
+        recoverInterruptedImports().map { slug ->
+            val meta = readOrphanMeta(slug)
+            InterruptedImport(slug = slug, title = meta?.title, finishable = meta != null)
+        }
+
+    /**
+     * Finishes an interrupted import (spec §4 Rule 2 "finish"): re-registers
+     * the orphan folder's meta.json into the manifest, rebuilding the entry's
+     * file list (path/size/sha256) from disk. Manifest is written last.
+     */
+    suspend fun finishInterruptedImport(slug: String): DocMeta =
+        mutexFor("finish-$slug").withLock {
+            val meta = readOrphanMeta(slug)
+                ?: throw IllegalArgumentException("No readable meta.json for interrupted import: $slug")
+            val manifest = getManifest()
+            if (manifest.docs.any { it.slug == slug || it.id == meta.id }) {
+                throw IllegalArgumentException("Already registered: $slug")
+            }
+            val files = walkFiles("library/docs/$slug").map { path ->
+                val bytes = store.read(path)
+                ManifestFile(path, bytes.size.toLong(), sha256Hex(bytes))
+            }
+            val now = nowIso()
+            val manifestDoc = ManifestDoc(
+                id = meta.id,
+                slug = slug,
+                title = meta.title,
+                contentHash = meta.contentHash,
+                updatedAt = now,
+                files = files
+            )
+            store.write(
+                MANIFEST_PATH,
+                json.encodeToString(manifest.copy(docs = manifest.docs + manifestDoc, updatedAt = now))
+            )
+            meta
+        }
+
+    /**
+     * Deletes an interrupted import's leftover folder (spec §4 Rule 2
+     * "delete") plus its index text when the id is known. Refuses registered
+     * slugs — those go through [deleteDocument].
+     */
+    suspend fun discardInterruptedImport(slug: String) = mutexFor("discard-$slug").withLock {
+        if (getManifest().docs.any { it.slug == slug }) {
+            throw IllegalArgumentException("Registered document — use deleteDocument: $slug")
+        }
+        readOrphanMeta(slug)?.id?.let { id ->
+            try {
+                if (store.exists("library/index/text/$id.json")) {
+                    store.remove("library/index/text/$id.json")
+                }
+            } catch (_: Exception) {
+            }
+        }
+        try {
+            store.remove("library/docs/$slug", recursive = true)
+        } catch (_: Exception) {
+            // non-fatal: the folder will resurface in the next recovery scan
+        }
     }
 
     // --- Progress ---

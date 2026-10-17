@@ -188,6 +188,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var searchActive by remember { mutableStateOf(false) }
     var damagedNotice by remember { mutableStateOf<LibraryUi.DamagedNotice?>(null) }
     var damagedDialogOpen by remember { mutableStateOf(false) }
+    var orphanNotice by remember { mutableStateOf<LibraryUi.OrphanNotice?>(null) }
+    var orphanDialogOpen by remember { mutableStateOf(false) }
 
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
@@ -197,9 +199,10 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         val docs = withContext(Dispatchers.IO) { library.listDocuments() }
         val progress = withContext(Dispatchers.IO) { library.getAllProgress() }
         entries = LibraryUi.sort(docs.map { LibraryUi.item(it, progress[it.id]) })
-        // Damaged entries (spec §4 Rule 2): surfaced in a banner, never dropped.
-        damagedNotice = withContext(Dispatchers.IO) {
-            LibraryUi.damagedNotice(library.damagedDocuments())
+        // Recovery state (spec §4 Rule 2): damaged entries + interrupted imports.
+        withContext(Dispatchers.IO) {
+            damagedNotice = LibraryUi.damagedNotice(library.damagedDocuments())
+            orphanNotice = LibraryUi.orphanNotice(library.scanInterruptedImports())
         }
         libraryVersion += 1
         loading = false
@@ -273,7 +276,10 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 )
             } else {
                 damagedNotice?.let { notice ->
-                    DamagedBanner(notice = notice, onReview = { damagedDialogOpen = true })
+                    RecoveryBanner(notice.bannerText, onReview = { damagedDialogOpen = true })
+                }
+                orphanNotice?.let { notice ->
+                    RecoveryBanner(notice.bannerText, onReview = { orphanDialogOpen = true })
                 }
                 if (loading) {
                     Box(
@@ -390,11 +396,47 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             onClose = { damagedDialogOpen = false }
         )
     }
+
+    // Interrupted imports (spec §4 Rule 2): finish (re-register) or delete.
+    orphanNotice?.takeIf { orphanDialogOpen }?.let { notice ->
+        OrphanDocsDialog(
+            notice = notice,
+            onFinish = { item ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            appLibrary(context).finishInterruptedImport(item.slug)
+                        }
+                        refresh()
+                        if (orphanNotice == null) orphanDialogOpen = false
+                        snackbar.showSnackbar("Restored “${item.label}”")
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Finish failed")
+                    }
+                }
+            },
+            onDelete = { item ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            appLibrary(context).discardInterruptedImport(item.slug)
+                        }
+                        refresh()
+                        if (orphanNotice == null) orphanDialogOpen = false
+                        snackbar.showSnackbar("Deleted leftover files")
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Delete failed")
+                    }
+                }
+            },
+            onClose = { orphanDialogOpen = false }
+        )
+    }
 }
 
-/** Recovery banner: damaged manifest entries are shown, never silently dropped (spec §4 Rule 2). */
+/** Recovery banner: damaged entries / interrupted imports, never silently dropped (spec §4 Rule 2). */
 @Composable
-private fun DamagedBanner(notice: LibraryUi.DamagedNotice, onReview: () -> Unit) {
+private fun RecoveryBanner(bannerText: String, onReview: () -> Unit) {
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
@@ -415,7 +457,7 @@ private fun DamagedBanner(notice: LibraryUi.DamagedNotice, onReview: () -> Unit)
                 tint = MaterialTheme.colorScheme.onErrorContainer
             )
             Text(
-                notice.bannerText,
+                bannerText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier
@@ -454,6 +496,47 @@ private fun DamagedDocsDialog(
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { onRemove(item) }) { Text("Remove") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClose) { Text("Close") }
+        }
+    )
+}
+
+/** Lists interrupted imports; Finish re-registers the folder, Delete discards it. */
+@Composable
+private fun OrphanDocsDialog(
+    notice: LibraryUi.OrphanNotice,
+    onFinish: (LibraryUi.OrphanItem) -> Unit,
+    onDelete: (LibraryUi.OrphanItem) -> Unit,
+    onClose: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Interrupted imports") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "These folders were left behind by an import that never finished.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(8.dp))
+                for (item in notice.items) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            item.label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (item.finishable) {
+                            TextButton(onClick = { onFinish(item) }) { Text("Finish") }
+                        }
+                        TextButton(onClick = { onDelete(item) }) { Text("Delete") }
                     }
                 }
             }

@@ -107,6 +107,29 @@ class LibraryUiTest {
     }
 
     @Test
+    fun `orphan notice is null when empty and singular for one`() {
+        assertNull(LibraryUi.orphanNotice(emptyList()))
+        val one = LibraryUi.orphanNotice(listOf(InterruptedImport("slug-a", "T", true)))!!
+        assertEquals(1, one.count)
+        assertTrue(one.bannerText.contains("1 interrupted import"))
+    }
+
+    @Test
+    fun `orphan notice plural, label fallback and finishable flag`() {
+        val notice = LibraryUi.orphanNotice(
+            listOf(
+                InterruptedImport("slug-a", null, false),
+                InterruptedImport("slug-b", "Real", true)
+            )
+        )!!
+        assertTrue(notice.bannerText.contains("2 interrupted imports"))
+        assertEquals("slug-a", notice.items[0].label)
+        assertFalse(notice.items[0].finishable)
+        assertEquals("Real", notice.items[1].label)
+        assertTrue(notice.items[1].finishable)
+    }
+
+    @Test
     fun `sort puts in-progress first, untouched, finished last`() {
         val unread = LibraryUi.item(meta("u", "B unread", null), null).copy(id = "u")
         val reading = LibraryUi.item(meta("r", "B reading", null), progress(0.5)).copy(id = "r")

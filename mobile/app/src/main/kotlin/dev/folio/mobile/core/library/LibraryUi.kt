@@ -90,4 +90,31 @@ object LibraryUi {
         }
         return DamagedNotice(items.size, text, items)
     }
+
+    /** One interrupted-import row (spec §4 Rule 2): finishable or delete-only. */
+    data class OrphanItem(val slug: String, val label: String, val finishable: Boolean)
+
+    /** Interrupted-import banner content; null when none. */
+    data class OrphanNotice(val count: Int, val bannerText: String, val items: List<OrphanItem>)
+
+    /**
+     * Pure display model for interrupted imports (spec §4 Rule 2 "offer to
+     * finish it or delete it"). Finish/discard reuse the LibraryManager APIs.
+     */
+    fun orphanNotice(orphans: List<InterruptedImport>): OrphanNotice? {
+        if (orphans.isEmpty()) return null
+        val items = orphans.map {
+            OrphanItem(
+                slug = it.slug,
+                label = it.title?.takeIf { t -> t.isNotBlank() } ?: it.slug,
+                finishable = it.finishable
+            )
+        }
+        val text = if (items.size == 1) {
+            "1 interrupted import found — finish or delete it."
+        } else {
+            "${items.size} interrupted imports found — finish or delete them."
+        }
+        return OrphanNotice(items.size, text, items)
+    }
 }

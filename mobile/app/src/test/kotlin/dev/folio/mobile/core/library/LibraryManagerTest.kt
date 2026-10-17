@@ -18,6 +18,7 @@ import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.store.AppFileStore
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -74,6 +75,17 @@ class LibraryManagerTest {
     )
 
     private fun sha256Of(s: String) = dev.folio.mobile.core.util.sha256Hex(s.toByteArray())
+
+    private fun orphanMeta(slug: String, id: String, title: String) = DocMeta(
+        id = id,
+        slug = slug,
+        title = title,
+        kind = DocKind.Book,
+        sourceFormat = SourceFormat.Epub,
+        capturedAt = "2026-10-17T00:00:00.000Z",
+        importedAt = "2026-10-17T00:00:00.000Z",
+        contentHash = sha256Of(title)
+    )
 
     @Test
     fun `getManifest initializes schema-1 manifest`() = runBlocking {
@@ -235,6 +247,107 @@ class LibraryManagerTest {
 
         assertTrue(manager.damagedDocuments().isEmpty())
         assertTrue(manager.getManifest().docs.isEmpty())
-        assertFalse(store.exists("library/docs/${meta.slug}"))
+        // folder fully removed: no meta file, nothing left to surface
+        assertFalse(store.exists("library/docs/${meta.slug}/meta.json"))
+        assertFalse(manager.recoverInterruptedImports().contains(meta.slug))
+    }
+
+    @Test
+    fun `scanInterruptedImports classifies finishable vs delete-only`() = runBlocking {
+        store.write(
+            "library/docs/good-orphan/meta.json",
+            jsonCodec.encodeToString(orphanMeta("good-orphan", "id-good", "Good Orphan"))
+        )
+        store.write("library/docs/bad-orphan/junk.bin", "junk".toByteArray())
+
+        val scanned = manager.scanInterruptedImports().associateBy { it.slug }
+        assertEquals(2, scanned.size)
+        assertTrue(scanned["good-orphan"]!!.finishable)
+        assertEquals("Good Orphan", scanned["good-orphan"]!!.title)
+        assertFalse(scanned["bad-orphan"]!!.finishable)
+        assertNull(scanned["bad-orphan"]!!.title)
+    }
+
+    @Test
+    fun `finishInterruptedImport re-registers the orphan with rebuilt files`() = runBlocking {
+        val slug = "2026-10-17-orphan-aaaa"
+        store.write("library/docs/$slug/original/book.epub", "ORPHAN-EPUB".toByteArray())
+        store.write(
+            "library/docs/$slug/meta.json",
+            jsonCodec.encodeToString(orphanMeta(slug, "orphan-id-1", "Orphan Book"))
+        )
+
+        val meta = manager.finishInterruptedImport(slug)
+        assertEquals("orphan-id-1", meta.id)
+
+        val mDoc = manager.getManifest().docs.single()
+        assertEquals(slug, mDoc.slug)
+        assertEquals("Orphan Book", mDoc.title)
+        assertEquals("orphan-id-1", mDoc.id)
+        val byPath = mDoc.files.associateBy { it.path }
+        assertEquals(
+            setOf("library/docs/$slug/meta.json", "library/docs/$slug/original/book.epub"),
+            byPath.keys
+        )
+        assertEquals(11L, byPath["library/docs/$slug/original/book.epub"]!!.size)
+        // every recorded hash matches disk (same guarantee as addDocument)
+        for (f in mDoc.files) {
+            assertEquals(
+                "sha256 mismatch for ${f.path}",
+                dev.folio.mobile.core.util.sha256Hex(store.read(f.path)),
+                f.sha256
+            )
+        }
+
+        assertTrue(manager.recoverInterruptedImports().isEmpty())
+        assertEquals(listOf("Orphan Book"), manager.listDocuments().map { it.title })
+
+        // finishing twice is refused
+        var threw = false
+        try {
+            manager.finishInterruptedImport(slug)
+        } catch (_: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw)
+
+        // no meta.json → cannot finish
+        store.write("library/docs/empty-orphan/junk.txt", "x".toByteArray())
+        var threw2 = false
+        try {
+            manager.finishInterruptedImport("empty-orphan")
+        } catch (_: IllegalArgumentException) {
+            threw2 = true
+        }
+        assertTrue(threw2)
+    }
+
+    @Test
+    fun `discardInterruptedImport removes folder and index text, refuses registered`() = runBlocking {
+        val slug = "2026-10-17-junk-aaaa"
+        store.write(
+            "library/docs/$slug/meta.json",
+            jsonCodec.encodeToString(orphanMeta(slug, "id-junk", "Junk"))
+        )
+        store.write("library/index/text/id-junk.json", "[]")
+
+        manager.discardInterruptedImport(slug)
+
+        // File inside the folder must be gone (exists() only checks files) and
+        // the folder must no longer surface as an interrupted import.
+        assertFalse(store.exists("library/docs/$slug/meta.json"))
+        assertFalse(store.exists("library/index/text/id-junk.json"))
+        assertTrue(manager.recoverInterruptedImports().isEmpty())
+
+        // registered docs must go through deleteDocument
+        val meta = manager.addDocument(importResult())
+        var threw = false
+        try {
+            manager.discardInterruptedImport(meta.slug)
+        } catch (_: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw)
+        assertTrue(store.exists("library/docs/${meta.slug}/meta.json"))
     }
 }
