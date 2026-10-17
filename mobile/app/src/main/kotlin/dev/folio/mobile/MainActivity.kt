@@ -200,6 +200,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var collections by remember { mutableStateOf<List<Collection>>(emptyList()) }
     var activeFilter by remember { mutableStateOf<LibraryUi.LibraryFilter?>(null) }
     var detailsTarget by remember { mutableStateOf<LibraryUi.LibraryItem?>(null) }
+    var manageCollectionsOpen by remember { mutableStateOf(false) }
 
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
@@ -215,10 +216,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             orphanNotice = LibraryUi.orphanNotice(library.scanInterruptedImports())
         }
         collections = withContext(Dispatchers.IO) { library.getCollections() }
-        // Drop a stale filter (e.g. the selected collection was deleted).
-        if (activeFilter != null && activeFilter !in LibraryUi.filters(collections, entries)) {
-            activeFilter = null
-        }
+        // Re-bind the active filter: renames keep it, deleted targets drop it.
+        activeFilter = LibraryUi.rebind(activeFilter, LibraryUi.filters(collections, entries))
         libraryVersion += 1
         loading = false
     }
@@ -274,6 +273,24 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         onClick = { importLauncher.launch(MainActivity.IMPORT_MIMES) }
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = "Import file")
+                    }
+                    Box {
+                        var topMenuOpen by remember { mutableStateOf(false) }
+                        IconButton(onClick = { topMenuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More actions")
+                        }
+                        DropdownMenu(
+                            expanded = topMenuOpen,
+                            onDismissRequest = { topMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Manage collections") },
+                                onClick = {
+                                    topMenuOpen = false
+                                    manageCollectionsOpen = true
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -517,6 +534,165 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             onDismiss = { detailsTarget = null }
         )
     }
+
+    // Collections manager: rename + delete (creation lives in the details dialog).
+    if (manageCollectionsOpen) {
+        ManageCollectionsDialog(
+            collections = collections,
+            onRename = { id, name ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            appLibrary(context).renameCollection(id, name)
+                        }
+                        refresh()
+                        snackbar.showSnackbar("Collection renamed")
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Rename failed")
+                    }
+                }
+            },
+            onDelete = { id ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            appLibrary(context).deleteCollection(id)
+                        }
+                        refresh()
+                        snackbar.showSnackbar("Collection deleted")
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Delete failed")
+                    }
+                }
+            },
+            onDismiss = { manageCollectionsOpen = false }
+        )
+    }
+}
+
+/** Collections manager: per-row rename/delete (delete keeps doc meta ids — PWA parity). */
+@Composable
+private fun ManageCollectionsDialog(
+    collections: List<Collection>,
+    onRename: (id: String, name: String) -> Unit,
+    onDelete: (id: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var renameTarget by remember { mutableStateOf<Collection?>(null) }
+    var deleteTarget by remember { mutableStateOf<Collection?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Collections") },
+        text = {
+            if (collections.isEmpty()) {
+                Text(
+                    "No collections yet — add one from a book's Details dialog.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                Column {
+                    for (coll in collections) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    coll.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                val count = coll.docIds.size
+                                Text(
+                                    if (count == 1) "1 document" else "$count documents",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                            IconButton(onClick = { renameTarget = coll }) {
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = "Rename ${coll.name}"
+                                )
+                            }
+                            IconButton(onClick = { deleteTarget = coll }) {
+                                Icon(
+                                    Icons.Filled.DeleteOutline,
+                                    contentDescription = "Delete ${coll.name}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
+
+    renameTarget?.let { target ->
+        RenameCollectionDialog(
+            collection = target,
+            onSave = { name ->
+                renameTarget = null
+                onRename(target.id, name)
+            },
+            onDismiss = { renameTarget = null }
+        )
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete collection?") },
+            text = {
+                Text(
+                    "\"${target.name}\" will be removed. Its documents stay in the library."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    onDelete(target.id)
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+/** Rename sub-dialog: prefilled field; blank or unchanged names are rejected. */
+@Composable
+private fun RenameCollectionDialog(
+    collection: Collection,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember(collection.id) { mutableStateOf(collection.name) }
+    val clean = name.trim()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename collection") },
+        text = {
+            DialogTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = "Collection name…",
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = clean.isNotEmpty() && clean != collection.name,
+                onClick = { onSave(clean) }
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 private fun filterLabel(filter: LibraryUi.LibraryFilter): String = when (filter) {

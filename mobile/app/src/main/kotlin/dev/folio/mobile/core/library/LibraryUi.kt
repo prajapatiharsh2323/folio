@@ -145,6 +145,21 @@ object LibraryUi {
         is LibraryFilter.CollectionFilter -> items.filter { filter.id in it.collectionIds }
     }
 
+    /** Same filter target (collection id / tag name), ignoring renamed labels. */
+    fun sameTarget(a: LibraryFilter, b: LibraryFilter): Boolean = when {
+        a is LibraryFilter.TagFilter && b is LibraryFilter.TagFilter -> a.tag == b.tag
+        a is LibraryFilter.CollectionFilter && b is LibraryFilter.CollectionFilter -> a.id == b.id
+        else -> false
+    }
+
+    /**
+     * Re-binds a selected filter to refreshed [options], matched by target so a
+     * renamed collection keeps its chip selected; null when the target
+     * disappeared (deleted collection, removed tag).
+     */
+    fun rebind(selected: LibraryFilter?, options: List<LibraryFilter>): LibraryFilter? =
+        selected?.let { target -> options.firstOrNull { sameTarget(it, target) } }
+
     /**
      * Tag input rule (PWA DocumentSheet parity): trim + lowercase; null when
      * empty or already present.

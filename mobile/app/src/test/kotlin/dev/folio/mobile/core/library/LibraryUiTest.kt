@@ -184,6 +184,27 @@ class LibraryUiTest {
     }
 
     @Test
+    fun `rebind keeps a renamed collection selected and drops vanished targets`() {
+        val selected = LibraryUi.LibraryFilter.CollectionFilter("c1", "Old name")
+        val options = listOf(
+            LibraryUi.LibraryFilter.CollectionFilter("c1", "New name"),
+            LibraryUi.LibraryFilter.TagFilter("sci-fi")
+        )
+        // Renamed collection: same id, new label -> still selected (new option).
+        assertEquals(options[0], LibraryUi.rebind(selected, options))
+        // Deleted collection / removed tag -> selection dropped.
+        assertNull(LibraryUi.rebind(selected, listOf(LibraryUi.LibraryFilter.TagFilter("x"))))
+        assertNull(LibraryUi.rebind(LibraryUi.LibraryFilter.TagFilter("gone"), options))
+        // No selection stays no selection.
+        assertNull(LibraryUi.rebind(null, options))
+        // Tag target matches its own option.
+        assertEquals(
+            options[1],
+            LibraryUi.rebind(LibraryUi.LibraryFilter.TagFilter("sci-fi"), options)
+        )
+    }
+
+    @Test
     fun `normalizeTag trims lowercases and rejects blanks and dupes`() {
         assertNull(LibraryUi.normalizeTag("  ", emptyList()))
         assertEquals("sci-fi", LibraryUi.normalizeTag("  Sci-Fi ", emptyList()))
