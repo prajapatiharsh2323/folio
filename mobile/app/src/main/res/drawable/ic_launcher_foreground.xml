@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Folio launcher mark: violet bookmark over an open book, echoing the brand
+     logo (charcoal book + violet bookmark #715CFC). Vector only, no bitmaps. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Open book: two page leaves -->
+    <path
+        android:fillColor="#B8B9C4"
+        android:pathData="M30,42 C38,38 48,38 53,42 L53,70 C48,66 38,66 30,70 Z" />
+    <path
+        android:fillColor="#E2E3EA"
+        android:pathData="M78,42 C70,38 60,38 55,42 L55,70 C60,66 70,66 78,70 Z" />
+
+    <!-- Violet bookmark -->
+    <path
+        android:fillColor="#715CFC"
+        android:pathData="M54,36 L54,44 L54,74 C57,71.5 61,70 66,70 L66,36 Z" />
+</vector>
