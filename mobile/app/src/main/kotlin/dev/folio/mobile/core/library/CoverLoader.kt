@@ -45,23 +45,30 @@ object CoverLoader {
 
     /**
      * Decodes `store`-relative [path] (as carried on
-     * [LibraryUi.LibraryItem.cover]) to a thumbnail bitmap, or null when the
-     * file is missing or not decodable. Blocking — call from a background
-     * dispatcher.
+     * [LibraryUi.LibraryItem.cover] or `files.cover`) to a bitmap sampled for
+     * [reqW]×[reqH] px, or null when the file is missing or not decodable.
+     * Defaults match the library-card thumb; the reader splash asks for a
+     * bigger size. Blocking — call from a background dispatcher.
      */
-    fun decode(store: dev.folio.mobile.core.store.AppFileStore, path: String): Bitmap? {
+    fun decode(
+        store: dev.folio.mobile.core.store.AppFileStore,
+        path: String,
+        reqW: Int = REQ_W,
+        reqH: Int = REQ_H
+    ): Bitmap? {
         val file = runCatching { store.resolve(path) }.getOrNull() ?: return null
         if (!file.isFile) return null
-        cache.get(path)?.let { return it }
+        val cacheKey = "$path@${reqW}x$reqH"
+        cache.get(cacheKey)?.let { return it }
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, REQ_W, REQ_H)
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, reqW, reqH)
         }
         val bitmap = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return null
-        cache.put(path, bitmap)
+        cache.put(cacheKey, bitmap)
         return bitmap
     }
 }

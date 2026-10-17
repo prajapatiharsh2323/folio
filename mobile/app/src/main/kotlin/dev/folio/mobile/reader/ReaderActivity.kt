@@ -3,16 +3,40 @@ package dev.folio.mobile.reader
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commitNow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.compose.foundation.layout.Box
-import androidx.compose.runtime.mutableStateOf
 import dev.folio.mobile.R
 import dev.folio.mobile.core.annotation.SelectionBridge
+import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.HighlightColor
@@ -28,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
@@ -71,6 +96,10 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_TARGET_ORDER = "dev.folio.mobile.READER_TARGET_ORDER"
         private const val NAV_TAG = "EpubNavigatorFragment"
 
+        /** Reader splash cover decode size (~200dp box at ~3x). */
+        private const val SPLASH_COVER_W = 660
+        private const val SPLASH_COVER_H = 990
+
         fun createIntent(context: Context, docId: String): Intent =
             Intent(context, ReaderActivity::class.java)
                 .putExtra(EXTRA_DOC_ID, docId)
@@ -102,6 +131,12 @@ class ReaderActivity : FragmentActivity() {
 
     /** Annotation context menu target (R3) — null when closed. */
     private val annotationMenu = mutableStateOf<Annotation?>(null)
+
+    /** Reader splash: the document cover shown while the navigator mounts. */
+    private val splashCover = mutableStateOf<ImageBitmap?>(null)
+
+    /** Cleared once the navigator emits its first locator (or after a timeout). */
+    private val readerReady = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
@@ -141,6 +176,14 @@ class ReaderActivity : FragmentActivity() {
                     pillarTitle = pillarTitle.value,
                     pillarPercent = pillarPercent.value
                 )
+                // Splash sits ABOVE the chrome so loading is a clean takeover;
+                // it fades out on the navigator's first locator.
+                AnimatedVisibility(
+                    visible = !readerReady.value,
+                    exit = fadeOut(animationSpec = tween(450))
+                ) {
+                    ReaderSplash(splashCover.value)
+                }
                 annotationMenu.value?.let { annotation ->
                     AnnotationMenuSheet(
                         annotation = annotation,
@@ -191,6 +234,18 @@ class ReaderActivity : FragmentActivity() {
             return
         }
         val file = store.resolve("library/docs/${meta.slug}/$readingRel")
+
+        // Splash cover: display-only, decoded before the navigator mounts so the
+        // reading screen opens with something recognizable instead of a blank
+        // WebView (skipped when the import found no cover).
+        meta.files?.cover?.takeIf { it.isNotBlank() }?.let { cover ->
+            CoverLoader.decode(
+                store,
+                "library/docs/${meta.slug}/$cover",
+                SPLASH_COVER_W,
+                SPLASH_COVER_H
+            )?.let { bitmap -> splashCover.value = bitmap.asImageBitmap() }
+        }
 
         val publication = openPublication(file)
         if (publication == null) {
@@ -285,6 +340,12 @@ class ReaderActivity : FragmentActivity() {
             }
         }
         observeProgress(docId, navigator)
+        // Safety net: an unexpectedly silent navigator (render failure) must
+        // never trap the user on the splash — chrome/tap still work above it.
+        loadScope.launch {
+            delay(8000)
+            readerReady.value = true
+        }
         // Hydrate persisted annotations (R3): rebuild Locators from the saved
         // schema-1 annotations and paint them right after the navigator mounts.
         lifecycleScope.launch {
@@ -429,6 +490,10 @@ class ReaderActivity : FragmentActivity() {
         progressJob = lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 navigator.currentLocator.collect { locator ->
+                    // First locator = the navigator has a rendered position:
+                    // drop the splash (idempotent for later emissions).
+                    if (!readerReady.value) readerReady.value = true
+
                     // Pillar: chapter title + total percent (cheap, no IO)
                     pillarTitle.value = locator.title.orEmpty()
                     pillarPercent.value = ProgressBridge.totalPercent(locator)
@@ -488,6 +553,41 @@ class ReaderActivity : FragmentActivity() {
             withContext(Dispatchers.Main) {
                 navigator.go(locator, false)
             }
+        }
+    }
+}
+
+/**
+ * Reader splash: centered cover (when the doc has one) over the theme surface
+ * with a spinner, shown until the navigator reports its first locator.
+ */
+@Composable
+private fun ReaderSplash(cover: ImageBitmap?) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            if (cover != null) {
+                Image(
+                    bitmap = cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .width(200.dp)
+                        .height(300.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                )
+                Spacer(Modifier.height(28.dp))
+            }
+            CircularProgressIndicator(strokeWidth = 3.dp)
         }
     }
 }
