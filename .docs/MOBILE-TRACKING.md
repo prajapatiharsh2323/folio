@@ -7,22 +7,23 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes (selection note editor, quote-card author, notes edit/delete, system theme, collection-failure snackbar) + pace/time-left (PWA parity) + PERCENT-SCALE compat fix (Progress.percent is 0–100 like the PWA) + Batch 3 backup core (verified zip + merge/replace restore, wired into Settings) — **182/182 tests green, assembleDebug green, ON-DEVICE SMOKE PASSED** (emulator working — see Environment facts). TTS + PDF + audio dropped from v1 scope.
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0–100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes — **188/188 tests green, assembleDebug green, per-book overrides + highlight flow VERIFIED ON DEVICE (M-19)**. TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **Batch 2 reader polish (recommended)** — page-turn animations,
-   paragraph-snap scrolling, tap-zone config (left/right/center per R2 spec),
-   per-book typography overrides (ReaderPrefsMapper already portable; store
-   overrides on DocMeta or sidecar).
-2. **Device-only follow-ups from smoke (small, high value)** — see Session M-18
-   log: suppress the WebView default text-selection action mode so long-press
-   goes straight to the app's selection sheet (PWA parity), and re-test
-   highlight creation once on a less memory-starved VM (renderer died mid-test).
-3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+1. **Batch 2 remaining polish** — page-turn animations (NOT exposed by Readium
+   3.0.0 `EpubPreferences` — needs custom fragment/pager work or Readium upgrade,
+   de-scope or decide), paragraph-snap scrolling (check Readium's reflowable
+   script behavior on device first), tap-zone config (PWA has FIXED zones —
+   mobile already matches; only build a config setting if we want a native-only
+   extra). Per-book typography overrides are DONE (M-19).
+2. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
-4. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
+3. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
+4. **Settings screen parity check** — Settings edits global defaults; reader now
+   edits per-doc only. Add a hint row in Settings ("edits library-wide defaults;
+   changes inside a book override it per book").
 
 **Carried constraints:** TTS is DROPPED (post-v1 backlog, not debt). PWA schema-1
 contracts (manifest, user/*.json, backup ZIP, annotation anchors, Drive sync) must
@@ -210,6 +211,52 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-19 (Oct 18, 2026)** — Batch 2 partial: per-book typography
+  overrides + WebView selection bar + MAIN-THREAD CRASH FIXES (commits f2c0565,
+  b2b16c4, 8d5a84b, all pushed). **188/188 tests green, assembleDebug green.**
+  - **Per-book typography overrides** (b2b16c4): new `DocPrefsStore`
+    (`library/user/doc-settings.json`, `docId → ReadingPrefs`; MOBILE-ONLY
+    extension — NOT in the backup contract, PWA ignores unknown user files;
+    deliberately out of export/restore for v1). Reader loads doc override over
+    global prefs; chrome edits persist to THE DOC ONLY (Settings screen stays
+    library-wide — settings.json untouched); `reset` chip in the typography row
+    clears override + reverts to global. 6 unit tests. DEVICE-VERIFIED: dark
+    override applied instantly + persists across force-stop/reopen; global
+    settings.json absent after reader edit; reset flips back to light AND
+    deletes the file.
+  - **Selection action mode, round 1** (f2c0565): suppressing via no-op
+    `selectionActionModeCallback` DID work technically but made the highlight
+    flow unreachable (tapping the middle third to reveal chrome CLEARS the
+    selection — observed on device). ALSO: first on-device verification FAILED
+    silently — the installed APK predated the change (never ran `assembleDebug`
+    after editing, only `compileDebugKotlin`/`testDebugUnitTest`). Lesson:
+    after ANY reader source change, rebuild `assembleDebug` before install.
+  - **Selection action mode, final** (8d5a84b): custom
+    `selectionActionModeCallback` menu `[Highlight] [Copy]` — long-press gets
+    the app's own floating bar instead of the system Copy/Share/Select-all/
+    Read-aloud (PWA parity, better than chrome-brush chain). Highlight →
+    existing `onHighlightTapped` sheet capture; Copy → new
+    `onSelectionCopyTapped` (live-selection capture + clipboard, no sheet).
+    DEVICE-VERIFIED end-to-end: long-press → floating bar → Highlight → sheet
+    with quote "Lantern" → yellow chip → highlight painted, sheet closed.
+  - **CRASH FIX (the big one — 8d5a84b)**: `loadScope` is Dispatchers.IO, so
+    `navigator.currentSelection()`, `locateProgression`, and
+    `highlightManager` update/remove→`applyDecorations` all ran WebView calls
+    off-main → `FATAL: A WebView method was called on thread
+    'DefaultDispatcher-worker-1'` (found via logcat after a " keeps
+    stopping" screen; this ALSO explains the batch-1 smoke 'reader died'
+    moments). Fixed: onHighlightTapped/onSelectionCopyTapped/scrubTo use
+    `lifecycleScope.launch(Dispatchers.Main)`; restore locateProgression and
+    annotation update/remove decoration calls wrapped in
+    `withContext(Dispatchers.Main)`. The earlier "renderer died, environmental"
+    note in M-18 partially re-classified: some of those were THIS bug.
+  - **Typography row overflow** (8d5a84b): the row clips on 411dp screens —
+    brightness + reset chip were unreachable; added `horizontalScroll`.
+    Device-verified drag-reveal + reset tap.
+  - Commit messages: 8d5a84b bundles the crash fixes + selection bar + row
+    scroll (amended once — pushed after amend, safe this session since no
+    pull-window).
 
 - **Session M-18 (Oct 18, 2026)** — Batch 1 fixes + pace + percent-scale +
   **emulator unblocked, smoke passed** + Batch 3 backup core (commits 3d9fe33,
