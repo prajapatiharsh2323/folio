@@ -18,12 +18,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +36,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import dev.folio.mobile.core.backup.BackupRestore
+import dev.folio.mobile.core.backup.exportBackupZip
+import dev.folio.mobile.core.backup.RestoreMode
+import dev.folio.mobile.core.backup.generateBackupFilename
+import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.PrefsStore
@@ -43,11 +49,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,25 +78,65 @@ fun SettingsScreen() {
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
+    /** Picked backup URI awaiting the merge/replace mode choice. */
+    var restoreTarget by remember { mutableStateOf<Uri?>(null) }
+
     LaunchedEffect(Unit) {
         prefs = withContext(Dispatchers.IO) { prefsStore.loadReadingPrefs() }
     }
 
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let {
-            scope.launch {
-                busy = true
-                status = try {
-                    withContext(Dispatchers.IO) { restoreBackup(context, it) }
-                    "Restore complete"
-                } catch (t: Throwable) {
-                    "Restore failed: ${t.message}"
+    ) { uri -> restoreTarget = uri }
+
+    // Restore mode chooser (spec §8: merge keeps local data, replace wipes).
+    restoreTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { restoreTarget = null },
+            title = { Text("Restore backup") },
+            text = {
+                Text(
+                    "Merge: add what's missing, keep everything local, newer " +
+                        "annotations/progress win. Replace: wipe this library " +
+                        "first and restore exactly the backup."
+                )
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        enabled = !busy,
+                        onClick = {
+                            restoreTarget = null
+                            scope.launch {
+                                busy = true
+                                status = try {
+                                    withContext(Dispatchers.IO) { restoreBackup(context, target, RestoreMode.Merge) }
+                                } catch (t: Throwable) {
+                                    "Restore failed: ${t.message}"
+                                }
+                                busy = false
+                            }
+                        }
+                    ) { Text("Merge") }
+                    TextButton(
+                        enabled = !busy,
+                        onClick = {
+                            restoreTarget = null
+                            scope.launch {
+                                busy = true
+                                status = try {
+                                    withContext(Dispatchers.IO) { restoreBackup(context, target, RestoreMode.Replace) }
+                                } catch (t: Throwable) {
+                                    "Restore failed: ${t.message}"
+                                }
+                                busy = false
+                            }
+                        }
+                    ) { Text("Replace") }
+                    TextButton(enabled = !busy, onClick = { restoreTarget = null }) { Text("Cancel") }
                 }
-                busy = false
             }
-        }
+        )
     }
 
     Scaffold(
@@ -140,7 +182,6 @@ fun SettingsScreen() {
                             busy = true
                             status = try {
                                 withContext(Dispatchers.IO) { exportBackup(context) }
-                                "Backup saved to Downloads"
                             } catch (t: Throwable) {
                                 "Backup failed: ${t.message}"
                             }
@@ -172,42 +213,42 @@ private fun storageInfo(context: Context): String {
     return "Used: ${used / (1024 * 1024)} MB of ${total / (1024 * 1024)} MB"
 }
 
+/** Streams a verified, PWA-compatible backup ZIP (entries added one file at a
+ *  time — the whole library never sits in memory). */
 private fun exportBackup(context: Context): String {
-    val src = File(context.filesDir, "library")
-    if (!src.exists()) throw IllegalStateException("No library")
+    val store = AppFileStore(context.filesDir)
     val outDir = File(context.getExternalFilesDir(null), "backups").apply { mkdirs() }
-    val name = "folio-backup-${System.currentTimeMillis()}.zip"
-    val out = File(outDir, name)
-    ZipOutputStream(FileOutputStream(out).buffered()).use { zos ->
-        src.walkTopDown().forEach { f ->
-            if (f.isFile) {
-                val rel = f.relativeTo(src.parentFile!!).path.replace('\\', '/')
-                zos.putNextEntry(ZipEntry(rel))
-                FileInputStream(f).use { it.copyTo(zos) }
-                zos.closeEntry()
-            }
+    val out = File(outDir, generateBackupFilename())
+    FileOutputStream(out).use { fos ->
+        kotlinx.coroutines.runBlocking {
+            exportBackupZip(store, fos)
         }
+        fos.flush()
     }
-    return out.absolutePath
+    return "Backup saved: ${out.name}"
 }
 
-private fun restoreBackup(context: Context, uri: Uri) {
-    val dest = File(context.filesDir, "library")
-    dest.mkdirs()
-    context.contentResolver.openInputStream(uri)?.use { input ->
-        ZipInputStream(input.buffered()).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                val target = File(context.filesDir, entry.name)
-                if (entry.isDirectory) {
-                    target.mkdirs()
-                } else {
-                    target.parentFile?.mkdirs()
-                    FileOutputStream(target).use { zis.copyTo(it) }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
-        }
+/**
+ * Verified restore via BackupRestore (spec §8 merge/replace rules ported from
+ * packages/core/src/backup/import-zip.ts) — no more unzip-overwrite clobbering.
+ */
+private fun restoreBackup(context: Context, uri: Uri, mode: RestoreMode): String {
+    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+        input.readBytes()
     } ?: throw IllegalStateException("Cannot read backup")
+    val store = AppFileStore(context.filesDir)
+    return kotlinx.coroutines.runBlocking {
+        val library = LibraryManager(store)
+        val (summary, verification) = BackupRestore.restore(store, library, bytes, mode)
+        if (!verification.valid) {
+            return@runBlocking "Restore completed with warnings: " +
+                verification.issues.joinToString("; ") { "${it.path} (${it.reason})" }
+        }
+        "${summary.mode.replaceFirstChar { it.uppercase() }}: +${summary.newDocsAdded} new, " +
+            "${summary.duplicatesSkipped} duplicates skipped, " +
+            "${summary.metadataUpdated} updated, " +
+            "${summary.annotationsMerged} annotations, " +
+            "${summary.progressUpdated} progress, " +
+            "${summary.collectionsMerged} collections"
+    }
 }
