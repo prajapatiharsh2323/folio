@@ -119,6 +119,10 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_TARGET_ORDER = "dev.folio.mobile.READER_TARGET_ORDER"
         private const val NAV_TAG = "EpubNavigatorFragment"
 
+        /** Custom floating selection-bar item ids (PWA parity). */
+        private const val SEL_ITEM_HIGHLIGHT = 1
+        private const val SEL_ITEM_COPY = 2
+
         /** Reader splash cover decode size (~200dp box at ~3x). */
         private const val SPLASH_COVER_W = 660
         private const val SPLASH_COVER_H = 990
@@ -141,6 +145,7 @@ class ReaderActivity : FragmentActivity() {
     private var publicationRef: Publication? = null
     private var highlightManager: HighlightManager? = null
     private var currentDocId: String = ""
+
     private lateinit var prefsStore: PrefsStore
 
     /** Per-book typography overrides (Batch 2); null get() = global prefs. */
@@ -415,9 +420,11 @@ class ReaderActivity : FragmentActivity() {
             }
             if (initialLocator == null && savedProgress != null) {
                 // Progress.percent is the PWA 0..100 scale; Readium wants 0..1.
-                publication.findService(LocatorService::class)
-                    ?.locateProgression(savedProgress.percent / 100.0)
-                    ?.let { initialLocator = it }
+                // locateProgression touches the navigator's WebView — main only.
+                withContext(Dispatchers.Main) {
+                    publication.findService(LocatorService::class)
+                        ?.locateProgression(savedProgress.percent / 100.0)
+                }?.let { initialLocator = it }
             }
             if (initialLocator == null) {
                 publication.readingOrder.firstOrNull()?.let { link ->
@@ -468,15 +475,40 @@ class ReaderActivity : FragmentActivity() {
             listener = readerListener(),
             configuration = EpubNavigatorFragment.Configuration(
                 shouldApplyInsetsPadding = false,
-                // PWA parity: long-press selects text but must NOT pop the system
-                // Copy/Share/filed action mode — the app owns the selection UX
-                // (chrome brush → selection sheet). An empty callback that refuses
-                // to start the mode suppresses the floating menu; selection state,
-                // `currentSelection()` and highlight creation keep working.
+                // PWA parity: long-press gets the app's OWN selection bar instead
+                // of the system Copy/Share/Read-aloud menu. Selection state and
+                // `currentSelection()` are unaffected. Items route into the
+                // same handlers as the chrome brush button (selection sheet)
+                // and clipboard copy.
                 selectionActionModeCallback = object : android.view.ActionMode.Callback {
-                    override fun onCreateActionMode(mode: android.view.ActionMode, menu: android.view.Menu): Boolean = false
-                    override fun onPrepareActionMode(mode: android.view.ActionMode, menu: android.view.Menu): Boolean = false
-                    override fun onActionItemClicked(mode: android.view.ActionMode, item: android.view.MenuItem): Boolean = false
+                    override fun onCreateActionMode(
+                        mode: android.view.ActionMode,
+                        menu: android.view.Menu
+                    ): Boolean {
+                        menu.add(0, SEL_ITEM_HIGHLIGHT, 0, "Highlight")
+                            ?.setShowAsActionFlags(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
+                        menu.add(0, SEL_ITEM_COPY, 1, "Copy")
+                            ?.setShowAsActionFlags(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
+                        return true
+                    }
+
+                    override fun onPrepareActionMode(
+                        mode: android.view.ActionMode,
+                        menu: android.view.Menu
+                    ): Boolean = false
+
+                    override fun onActionItemClicked(
+                        mode: android.view.ActionMode,
+                        item: android.view.MenuItem
+                    ): Boolean {
+                        when (item.itemId) {
+                            SEL_ITEM_HIGHLIGHT -> onHighlightTapped()
+                            SEL_ITEM_COPY -> onSelectionCopyTapped()
+                        }
+                        mode.finish()
+                        return true
+                    }
+
                     override fun onDestroyActionMode(mode: android.view.ActionMode) {}
                 }
             )
@@ -534,7 +566,10 @@ class ReaderActivity : FragmentActivity() {
             withContext(Dispatchers.IO) {
                 LibraryManager(AppFileStore(filesDir)).removeAnnotation(annotation.id)
             }
-            highlightManager?.remove(annotation.id)
+            // Decoration routing drives the WebView — main only.
+            withContext(Dispatchers.Main) {
+                highlightManager?.remove(annotation.id)
+            }
         }
     }
 
@@ -557,7 +592,10 @@ class ReaderActivity : FragmentActivity() {
             withContext(Dispatchers.IO) {
                 LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
             }
-            highlightManager?.update(updated)
+            // Decoration routing drives the WebView — main only.
+            withContext(Dispatchers.Main) {
+                highlightManager?.update(updated)
+            }
         }
     }
 
@@ -612,7 +650,10 @@ class ReaderActivity : FragmentActivity() {
     private fun onHighlightTapped() {
         val navigator = navigatorRef ?: return
         val docId = currentDocId
-        loadScope.launch {
+        // currentSelection() drives the WebView — it must run on the MAIN
+        // thread (a Dispatchers.IO resume here crashes with
+        // "A WebView method was called on the wrong thread").
+        lifecycleScope.launch(Dispatchers.Main) {
             val selection = navigator.currentSelection()
             if (selection == null) {
                 withContext(Dispatchers.Main) {
@@ -672,6 +713,27 @@ class ReaderActivity : FragmentActivity() {
         selectionAnnotation.value = null
         selectionLocator.value = null
         android.widget.Toast.makeText(this, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Floating selection-bar "Copy": captures the LIVE selection (main thread —
+     * WebView access) and puts its quote on the clipboard, no sheet involved.
+     */
+    private fun onSelectionCopyTapped() {
+        val navigator = navigatorRef ?: return
+        val docId = currentDocId
+        lifecycleScope.launch(Dispatchers.Main) {
+            val selection = navigator.currentSelection() ?: return@launch
+            val annotation = SelectionBridge.annotationFromSelection(
+                docId = docId,
+                locator = selection.locator,
+                id = java.util.UUID.randomUUID().toString(),
+                updatedAt = java.time.Instant.now().toString()
+            )
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Folio", annotation.quote))
+            android.widget.Toast.makeText(this@ReaderActivity, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     /**
@@ -851,19 +913,17 @@ class ReaderActivity : FragmentActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
-    /** R2b scrubber: jump to a total-publication progression (0..1). */
+    /** R2b scrubber: jump to a total-publication progression (0..1).
+     *  Locator computation + go() both reach the navigator's WebView — main. */
     @OptIn(org.readium.r2.shared.ExperimentalReadiumApi::class)
     private fun scrubTo(percent: Double) {
         val navigator = navigatorRef ?: return
         val publication = publicationRef ?: return
-        loadScope.launch {
+        lifecycleScope.launch(Dispatchers.Main) {
             val locator = publication.findService(LocatorService::class)
                 ?.locateProgression(percent.coerceIn(0.0, 1.0))
                 ?: return@launch
-            // go() mutates the view pager — must run on the main thread.
-            withContext(Dispatchers.Main) {
-                navigator.go(locator, false)
-            }
+            navigator.go(locator, false)
         }
     }
 }
