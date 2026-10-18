@@ -67,6 +67,7 @@ import dev.folio.mobile.core.reader.ProgressBridge
 import dev.folio.mobile.core.reader.ReaderPrefsMapper
 import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
+import dev.folio.mobile.core.store.DocPrefsStore
 import dev.folio.mobile.core.store.PrefsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -142,8 +143,14 @@ class ReaderActivity : FragmentActivity() {
     private var currentDocId: String = ""
     private lateinit var prefsStore: PrefsStore
 
+    /** Per-book typography overrides (Batch 2); null get() = global prefs. */
+    private lateinit var docPrefsStore: DocPrefsStore
+
     /** Reading prefs live state (chrome edits, navigator consumes). */
     private val prefsState = mutableStateOf(ReadingPrefs())
+
+    /** True when the current doc has its own override (chrome reset chip). */
+    private val hasDocOverride = mutableStateOf(false)
 
     /** Chrome overlay visibility — toggled by tapping the page's middle third. */
     private val chromeVisible = mutableStateOf(true)
@@ -204,6 +211,7 @@ class ReaderActivity : FragmentActivity() {
         // Keep the screen awake while reading (PWA spec §7).
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         prefsStore = PrefsStore(AppFileStore(filesDir))
+        docPrefsStore = DocPrefsStore(AppFileStore(filesDir))
         currentDocId = docId
 
         // Edge-to-edge: Readium only pads for display cutouts, so handle the
@@ -238,7 +246,9 @@ class ReaderActivity : FragmentActivity() {
                     pillarTitle = pillarTitle.value,
                     pillarPercent = pillarPercent.value,
                     timeLeft = timeLeftText.value,
-                    systemDark = isSystemDark()
+                    systemDark = isSystemDark(),
+                    perBookOverride = hasDocOverride.value,
+                    onResetPerBook = { onResetPerBookPrefs() }
                 )
                 if (tocVisible.value) {
                     TocSheet(
@@ -283,8 +293,12 @@ class ReaderActivity : FragmentActivity() {
         }
 
         loadScope.launch {
-            // Prefs FIRST — the navigator gets the mapped values at attach time
-            prefsState.value = prefsStore.loadReadingPrefs()
+            // Prefs FIRST — the navigator gets the mapped values at attach time.
+            // Per-book override (Batch 2) wins over the global defaults.
+            val global = prefsStore.loadReadingPrefs()
+            val docOverride = docPrefsStore.get(docId)
+            prefsState.value = docOverride ?: global
+            hasDocOverride.value = docOverride != null
             withContext(Dispatchers.Main) {
                 applySystemBarAppearance(prefsState.value)
             }
@@ -308,8 +322,21 @@ class ReaderActivity : FragmentActivity() {
         super.onDestroy()
     }
 
-    /** Chrome → navigator → persistence (single source of truth: prefsState). */
+    /**
+     * Chrome → navigator → persistence. Per-book semantics (Batch 2): while a
+     * document is open, chrome edits update THAT document's override only —
+     * the global library-wide defaults (Settings screen) stay untouched.
+     */
     private fun onPrefsChanged(updated: ReadingPrefs) {
+        applyPrefs(updated)
+        hasDocOverride.value = true
+        loadScope.launch(Dispatchers.IO) {
+            docPrefsStore.set(currentDocId, updated)
+        }
+    }
+
+    /** Applies prefs to state/system bars/navigator without persisting. */
+    private fun applyPrefs(updated: ReadingPrefs) {
         prefsState.value = updated
         applySystemBarAppearance(updated)
         findViewById<android.view.View>(R.id.navigator_container)
@@ -319,8 +346,17 @@ class ReaderActivity : FragmentActivity() {
                 ReaderPrefsMapper.mapPrefs(updated, isSystemDark())
             )
         )
+    }
+
+    /** "reset": drop the doc override and fall back to the global defaults. */
+    private fun onResetPerBookPrefs() {
         loadScope.launch(Dispatchers.IO) {
-            prefsStore.saveReadingPrefs(updated)
+            docPrefsStore.set(currentDocId, null)
+            val global = prefsStore.loadReadingPrefs()
+            withContext(Dispatchers.Main) {
+                hasDocOverride.value = false
+                applyPrefs(global)
+            }
         }
     }
 

@@ -79,6 +79,9 @@ fun ReaderChrome(
     timeLeft: String? = null,
     /** "system" theme → the OS dark-mode state (canvas uses the same rule). */
     systemDark: Boolean = false,
+    /** Batch 2: this document has its own typography override. */
+    perBookOverride: Boolean = false,
+    onResetPerBook: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val surface = chromeSurface(resolvedThemeKey(prefs.theme, systemDark))
@@ -98,7 +101,7 @@ fun ReaderChrome(
             ) {
                 Column {
                     TopBar(prefs, onBack, onPrefsChange, onHighlight, onBookmark, onToc)
-                    TypographyRow(prefs, text, onPrefsChange)
+                    TypographyRow(prefs, text, onPrefsChange, perBookOverride, onResetPerBook)
                 }
             }
         }
@@ -193,7 +196,9 @@ private fun TopBar(
 private fun TypographyRow(
     prefs: ReadingPrefs,
     tint: Color,
-    onPrefsChange: (ReadingPrefs) -> Unit
+    onPrefsChange: (ReadingPrefs) -> Unit,
+    perBookOverride: Boolean = false,
+    onResetPerBook: () -> Unit = {}
 ) {
     var familyMenuOpen by remember { mutableStateOf(false) }
 
@@ -280,6 +285,21 @@ private fun TypographyRow(
             },
             tint = tint
         )
+        if (perBookOverride) {
+            // Batch 2 per-book typography: indicate the doc has its own prefs
+            // and offer one-tap reset to the library-wide defaults.
+            Text(
+                text = "reset",
+                style = MaterialTheme.typography.labelMedium,
+                color = tint,
+                maxLines = 1,
+                modifier = Modifier
+                    .padding(vertical = 8.dp)
+                    .background(tint.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .clickable { onResetPerBook() }
+            )
+        }
     }
 }
 
