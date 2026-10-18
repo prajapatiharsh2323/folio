@@ -599,7 +599,15 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 }
             },
             onCreateCollection = { name ->
-                withContext(Dispatchers.IO) { appLibrary(context).createCollection(name) }
+                withContext(Dispatchers.IO) {
+                    try {
+                        appLibrary(context).createCollection(name)
+                    } catch (t: Throwable) {
+                        // Surface it (the dialog swallows the rethrow as before).
+                        snackbar.showSnackbar(t.message ?: "Create collection failed")
+                        throw t
+                    }
+                }
             },
             onDismiss = { detailsTarget = null }
         )
@@ -939,7 +947,7 @@ private fun DetailsDialog(
                                     selected = selected + created.id
                                     newCollName = ""
                                 } catch (_: Throwable) {
-                                    // surface nothing here: the save below will fail loudly
+                                    // Surfaced upstream via the snackbar in onCreateCollection.
                                 }
                             }
                         }
@@ -1410,7 +1418,7 @@ fun LibraryCard(
                 item.percent?.let { p ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         LinearProgressIndicator(
-                            progress = { p.toFloat() },
+                            progress = { (p / 100.0).toFloat() },
                             modifier = Modifier.weight(1f).height(4.dp)
                         )
                         Spacer(Modifier.width(8.dp))

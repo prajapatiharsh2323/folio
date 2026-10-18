@@ -31,7 +31,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,10 +60,12 @@ import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.AnnotationKind
 import dev.folio.mobile.core.model.HighlightColor
 import dev.folio.mobile.core.model.Progress
+import dev.folio.mobile.core.model.ProgressPace
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.reader.PageTurnKeys
 import dev.folio.mobile.core.reader.ProgressBridge
 import dev.folio.mobile.core.reader.ReaderPrefsMapper
+import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.PrefsStore
 import kotlinx.coroutines.CoroutineScope
@@ -147,6 +152,19 @@ class ReaderActivity : FragmentActivity() {
     private val pillarTitle = mutableStateOf("")
     private val pillarPercent = mutableStateOf(0.0)
 
+    /** Time-to-finish estimate shown in the pillar (null = not enough data). */
+    private val timeLeftText = mutableStateOf<String?>(null)
+
+    /** Accumulated reading pace (PWA stats.ts port) — persisted as Progress.pace. */
+    private var paceState: ProgressPace? = null
+
+    /** Last relocation for pace deltas (percent on the 0..100 scale + elapsed ms). */
+    private var prevRelocatePercent: Double? = null
+    private var prevRelocateElapsedMs: Long? = null
+
+    /** Quote-card attribution: the document's author from its meta.json. */
+    private var docAuthor: String? = null
+
     /** Annotation context menu target (R3) — null when closed. */
     private val annotationMenu = mutableStateOf<Annotation?>(null)
 
@@ -218,7 +236,9 @@ class ReaderActivity : FragmentActivity() {
                     onScrub = { p -> pillarPercent.value = p },
                     onScrubFinished = { p -> scrubTo(p) },
                     pillarTitle = pillarTitle.value,
-                    pillarPercent = pillarPercent.value
+                    pillarPercent = pillarPercent.value,
+                    timeLeft = timeLeftText.value,
+                    systemDark = isSystemDark()
                 )
                 if (tocVisible.value) {
                     TocSheet(
@@ -231,25 +251,7 @@ class ReaderActivity : FragmentActivity() {
                     SelectionToolbarSheet(
                         annotation = selectionAnnotation.value,
                         onColor = { color -> saveSelectionHighlight(color) },
-                        onNote = { _ ->
-                            val a = selectionAnnotation.value
-                            if (a != null) {
-                                val updated = a.copy(color = HighlightColor.Yellow)
-                                loadScope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
-                                    }
-                                    withContext(Dispatchers.Main) {
-                                        highlightManager?.add(updated, selectionLocator.value!!)
-                                        navigatorRef?.clearSelection()
-                                        selectionToolbarVisible.value = false
-                                        selectionAnnotation.value = null
-                                        selectionLocator.value = null
-                                        annotationMenu.value = updated
-                                    }
-                                }
-                            }
-                        },
+                        onNote = { note -> saveSelectionHighlight(HighlightColor.Yellow, note, openMenuAfter = true) },
                         onCopy = { copySelectionToClipboard() },
                         onDismiss = {
                             navigatorRef?.clearSelection()
@@ -311,10 +313,10 @@ class ReaderActivity : FragmentActivity() {
         prefsState.value = updated
         applySystemBarAppearance(updated)
         findViewById<android.view.View>(R.id.navigator_container)
-            ?.setBackgroundColor(ReaderPrefsMapper.mapPrefs(updated).backgroundArgb)
+            ?.setBackgroundColor(ReaderPrefsMapper.mapPrefs(updated, isSystemDark()).backgroundArgb)
         navigatorRef?.submitPreferences(
             ReaderPrefsAndroid.toEpubInitialPreferences(
-                ReaderPrefsMapper.mapPrefs(updated)
+                ReaderPrefsMapper.mapPrefs(updated, isSystemDark())
             )
         )
         loadScope.launch(Dispatchers.IO) {
@@ -332,6 +334,7 @@ class ReaderActivity : FragmentActivity() {
             withContext(Dispatchers.Main) { finish() }
             return
         }
+        docAuthor = meta.author
         val file = store.resolve("library/docs/${meta.slug}/$readingRel")
 
         // Splash cover: display-only, decoded before the navigator mounts so the
@@ -356,6 +359,8 @@ class ReaderActivity : FragmentActivity() {
         // percent fallback when the location has no CFI (TXT-era/href fallback).
         // An explicit search-hit jump (EXTRA_TARGET_ORDER) beats any restore.
         val savedProgress: Progress? = library.getProgress(docId)
+        // Restore accumulated pace from previous sessions (optional field).
+        paceState = savedProgress?.pace
         var initialLocator: Locator? = null
         val targetOrder = intent?.getIntExtra(EXTRA_TARGET_ORDER, 0) ?: 0
         val targetSpine = targetOrder - 1
@@ -373,8 +378,9 @@ class ReaderActivity : FragmentActivity() {
                 }
             }
             if (initialLocator == null && savedProgress != null) {
+                // Progress.percent is the PWA 0..100 scale; Readium wants 0..1.
                 publication.findService(LocatorService::class)
-                    ?.locateProgression(savedProgress.percent)
+                    ?.locateProgression(savedProgress.percent / 100.0)
                     ?.let { initialLocator = it }
             }
             if (initialLocator == null) {
@@ -410,7 +416,7 @@ class ReaderActivity : FragmentActivity() {
 
     private fun attachNavigator(publication: Publication, docId: String, initialLocator: Locator) {
         val currentPrefs = prefsState.value
-        val mappedPrefs = ReaderPrefsMapper.mapPrefs(currentPrefs)
+        val mappedPrefs = ReaderPrefsMapper.mapPrefs(currentPrefs, isSystemDark())
         applySystemBarAppearance(currentPrefs)
         findViewById<android.view.View>(R.id.navigator_container)
             ?.setBackgroundColor(mappedPrefs.backgroundArgb)
@@ -485,7 +491,7 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
-    /** Placeholder until the quote-card renderer lands (same session). */
+    /** Placeholder kept for API stability — the share path is implemented below. */
     private fun onAnnotationShare() {
         val annotation = annotationMenu.value ?: return
         shareQuoteCard(annotation)
@@ -511,8 +517,7 @@ class ReaderActivity : FragmentActivity() {
     private fun applySystemBarAppearance(prefs: ReadingPrefs) {
         val dark = when (prefs.theme) {
             "dark", "true-black" -> true
-            "system" -> (resources.configuration.uiMode and
-                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            "system" -> isSystemDark()
             else -> false
         }
         WindowCompat.getInsetsController(window, window.decorView).apply {
@@ -521,13 +526,18 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
+    /** "system" theme → current OS dark-mode setting. */
+    private fun isSystemDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
     private fun shareQuoteCard(annotation: Annotation) {
         loadScope.launch {
             val uri = QuoteCard.share(
                 context = this@ReaderActivity,
                 annotation = annotation,
                 bookTitle = pillarTitle.value.ifBlank { null },
-                author = null
+                author = docAuthor
             ) ?: return@launch
             withContext(Dispatchers.Main) {
                 val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
@@ -581,10 +591,15 @@ class ReaderActivity : FragmentActivity() {
     }
 
     /** Saves the captured selection as a highlight with the chosen color and optional note. */
-    private fun saveSelectionHighlight(color: HighlightColor, note: String? = null) {
+    private fun saveSelectionHighlight(
+        color: HighlightColor,
+        note: String? = null,
+        openMenuAfter: Boolean = false
+    ) {
         val annotation = selectionAnnotation.value ?: return
         val locator = selectionLocator.value ?: return
         val manager = highlightManager ?: return
+        if (manager.annotationById(annotation.id) != null) return
         val updated = annotation.copy(color = color, note = note?.ifBlank { null })
         loadScope.launch {
             withContext(Dispatchers.IO) {
@@ -596,6 +611,7 @@ class ReaderActivity : FragmentActivity() {
                 selectionToolbarVisible.value = false
                 selectionAnnotation.value = null
                 selectionLocator.value = null
+                if (openMenuAfter) annotationMenu.value = updated
             }
         }
     }
@@ -713,18 +729,42 @@ class ReaderActivity : FragmentActivity() {
                     // drop the splash (idempotent for later emissions).
                     if (!readerReady.value) readerReady.value = true
 
-                    // Pillar: chapter title + total percent (cheap, no IO)
+                    // Pillar: chapter title + total percent (cheap, no IO).
+                    // The pillar slider works in Readium 0..1 progression.
                     pillarTitle.value = locator.title.orEmpty()
-                    pillarPercent.value = ProgressBridge.totalPercent(locator)
+                    val total = locator.locations.totalProgression ?: 0.0
+                    pillarPercent.value = total
 
-                    val p = ProgressBridge.buildProgress(
+                    // Pace accumulation (time-to-finish): wall-clock + forward
+                    // percent deltas only — ReadingPaceStats credits nothing for
+                    // jumps/back-scrolls so the estimate stays conservative
+                    // (imports packages/core reading/stats.ts semantics).
+                    val p0 = ProgressBridge.buildProgress(
                         docId, locator, java.time.Instant.now().toString()
                     )
+                    val nowElapsed = android.os.SystemClock.elapsedRealtime()
+                    val prevPct = prevRelocatePercent
+                    val prevMs = prevRelocateElapsedMs
+                    if (prevPct != null && prevMs != null) {
+                        paceState = ReadingPaceStats.updatePace(
+                            paceState, nowElapsed - prevMs, p0.percent - prevPct
+                        )
+                    }
+                    prevRelocatePercent = p0.percent
+                    prevRelocateElapsedMs = nowElapsed
+                    timeLeftText.value = ReadingPaceStats.formatTimeLeft(
+                        ReadingPaceStats.estimateTimeLeftSeconds(
+                            paceState, 100.0 - p0.percent
+                        )
+                    )
+
+                    val p = p0.copy(pace = paceState)
                     // Collapse trailing scroll noise but keep meaningful movement
+                    // (gate on the 0..100 percent scale = 0.4%).
                     val last = lastSavedProgress
                     val changed = last == null ||
                         last.location != p.location ||
-                        abs(last.percent - p.percent) >= 0.004
+                        abs(last.percent - p.percent) >= 0.4
                     if (changed) {
                         lastSavedProgress = p
                         // Debounce disk writes: coalesce rapid locator emissions.
@@ -796,6 +836,9 @@ private fun SelectionToolbarSheet(
     onCopy: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var noteEditing by remember { mutableStateOf(false) }
+    var noteText by remember { mutableStateOf("") }
+
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
         androidx.compose.foundation.layout.Column(
             modifier = androidx.compose.ui.Modifier.padding(16.dp)
@@ -825,11 +868,35 @@ private fun SelectionToolbarSheet(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = {
-                    // Simple note capture: prompt via a toast; full dialog is in AnnotationMenu.
-                    onNote("")
-                }) { Text("Add note") }
+                TextButton(onClick = { noteEditing = true }) { Text("Add note") }
                 TextButton(onClick = onCopy) { Text("Copy") }
+            }
+            if (noteEditing) {
+                androidx.compose.foundation.layout.Spacer(
+                    androidx.compose.ui.Modifier.height(8.dp)
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    placeholder = { Text("Note\u2026") },
+                    singleLine = false,
+                    minLines = 2,
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                )
+                androidx.compose.foundation.layout.Row(
+                    modifier = androidx.compose.ui.Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { noteEditing = false }) { Text("Cancel") }
+                    TextButton(
+                        onClick = {
+                            val note = noteText.trim()
+                            if (note.isNotEmpty()) onNote(note)
+                        }
+                    ) { Text("Save") }
+                }
             }
         }
     }

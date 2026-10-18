@@ -43,8 +43,9 @@ class ProgressBridgeTest {
     }
 
     @Test
-    fun `percent is total publication progression defaulting to zero`() {
-        assertEquals(0.4291, ProgressBridge.locationPercent(0.4291), 0.00001)
+    fun `percent is the pwa 0 to 100 scale defaulting to zero`() {
+        // Math.round(p*1000)/10 — same rounding as apps/web epub-engine.ts
+        assertEquals(42.9, ProgressBridge.locationPercent(0.4291), 0.00001)
         assertEquals(0.0, ProgressBridge.locationPercent(null), 0.00001)
     }
 
@@ -59,7 +60,7 @@ class ProgressBridgeTest {
         )
         assertEquals("doc-1", p.docId)
         assertEquals(cfi, p.location)
-        assertEquals(0.4291, p.percent, 0.00001)
+        assertEquals(42.9, p.percent, 0.00001)
         assertEquals("2026-10-17T00:00:00Z", p.updatedAt)
     }
 }

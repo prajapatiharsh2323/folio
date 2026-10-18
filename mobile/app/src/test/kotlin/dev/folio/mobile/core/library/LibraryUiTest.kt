@@ -51,13 +51,13 @@ class LibraryUiTest {
 
     @Test
     fun `progress percent shapes the label`() {
-        assertEquals("42%", LibraryUi.item(meta("d1", "B", "A"), progress(0.421)).percentLabel)
+        assertEquals("42%", LibraryUi.item(meta("d1", "B", "A"), progress(42.1)).percentLabel)
         assertEquals("0%", LibraryUi.item(meta("d1", "B", "A"), progress(0.0)).percentLabel)
     }
 
     @Test
     fun `out of range percent clamps`() {
-        assertEquals("100%", LibraryUi.item(meta("d1", "B", "A"), progress(1.3)).percentLabel)
+        assertEquals("100%", LibraryUi.item(meta("d1", "B", "A"), progress(130.0)).percentLabel)
     }
 
     @Test
@@ -214,9 +214,9 @@ class LibraryUiTest {
     @Test
     fun `sort puts in-progress first, untouched, finished last`() {
         val unread = LibraryUi.item(meta("u", "B unread", null), null).copy(id = "u")
-        val reading = LibraryUi.item(meta("r", "B reading", null), progress(0.5)).copy(id = "r")
+        val reading = LibraryUi.item(meta("r", "B reading", null), progress(50.0)).copy(id = "r")
         val fresh = LibraryUi.item(meta("f", "B fresh", null), progress(0.0)).copy(id = "f")
-        val done = LibraryUi.item(meta("d", "B done", null), progress(1.0)).copy(id = "d")
+        val done = LibraryUi.item(meta("d", "B done", null), progress(100.0)).copy(id = "d")
 
         val sorted = LibraryUi.sort(listOf(done, unread, fresh, reading))
         assertEquals("f", sorted[0].id)

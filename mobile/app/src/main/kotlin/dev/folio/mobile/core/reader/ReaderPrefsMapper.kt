@@ -79,8 +79,8 @@ object ReaderPrefsMapper {
         val fontFamily: String?
     )
 
-    fun mapPrefs(prefs: ReadingPrefs): MappedReaderPrefs {
-        val key = resolveThemeKey(prefs.theme)
+    fun mapPrefs(prefs: ReadingPrefs, systemDark: Boolean = false): MappedReaderPrefs {
+        val key = resolveThemeKey(prefs.theme, systemDark)
         val tokens = THEME_COLORS[key] ?: THEME_COLORS.getValue("light")
         return MappedReaderPrefs(
             fontScale = prefs.fontSize / 16.0,
@@ -105,10 +105,10 @@ object ReaderPrefsMapper {
         )
     }
 
-    /** "system" resolves to light on native v1 (PWA uses a media query; revisit). */
-    fun resolveThemeKey(raw: String): String = when (raw) {
+    /** "system" resolves to the OS dark-mode setting (PWA uses a media query). */
+    fun resolveThemeKey(raw: String, systemDark: Boolean = false): String = when (raw) {
         "warm", "dark", "true-black" -> raw
-        "system" -> "light"
+        "system" -> if (systemDark) "dark" else "light"
         else -> "light"
     }
 

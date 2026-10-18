@@ -19,7 +19,7 @@ object LibraryUi {
         /** author, or a kind badge when the author is missing. */
         val subtitle: String,
         val kindLabel: String,
-        /** total publication progress 0..1, or null when never opened. */
+        /** total publication progress 0..100 (PWA percent scale), or null when never opened. */
         val percent: Double?,
         /** "42%" for the trailing progress label. Empty when never opened. */
         val percentLabel: String,
@@ -43,8 +43,8 @@ object LibraryUi {
             title = meta.title.ifBlank { meta.slug },
             subtitle = meta.author?.takeIf { it.isNotBlank() } ?: kindLabel,
             kindLabel = kindLabel,
-            percent = progress?.percent?.coerceIn(0.0, 1.0),
-            percentLabel = progress?.let { "${(it.percent.coerceIn(0.0, 1.0) * 100).toInt()}%" } ?: "",
+            percent = progress?.percent?.coerceIn(0.0, 100.0),
+            percentLabel = progress?.let { "${it.percent.coerceIn(0.0, 100.0).toInt()}%" } ?: "",
             colorSeed = titleSeed(meta.title.ifBlank { meta.slug }),
             cover = meta.files.cover?.takeIf { it.isNotBlank() }
                 ?.let { "library/docs/${meta.slug}/$it" },
@@ -70,10 +70,10 @@ object LibraryUi {
         )
     )
 
-    /** 0 in-progress, 1 untouched (never opened), 2 finished (percent == 1). */
+    /** 0 in-progress, 1 untouched (never opened), 2 finished (percent == 100). */
     private fun bucket(item: LibraryItem): Int = when {
         item.percent == null -> 1
-        item.percent >= 1.0 - 1e-9 -> 2
+        item.percent >= 100.0 - 1e-9 -> 2
         else -> 0
     }
 

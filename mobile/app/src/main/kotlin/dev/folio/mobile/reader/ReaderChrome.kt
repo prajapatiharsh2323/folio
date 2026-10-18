@@ -76,10 +76,13 @@ fun ReaderChrome(
     onToc: () -> Unit = {},
     onScrub: (Double) -> Unit = {},
     onScrubFinished: (Double) -> Unit = {},
+    timeLeft: String? = null,
+    /** "system" theme → the OS dark-mode state (canvas uses the same rule). */
+    systemDark: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val surface = chromeSurface(prefs.theme)
-    val text = chromeText(prefs.theme)
+    val surface = chromeSurface(resolvedThemeKey(prefs.theme, systemDark))
+    val text = chromeText(resolvedThemeKey(prefs.theme, systemDark))
 
     Column(modifier = modifier.fillMaxWidth()) {
         if (visible) {
@@ -107,6 +110,7 @@ fun ReaderChrome(
             text,
             onScrub,
             onScrubFinished,
+            timeLeft,
             modifier = Modifier.windowInsetsPadding(
                 WindowInsets.navigationBars
                     .union(WindowInsets.displayCutout)
@@ -305,6 +309,7 @@ private fun Pillar(
     text: Color,
     onScrub: (Double) -> Unit,
     onScrubFinished: (Double) -> Unit,
+    timeLeft: String? = null,
     modifier: Modifier = Modifier
 ) {
     if (title.isBlank() && percent <= 0.0) return
@@ -320,10 +325,14 @@ private fun Pillar(
                 .padding(horizontal = 12.dp, vertical = 4.dp)
         ) {
             Text(
-                text = if (title.isBlank()) {
-                    "${((scrub ?: percent) * 100).toInt()}%"
-                } else {
-                    "${title.take(24)} — ${((scrub ?: percent) * 100).toInt()}%"
+                text = buildString {
+                    append(if (title.isBlank()) "" else "${title.take(24)} — ")
+                    append((((scrub ?: percent).coerceIn(0.0, 1.0)) * 100).toInt())
+                    append("%")
+                    timeLeft?.takeIf { it.isNotBlank() }?.let {
+                        append(" · ")
+                        append(it)
+                    }
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = text.copy(alpha = 0.85f),
@@ -372,6 +381,10 @@ private fun chromeSurface(theme: String): Color = when (theme) {
     "true-black" -> Color(0xFF0B0B0E)
     else -> Color(0xFFFFFFFF)
 }
+
+/** "system" resolves to dark in dark OS mode (PWA media-query parity). */
+fun resolvedThemeKey(theme: String, systemDark: Boolean): String =
+    if (theme == "system" && systemDark) "dark" else theme
 
 /**
  * R2b brightness scrim: darkens the page content when prefs.brightness < 100.

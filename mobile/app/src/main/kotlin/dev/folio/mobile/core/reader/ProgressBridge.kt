@@ -49,8 +49,13 @@ object ProgressBridge {
     fun locationString(fragments: List<String>, href: String): String =
         extractedCfi(fragments) ?: href
 
-    /** Total progression across the whole publication (0..1). */
-    fun locationPercent(totalProgression: Double?): Double = totalProgression ?: 0.0
+    /**
+     * Total publication progression on the schema-1 percent scale (0..100,
+     * one decimal — Math.round(p*1000)/10, identical to the PWA's
+     * epub-engine.ts relocation value). NULL stays 0 (never opened).
+     */
+    fun locationPercent(totalProgression: Double?): Double =
+        totalProgression?.let { Math.round(it * 1000.0) / 10.0 } ?: 0.0
 
     fun buildProgress(
         docId: String,

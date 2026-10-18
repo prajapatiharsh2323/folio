@@ -45,12 +45,24 @@ class ReaderPrefsMapperTest {
     }
 
     @Test
-    fun `system falls back to light tokens on native v1`() {
-        val m = ReaderPrefsMapper.mapPrefs(defaults.copy(theme = "system"))
-        assertEquals("light", m.theme)
-        assertEquals(0xFFFAFAF7.toInt(), m.backgroundArgb)
+    fun `system follows the os dark mode setting`() {
+        // system + dark OS → dark tokens (PWA media-query parity)
+        val dark = ReaderPrefsMapper.mapPrefs(defaults.copy(theme = "system"), systemDark = true)
+        assertEquals("dark", dark.theme)
+        assertEquals(0xFF121214.toInt(), dark.backgroundArgb)
+        assertEquals(0xFFE6E3DC.toInt(), dark.textArgb)
+
+        // system + light OS → light tokens (backward-compatible default)
+        val light = ReaderPrefsMapper.mapPrefs(defaults.copy(theme = "system"), systemDark = false)
+        assertEquals("light", light.theme)
+        assertEquals(0xFFFAFAF7.toInt(), light.backgroundArgb)
+
+        // the theme key itself: dark prop only affects "system"
+        assertEquals("dark", ReaderPrefsMapper.resolveThemeKey("system", systemDark = true))
+        assertEquals("light", ReaderPrefsMapper.resolveThemeKey("system", systemDark = false))
+        assertEquals("warm", ReaderPrefsMapper.resolveThemeKey("warm", systemDark = true))
         // arbitrary keys are guarded, too
-        assertEquals("light", ReaderPrefsMapper.resolveThemeKey("banana"))
+        assertEquals("light", ReaderPrefsMapper.resolveThemeKey("banana", systemDark = true))
     }
 
     @Test
