@@ -7,25 +7,22 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 (TOC + bookmarks + keep-awake + external links added) + R2 DONE + R2b PARTIAL + R3 DONE (bookmarks + selection toolbar added) + Settings screen + Notes screen + basic backup/restore + sort control + duplicate prompt + pace field added — 164/164 tests green (new code compiles; no new tests yet). TTS + PDF + audio dropped from v1 scope. Device smoke still blocked (no AVDs/system images on VM).
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes (selection note editor, quote-card author, notes edit/delete, system theme, collection-failure snackbar) + pace/time-left (PWA parity) + PERCENT-SCALE compat fix (Progress.percent is 0–100 like the PWA) + Batch 3 backup core (verified zip + merge/replace restore, wired into Settings) — **182/182 tests green, assembleDebug green, ON-DEVICE SMOKE PASSED** (emulator working — see Environment facts). TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-1. **Device smoke test (recommended if the ~1 GB download is acceptable)** —
-   still BLOCKED: no AVDs/system images on this VM. Unblock =
-   `sdkmanager "system-images;android-34;google_apis;x86_64"` + `avdmanager
-   create avd`; budget it as its own step. Then: `adb install`, run through:
-   SAF import (or sample button), open doc, prefs, progress, highlight
-   reopen-rendering + context menu + quote-card share (R3), volume-key turning
-   + seek + brightness (R2b), delete + duplicate skip (L1), search panel → hit
-   tap → reader opens at chapter (M4), launcher icon look, cover thumbnail +
-   reader splash on a cover-bearing EPUB, damaged banner + interrupted-import
-   banner (corrupt a meta.json / drop a stray folder via adb), tags/collections
-   (details dialog, chips filtering, rename/delete from the overflow menu).
-2. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+1. **Batch 2 reader polish (recommended)** — page-turn animations,
+   paragraph-snap scrolling, tap-zone config (left/right/center per R2 spec),
+   per-book typography overrides (ReaderPrefsMapper already portable; store
+   overrides on DocMeta or sidecar).
+2. **Device-only follow-ups from smoke (small, high value)** — see Session M-18
+   log: suppress the WebView default text-selection action mode so long-press
+   goes straight to the app's selection sheet (PWA parity), and re-test
+   highlight creation once on a less memory-starved VM (renderer died mid-test).
+3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session).
-3. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
+4. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
 
 **Carried constraints:** TTS is DROPPED (post-v1 backlog, not debt). PWA schema-1
 contracts (manifest, user/*.json, backup ZIP, annotation anchors, Drive sync) must
@@ -164,6 +161,22 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 - Windows host; repo `D:\folio`; branch `main`; remote origin = prajapatiharsh2323/folio.
 - JDK 17 (Temurin 17.0.20.1) on PATH; `ANDROID_HOME=C:\Android\android-sdk`
   (platforms 34–37.2, build-tools 34–37, emulator, NDK, licenses OK).
+- **Emulator (added Oct 18 2026)**: writable SDK root `D:\Android\avd-sdk` (C: SDK is
+  read-only for this process) holds `platform-tools\adb.exe`, `emulator\emulator.exe`,
+  `system-images;android-34;google_apis;x86_64`. AVD `folio_test` handcrafted INIs at
+  `C:\Users\RDP\.android\avd\folio_test.avd\config.ini` + `folio_test.ini` (modern
+  `avdmanager` ignores env/`--sdk_root`; INI needs `abi.type=x86_64`, `hw.cpu.arch=x86_64`,
+  `image.sysdir.1=system-images/android-34/google_apis/x86_64/`). Launch (background;
+  BOTH env vars mandatory): `$env:ANDROID_HOME="D:\Android\avd-sdk"; $env:ANDROID_SDK_ROOT="D:\Android\avd-sdk"; & "D:\Android\avd-sdk\emulator\emulator.exe" -avd folio_test -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect`.
+  Install: `adb install -r -g app-debug.apk` (first plain install hit
+  `INSTALL_FAILED_VERIFICATION_FAILURE: Integrity verification timed out`; retry with `-r -g` works).
+- Smoke-driving recipe: `uiautomator dump` is broken on this emulator ("null root
+  node") — use `adb shell screencap` + `adb pull` + read tool; screen 1080×2340;
+  known taps: mid-screen (540,1170) toggles reader chrome, doc-card overflow
+  (980,355), overflow Delete item (~896,759), delete-confirm Delete (~816,1349),
+  debug import button (542,1341). Emulator is SLOW (~25–55 s to open reader);
+  screenshots of large PNGs can time out — pull, don't stream.
+- `sdkmanager` needs attached-equals syntax `--sdk_root="D:\Android\avd-sdk"` (space form errors).
 - `gradle` 9.8.0 on PATH (only needed to regenerate wrapper; builds use `.\gradlew`).
 - Git identity NOT persistent on fresh VMs: run
   `git config user.name "Harsh Prajapati"; git config user.email "harshprajapaticoding@gmail.com"`.
@@ -197,6 +210,59 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-18 (Oct 18, 2026)** — Batch 1 fixes + pace + percent-scale +
+  **emulator unblocked, smoke passed** + Batch 3 backup core (commits 3d9fe33,
+  8affd7c, both pushed). **182/182 tests green, assembleDebug green.**
+  - **Batch 1 fixes** (3d9fe33): selection toolbar real note editor (saves the
+    typed note, opens annotation menu after); quote cards carry doc author;
+    Notes screen per-row edit/delete with confirm dialogs; `system` theme
+    follows OS dark mode (mapper 2-arg `resolveThemeKey(raw, systemDark)`);
+    snackbar on create-collection failure.
+  - **Percent-scale contract fix**: `Progress.percent` is 0–100 like the PWA
+    (`epub-engine.ts` L582: `round(p*1000)/10`). Mobile keeps Readium 0..1
+    internally; `ProgressBridge.locationPercent` writes 0–100, restore reads
+    `percent/100`, noise gate 0.4, `LibraryUi` coerces + labels `${toInt()}%`,
+    finished at `>=100-1e-9`, MainActivity bar `/100`. **Do NOT revert to 0..1**.
+  - **Pace/time-left** (PWA `reading/stats.ts` port): `ReadingPaceStats.kt`
+    (`updatePace`, `estimateTimeLeftSeconds`, `formatTimeLeft`, 5% jump
+    threshold); accumulates in ReaderActivity locator collection
+    (`SystemClock.elapsedRealtime` deltas), persists as `Progress.pace`; pillar
+    shows "N min left". Golden tests ported.
+  - **Smoke setup**: writable SDK root `D:\Android\avd-sdk` + handcrafted AVD
+    `folio_test` (details in Environment facts). `uiautomator` broken →
+    screencap + `input tap` driving (recipe in Environment facts).
+  - **Smoke results (PASS unless noted)**: debug import → card renders with
+    live 0% progress bar (validates new percent scale); reader renders EPUB
+    (chrome, typography row, serif content, pillar + scrubber); mid-screen
+    chrome toggle; volume-down page turn; **crash recovery** (WebView
+    `SandboxedProcessService` died twice under VM memory pressure —
+    environmental, app fell back to MainActivity with data intact); delete +
+    confirm → empty library; **duplicate skip** (re-import identical sample →
+    still 1 card, progress cleaned with doc). Not driven on device (slow VM +
+    renderer deaths): highlight reopen/quote share, search→tap, recovery
+    banners, tags/collections — all covered by JVM tests.
+  - **Device-only follow-ups**: (1) long-press shows the system WebView action
+    mode (Copy/Share/Read aloud); the app's SelectionToolbarSheet only opens
+    via the chrome brush button — consider suppressing the default action mode
+    for PWA parity. (2) Emulator is memory-starved: WebView renderer deaths
+    are environmental, not app bugs.
+  - **Batch 3 backup core** (8affd7c): `BackupTypes/BackupJson/BackupZip/
+    BackupRestore` port of `packages/core/src/backup/*` — verified schema-1
+    zip (backup.json first, manifest sha256 guard, unsafe-path/20k-entry/1GB
+    limits, STORED for epub/pdf/images, deflate otherwise) + §8
+    merge/replace restore (merge never deletes, newer-wins
+    annotations/progress by `updatedAt`, collections union docIds, settings
+    kept in merge, manifest written LAST). SettingsActivity now streams export
+    via `exportBackupZip` + `generateBackupFilename`, and restore verifies
+    then asks merge vs replace (no more unzip-overwrite). 8 new tests in
+    `BackupRestoreTest` (roundtrip, checksum mismatch, unsafe path, merge,
+    duplicate-hash skip, newer-wins, union, replace).
+  - **Gotcha**: `BackupZip`/`BackupRestore` are FILE names — import their
+    top-level functions (`exportBackupZip`), not `BackupZip.something`.
+    `exportBackupZip` is `suspend` (streaming).
+  - **Not done**: Batch 2 polish (page-turn animation, paragraph-snap, tap
+    zones, per-book typography), WebView action-mode suppression, R4, fonts.
 
 - **Session M-17 (Oct 17, 2026)** — L1 follow-up slice: **collections
   management — rename/delete** (commit f8b80a0, pushed). Full summary in
