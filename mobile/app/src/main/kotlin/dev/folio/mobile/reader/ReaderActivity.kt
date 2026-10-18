@@ -431,7 +431,18 @@ class ReaderActivity : FragmentActivity() {
             initialPreferences = ReaderPrefsAndroid.toEpubInitialPreferences(mappedPrefs),
             listener = readerListener(),
             configuration = EpubNavigatorFragment.Configuration(
-                shouldApplyInsetsPadding = false
+                shouldApplyInsetsPadding = false,
+                // PWA parity: long-press selects text but must NOT pop the system
+                // Copy/Share/filed action mode — the app owns the selection UX
+                // (chrome brush → selection sheet). An empty callback that refuses
+                // to start the mode suppresses the floating menu; selection state,
+                // `currentSelection()` and highlight creation keep working.
+                selectionActionModeCallback = object : android.view.ActionMode.Callback {
+                    override fun onCreateActionMode(mode: android.view.ActionMode, menu: android.view.Menu): Boolean = false
+                    override fun onPrepareActionMode(mode: android.view.ActionMode, menu: android.view.Menu): Boolean = false
+                    override fun onActionItemClicked(mode: android.view.ActionMode, item: android.view.MenuItem): Boolean = false
+                    override fun onDestroyActionMode(mode: android.view.ActionMode) {}
+                }
             )
         )
         supportFragmentManager.fragmentFactory = factoryFragment
