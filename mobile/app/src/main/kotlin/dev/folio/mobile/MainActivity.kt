@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,16 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,7 +45,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -82,6 +76,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.importer.ImportDispatch
@@ -96,6 +91,16 @@ import dev.folio.mobile.core.search.SearchUi
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.BuildConfig
 import dev.folio.mobile.reader.ReaderActivity
+import dev.folio.mobile.ui.components.FolioBookRow
+import dev.folio.mobile.ui.components.FolioDestructiveTextButton
+import dev.folio.mobile.ui.components.FolioEmptyState
+import dev.folio.mobile.ui.components.FolioIconButton
+import dev.folio.mobile.ui.components.FolioSearchField
+import dev.folio.mobile.ui.components.FolioStatusBanner
+import dev.folio.mobile.ui.components.FolioFilledButton
+import dev.folio.mobile.ui.icons.FolioIcons
+import dev.folio.mobile.ui.theme.FolioDimensions
+import dev.folio.mobile.ui.theme.FolioSpacing
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -274,20 +279,60 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Folio") },
+                title = {
+                    Column {
+                        Text(
+                            "Library",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        val count = entries.size
+                        Text(
+                            when {
+                                loading -> "Loading…"
+                                count == 1 -> "1 book or article"
+                                count > 1 -> "$count books and articles"
+                                else -> "Your reading shelf"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
                 actions = {
+                    IconButton(
+                        enabled = !importing && !loading,
+                        onClick = { searchActive = true }
+                    ) {
+                        Icon(FolioIcons.Search, contentDescription = "Search")
+                    }
                     Box {
                         var sortMenuOpen by remember { mutableStateOf(false) }
                         IconButton(onClick = { sortMenuOpen = true }) {
-                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort")
+                            Icon(FolioIcons.Sort, contentDescription = "Sort")
                         }
                         DropdownMenu(
                             expanded = sortMenuOpen,
                             onDismissRequest = { sortMenuOpen = false }
                         ) {
                             listOf("recent", "title", "author", "progress").forEach { key ->
+                                val selected = sortBy == key
                                 DropdownMenuItem(
-                                    text = { Text(if (sortBy == key) "• $key" else key) },
+                                    text = {
+                                        Text(
+                                            when (key) {
+                                                "recent" -> "Recently read"
+                                                "title" -> "Title"
+                                                "author" -> "Author"
+                                                else -> "Progress"
+                                            }
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        if (selected) {
+                                            Icon(FolioIcons.Check, contentDescription = null)
+                                        }
+                                    },
                                     onClick = {
                                         sortMenuOpen = false
                                         sortBy = key
@@ -298,21 +343,15 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         }
                     }
                     IconButton(
-                        enabled = !importing && !loading,
-                        onClick = { searchActive = true }
-                    ) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                    IconButton(
                         enabled = !importing,
                         onClick = { importLauncher.launch(MainActivity.IMPORT_MIMES) }
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = "Import file")
+                        Icon(FolioIcons.Plus, contentDescription = "Import file")
                     }
                     Box {
                         var topMenuOpen by remember { mutableStateOf(false) }
                         IconButton(onClick = { topMenuOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "More actions")
+                            Icon(FolioIcons.MoreVertical, contentDescription = "More actions")
                         }
                         DropdownMenu(
                             expanded = topMenuOpen,
@@ -320,23 +359,26 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         ) {
                             DropdownMenuItem(
                                 text = { Text("Manage collections") },
+                                leadingIcon = { Icon(FolioIcons.Filter, contentDescription = null) },
                                 onClick = {
                                     topMenuOpen = false
                                     manageCollectionsOpen = true
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Settings") },
-                                onClick = {
-                                    topMenuOpen = false
-                                    context.startActivity(SettingsActivity.createIntent(context))
-                                }
-                            )
-                            DropdownMenuItem(
                                 text = { Text("Notes") },
+                                leadingIcon = { Icon(FolioIcons.NotebookPen, contentDescription = null) },
                                 onClick = {
                                     topMenuOpen = false
                                     context.startActivity(NotesActivity.createIntent(context))
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Settings") },
+                                leadingIcon = { Icon(FolioIcons.Settings, contentDescription = null) },
+                                onClick = {
+                                    topMenuOpen = false
+                                    context.startActivity(SettingsActivity.createIntent(context))
                                 }
                             )
                         }
@@ -360,10 +402,22 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 )
             } else {
                 damagedNotice?.let { notice ->
-                    RecoveryBanner(notice.bannerText, onReview = { damagedDialogOpen = true })
+                    FolioStatusBanner(
+                        icon = FolioIcons.AlertTriangle,
+                        message = notice.bannerText,
+                        actionLabel = "Review",
+                        onAction = { damagedDialogOpen = true },
+                        modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+                    )
                 }
                 orphanNotice?.let { notice ->
-                    RecoveryBanner(notice.bannerText, onReview = { orphanDialogOpen = true })
+                    FolioStatusBanner(
+                        icon = FolioIcons.HardDrive,
+                        message = notice.bannerText,
+                        actionLabel = "Review",
+                        onAction = { orphanDialogOpen = true },
+                        modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+                    )
                 }
                 if (filterOptions.isNotEmpty()) {
                     Row(
@@ -397,56 +451,62 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         CircularProgressIndicator()
                     }
                 } else if (entries.isEmpty()) {
-                    Box(
-                        Modifier.weight(1f).fillMaxWidth(),
-                        contentAlignment = Alignment.Center
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                if (importing) {
-                                    "Importing…"
-                                } else {
-                                    "Library is empty.\nAdd a book or article with the + button."
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(horizontal = 32.dp)
-                            )
-                            if (!importing && BuildConfig.DEBUG) {
-                                TextButton(
-                                    onClick = {
-                                        scope.launch {
-                                            importing = true
-                                            try {
-                                                runSample(context)
-                                                refresh()
-                                            } catch (t: Throwable) {
-                                                snackbar.showSnackbar(t.message ?: "Import failed")
-                                            } finally {
-                                                importing = false
-                                            }
+                        FolioEmptyState(
+                            icon = FolioIcons.Library,
+                            title = "Your reading life starts here",
+                            body = "Import an EPUB, HTML or TXT file — highlights, notes and progress stay on this device.",
+                            ctaLabel = if (importing) null else "Import a book",
+                            onCta = if (importing) null else {
+                                { importLauncher.launch(MainActivity.IMPORT_MIMES) }
+                            },
+                            note = if (importing) "Importing…" else null,
+                        )
+                        if (!importing && BuildConfig.DEBUG) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        importing = true
+                                        try {
+                                            runSample(context)
+                                            refresh()
+                                        } catch (t: Throwable) {
+                                            snackbar.showSnackbar(t.message ?: "Import failed")
+                                        } finally {
+                                            importing = false
                                         }
                                     }
-                                ) {
-                                    Text("Import sample text (debug)")
                                 }
+                            ) {
+                                Text("Import sample text (debug)")
                             }
                         }
                     }
                 } else if (visibleEntries.isEmpty()) {
-                    Box(
-                        Modifier.weight(1f).fillMaxWidth(),
-                        contentAlignment = Alignment.Center
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text(
-                            "No documents match this filter.",
-                            style = MaterialTheme.typography.bodyMedium
+                        FolioEmptyState(
+                            icon = FolioIcons.Filter,
+                            title = "Nothing matches this filter",
+                            body = "Try a different collection or tag.",
                         )
+                        TextButton(onClick = { activeFilter = null }) { Text("Clear filter") }
                     }
                 } else {
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        contentPadding = PaddingValues(top = FolioSpacing.x1, bottom = FolioSpacing.x6),
                     ) {
                         items(visibleEntries, key = { it.id }) { item ->
                             LibraryCard(
@@ -474,23 +534,26 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 Text("Highlights and reading progress for this document are removed too.")
             },
             confirmButton = {
-                TextButton(onClick = {
-                    deleteTarget = null
-                    scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) {
-                                appLibrary(context).deleteDocument(target.id)
+                FolioDestructiveTextButton(
+                    text = "Delete",
+                    onClick = {
+                        deleteTarget = null
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    appLibrary(context).deleteDocument(target.id)
+                                }
+                                refresh()
+                            } catch (t: Throwable) {
+                                snackbar.showSnackbar(t.message ?: "Delete failed")
                             }
-                            refresh()
-                        } catch (t: Throwable) {
-                            snackbar.showSnackbar(t.message ?: "Delete failed")
                         }
-                    }
-                }) { Text("Delete") }
+                    },
+                )
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            }
+            },
         )
     }
 
@@ -753,13 +816,13 @@ private fun ManageCollectionsDialog(
                             }
                             IconButton(onClick = { renameTarget = coll }) {
                                 Icon(
-                                    Icons.Filled.Edit,
+                                    FolioIcons.PenLine,
                                     contentDescription = "Rename ${coll.name}"
                                 )
                             }
                             IconButton(onClick = { deleteTarget = coll }) {
                                 Icon(
-                                    Icons.Filled.DeleteOutline,
+                                    FolioIcons.Trash,
                                     contentDescription = "Delete ${coll.name}"
                                 )
                             }
@@ -843,7 +906,13 @@ private fun filterLabel(filter: LibraryUi.LibraryFilter): String = when (filter)
     is LibraryUi.LibraryFilter.CollectionFilter -> filter.name
 }
 
-/** Details dialog (PWA DocumentSheet parity): tag chips + collection checkboxes + create. */
+/**
+ * Details sheet (PWA DocumentSheet parity): tag chips + collection checkboxes +
+ * create. A tall bottom sheet instead of a cramped AlertDialog (P1-07): the
+ * content scrolls, the keyboard can't trap Save, and the sheet header/close is
+ * the shared one.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DetailsDialog(
     item: LibraryUi.LibraryItem,
@@ -859,19 +928,23 @@ private fun DetailsDialog(
     var newCollName by remember { mutableStateOf("") }
     var localCollections by remember(collections) { mutableStateOf(collections) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Details") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    item.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Text("Tags", style = MaterialTheme.typography.labelLarge)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = FolioSpacing.x6)
+        ) {
+            dev.folio.mobile.ui.components.FolioSheetHeader(
+                title = "Details",
+                subtitle = item.title,
+                onClose = onDismiss,
+            )
+            Column(
+                modifier = Modifier.padding(horizontal = FolioSpacing.x6),
+                verticalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+            ) {
+                Text("Tags", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (tags.isNotEmpty()) {
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -884,7 +957,7 @@ private fun DetailsDialog(
                                 label = { Text("#$tag") },
                                 trailingIcon = {
                                     Icon(
-                                        Icons.Filled.Close,
+                                        FolioIcons.Close,
                                         contentDescription = "Remove tag"
                                     )
                                 }
@@ -907,12 +980,17 @@ private fun DetailsDialog(
                     }) { Text("Add") }
                 }
 
-                Text("Collections", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Collections",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = FolioSpacing.x3),
+                )
                 if (localCollections.isEmpty()) {
                     Text(
                         "No collections yet — create one below.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
                     Column {
@@ -949,7 +1027,7 @@ private fun DetailsDialog(
                                 )
                                 Text(
                                     coll.name,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodyLarge,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -980,17 +1058,28 @@ private fun DetailsDialog(
                         }
                     }) { Text("Create") }
                 }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = FolioSpacing.x5),
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Cancel") }
+                    dev.folio.mobile.ui.components.FolioFilledButton(
+                        text = "Save",
+                        onClick = {
+                            onSave(tags, localCollections.filter { it.id in selected }.map { it.id })
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onSave(tags, localCollections.filter { it.id in selected }.map { it.id })
-            }) { Text("Save") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
-    )
+    }
 }
 
 /** Small filled input used inside dialogs (BasicTextField + placeholder). */
@@ -1022,41 +1111,6 @@ private fun DialogTextField(
                 color = MaterialTheme.colorScheme.onSurface
             )
         )
-    }
-}
-
-/** Recovery banner: damaged entries / interrupted imports, never silently dropped (spec §4 Rule 2). */
-@Composable
-private fun RecoveryBanner(bannerText: String, onReview: () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Filled.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer
-            )
-            Text(
-                bannerText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 10.dp)
-            )
-            TextButton(onClick = onReview) { Text("Review") }
-        }
     }
 }
 
@@ -1187,32 +1241,23 @@ private fun SearchPanel(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(start = FolioSpacing.x4, end = FolioSpacing.x2)
+                .padding(vertical = FolioSpacing.x3),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            BasicTextField(
+            FolioSearchField(
                 value = query,
                 onValueChange = { query = it },
-                singleLine = true,
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(focusRequester),
-                decorationBox = { inner ->
-                    Box {
-                        if (query.isEmpty()) {
-                            Text(
-                                "Search title, author or text…",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                            )
-                        }
-                        inner()
-                    }
-                }
+                placeholder = "Search title, author or text…",
+                modifier = Modifier.weight(1f),
+                focusRequester = focusRequester,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             )
-            IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "Close search")
-            }
+            FolioIconButton(
+                icon = FolioIcons.Close,
+                contentDescription = "Close search",
+                onClick = onClose,
+            )
         }
 
         when {
@@ -1364,10 +1409,9 @@ private fun sortLibrary(
 )
 
 /**
- * Library card: tinted spine placeholder keyed off the title, title/author/kind
- * and (when previously opened) a progress bar with a % label. Three-dot menu:
- * Open / Details (tags + collections) / Delete (delete waits for a confirm
- * dialog upstream).
+ * Library row: flat editorial row (FolioBookRow) with a decoded cover (LRU-
+ * cached in CoverLoader) or the designed placeholder. Menu: Details / Delete
+ * only — opening is the row's tap (design §7.4); delete confirms upstream.
  */
 @Composable
 fun LibraryCard(
@@ -1376,8 +1420,6 @@ fun LibraryCard(
     onDetails: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
-
     // Cover thumbnail: decoded off the main thread, LRU-cached in CoverLoader.
     // remember(item.cover) resets to null and LaunchedEffect restarts per key,
     // producing the same reset-and-redecode semantics produceState(key1 =…)
@@ -1396,108 +1438,17 @@ fun LibraryCard(
         }
     }
 
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen)
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val bmp = coverBitmap
-            if (bmp != null) {
-                Image(
-                    bitmap = bmp,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .width(44.dp)
-                        .height(58.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .width(6.dp)
-                        .height(58.dp)
-                        .background(
-                            Color(SPINE_TINTS[item.colorSeed and 7]),
-                            RoundedCornerShape(3.dp)
-                        )
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    item.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    item.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                item.percent?.let { p ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        LinearProgressIndicator(
-                            progress = { (p / 100.0).toFloat() },
-                            modifier = Modifier.weight(1f).height(4.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            item.percentLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                }
-            }
-            Box {
-                IconButton(onClick = { menuOpen = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "Actions")
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Open") },
-                        leadingIcon = {
-                            Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null)
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onOpen()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Details") },
-                        leadingIcon = {
-                            Icon(Icons.Filled.Edit, contentDescription = null)
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onDetails()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        leadingIcon = {
-                            Icon(Icons.Filled.DeleteOutline, contentDescription = null)
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onDelete()
-                        }
-                    )
-                }
-            }
-        }
-    }
+    FolioBookRow(
+        title = item.title,
+        subtitle = item.subtitle,
+        kindLabel = item.kindLabel,
+        colorSeed = item.colorSeed,
+        cover = coverBitmap,
+        percent = item.percent,
+        percentLabel = item.percentLabel,
+        onOpen = onOpen,
+        onDetails = onDetails,
+        onDelete = onDelete,
+    )
 }
+

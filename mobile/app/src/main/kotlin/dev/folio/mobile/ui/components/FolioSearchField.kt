@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -44,6 +46,7 @@ fun FolioSearchField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     onClear: (() -> Unit)? = null,
     enabled: Boolean = true,
+    focusRequester: FocusRequester? = null,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -91,7 +94,14 @@ fun FolioSearchField(
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(24.dp),
+                        .height(24.dp)
+                        .then(
+                            if (focusRequester != null) {
+                                Modifier.focusRequester(focusRequester)
+                            } else {
+                                Modifier
+                            }
+                        ),
                 )
             }
             if (value.isNotEmpty()) {
