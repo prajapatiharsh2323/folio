@@ -400,7 +400,7 @@ class ReaderActivity : FragmentActivity() {
                     )
                 }
                 if (appearanceVisible.value) {
-                    ReadingAppearanceSheet(
+                    AppearanceBottomSheet(
                         prefs = prefsState.value,
                         perBookOverride = hasDocOverride.value,
                         onPrefsChange = { updated -> onPrefsChanged(updated) },
@@ -1323,6 +1323,26 @@ data class TocEntry(val title: String, val depth: Int, val link: Link)
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
+private fun AppearanceBottomSheet(
+    prefs: ReadingPrefs,
+    perBookOverride: Boolean,
+    onPrefsChange: (ReadingPrefs) -> Unit,
+    onResetPerBook: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        ReadingAppearanceSheet(
+            prefs = prefs,
+            perBookOverride = perBookOverride,
+            onPrefsChange = onPrefsChange,
+            onResetPerBook = onResetPerBook,
+            onDismiss = onDismiss,
+        )
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
 private fun SelectionToolbarSheet(
     annotation: Annotation?,
     onColor: (HighlightColor) -> Unit,
@@ -1336,7 +1356,7 @@ private fun SelectionToolbarSheet(
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
         androidx.compose.foundation.layout.Column(
             modifier = androidx.compose.ui.Modifier
-                .padding(bottom = 16.dp)
+                .padding(top = 16.dp, bottom = 16.dp)
                 .fillMaxWidth()
         ) {
             dev.folio.mobile.ui.components.FolioSheetHeader(

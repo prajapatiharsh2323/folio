@@ -61,7 +61,7 @@ fun ReadingAppearanceSheet(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = FolioSpacing.x8)
+            .padding(top = FolioSpacing.x4, bottom = FolioSpacing.x8)
     ) {
         FolioSheetHeader(
             title = "Reading appearance",
