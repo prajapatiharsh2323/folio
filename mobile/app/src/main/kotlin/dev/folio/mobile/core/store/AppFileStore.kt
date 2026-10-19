@@ -2,7 +2,9 @@ package dev.folio.mobile.core.store
 
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.SecureRandom
 import java.util.UUID
@@ -19,6 +21,9 @@ import java.util.UUID
  *    temp directory without Android.
  */
 class AppFileStore(private val root: File) : FileStore {
+
+    /** Absolute root path; identity of the tree this store addresses (locking scope). */
+    override val rootKey: String = root.absolutePath
 
     private val tmpRandom = SecureRandom()
 
@@ -71,15 +76,37 @@ class AppFileStore(private val root: File) : FileStore {
                 out.flush()
                 out.fd.sync() // fsync before the rename: survives power loss
             }
-            Files.move(
-                temp.toPath(),
-                target.toPath(),
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING
-            )
+            moveWithRetry(temp.toPath(), target.toPath())
         } finally {
             temp.delete()
         }
+    }
+
+    /**
+     * Atomic rename with a bounded retry for Windows-only sharing collisions:
+     * two concurrent writers renaming over the same target transiently deny
+     * each other's move (AccessDeniedException). POSIX rename (Android's
+     * filesystem) does not fail this way, so the backoff is invisible
+     * on-device — it exists to keep heavy multi-writer flows (imports during
+     * progress writes, backups during deletes) from surfacing an IO error on
+     * desktop test hosts.
+     */
+    private fun moveWithRetry(source: Path, target: Path) {
+        var lastError: AccessDeniedException? = null
+        for (attempt in 0 until 10) {
+            try {
+                Files.move(
+                    source, target,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING
+                )
+                return
+            } catch (e: AccessDeniedException) {
+                lastError = e
+                runCatching { Thread.sleep(5L * (attempt + 1)) }
+            }
+        }
+        throw lastError ?: IllegalStateException("Could not move: $source -> $target")
     }
 
     override suspend fun write(path: String, data: String) =

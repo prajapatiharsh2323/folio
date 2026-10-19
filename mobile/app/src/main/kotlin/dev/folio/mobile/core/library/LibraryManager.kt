@@ -58,15 +58,64 @@ class LibraryManager(
         explicitNulls = false
     }
 
-    private val mutexMap = ConcurrentHashMap<String, Mutex>()
-
     private fun mutexFor(key: String): Mutex =
-        mutexMap.computeIfAbsent(key) { Mutex() }
+        mutexMap.computeIfAbsent(store.rootKey + ":" + key) { Mutex() }
+
+    companion object {
+        // Single source of truth for key strings: FileLock.key.
+        private val K_MANIFEST = FileLock.MANIFEST.key
+        private val K_PROGRESS = FileLock.PROGRESS.key
+        private val K_ANNOTATIONS = FileLock.ANNOTATIONS.key
+        private val K_COLLECTIONS = FileLock.COLLECTIONS.key
+
+        /**
+         * PROCESS-WIDE mutex registry keyed by "<root>:<file>". Two
+         * LibraryManager instances of the same tree (MainActivity + the
+         * reader's flush, tests) must serialize against each other, so the
+         * map itself lives on the companion — never per instance.
+         */
+        private val mutexMap = ConcurrentHashMap<String, Mutex>()
+    }
+
+    /**
+     * Runs [block] holding the mutex of every [keys] entry, acquired one by
+     * one in sorted-key order. Sorted acquisition removes the classic
+     * AB/BA deadlock when two callers need overlapping key sets.
+     */
+    private suspend fun <T> withLocks(vararg keys: String, block: suspend () -> T): T {
+        val ordered = keys.distinct().sorted()
+        suspend fun step(i: Int): T =
+            if (i == ordered.size) block()
+            else mutexFor(ordered[i]).withLock { step(i + 1) }
+        return step(0)
+    }
+
+    /**
+     * Files guarded by the mutex set above, in a public-usable form for
+     * callers (e.g. BackupRestore) that rewrite the schema-1 user state
+     * outside this manager.
+     */
+    enum class FileLock(val key: String) {
+        MANIFEST("manifest"),
+        PROGRESS("user-progress"),
+        ANNOTATIONS("user-annotations"),
+        COLLECTIONS("user-collections")
+    }
+
+    /** Public wrapper around the multi-key mutex protocol — see [withLocks]. */
+    suspend fun <T> lockFiles(vararg locks: FileLock, block: suspend () -> T): T =
+        withLocks(*locks.map { it.key }.toTypedArray(), block = block)
 
     // --- Manifest ---
 
     /** Reads the current manifest or initializes a new one (corruption-safe). */
-    suspend fun getManifest(): Manifest {
+    suspend fun getManifest(): Manifest = mutexFor(K_MANIFEST).withLock { readOrCreateManifest() }
+
+    /**
+     * Manifest read/init WITHOUT locking — only for writers that already hold
+     * the K_MANIFEST mutex (Kotlin Mutex is not re-entrant).
+     */
+    private suspend fun readOrCreateManifest(): Manifest {
         if (store.exists(MANIFEST_PATH)) {
             try {
                 return json.decodeFromString<Manifest>(store.readText(MANIFEST_PATH))
@@ -98,8 +147,8 @@ class LibraryManager(
     /**
      * Commits an imported document with the exact Section 4 write order.
      */
-    suspend fun addDocument(importResult: ImportResult): DocMeta = mutexFor("manifest").withLock {
-        val manifest = getManifest()
+    suspend fun addDocument(importResult: ImportResult): DocMeta = withLocks(K_MANIFEST) {
+        val manifest = readOrCreateManifest()
         val id = uuidProvider()
         val now = nowIso()
         val slug = createDocSlug(importResult.meta.title)
@@ -233,8 +282,23 @@ class LibraryManager(
         author: String? = null,
         tags: List<String>? = null,
         collectionIds: List<String>? = null
+    ): DocMeta = withLocks(K_MANIFEST) {
+        updateDocMetaLocked(id, title, author, tags, collectionIds)
+    }
+
+    /**
+     * Manifest/meta RMW WITHOUT locking — for callers that already hold
+     * K_MANIFEST (e.g. [setDocCollections] under its multi-key lock; the
+     * Kotlin Mutex is not re-entrant).
+     */
+    private suspend fun updateDocMetaLocked(
+        id: String,
+        title: String? = null,
+        author: String? = null,
+        tags: List<String>? = null,
+        collectionIds: List<String>? = null
     ): DocMeta {
-        val manifest = getManifest()
+        val manifest = readOrCreateManifest()
         val mDoc = manifest.docs.firstOrNull { it.id == id }
             ?: throw IllegalArgumentException("Document not found in manifest: $id")
         val metaPath = "library/docs/${mDoc.slug}/meta.json"
@@ -267,11 +331,14 @@ class LibraryManager(
     }
 
     /**
-     * Deletes a document and every trace of it, then rewrites the manifest last (spec §4 Rule 5).
+     * Deletes a document and every trace of it, then rewrites the manifest last
+     * (spec §4 Rule 5). Holds the union of the manifest + user-file locks so a
+     * concurrent saveProgress/saveAnnotation/saveCollections cannot resurrect
+     * the deleted facts into a fresh JSON write (audit EPUB-005).
      */
-    suspend fun deleteDocument(id: String) = mutexFor("manifest").withLock {
-        val manifest = getManifest()
-        val mDoc = manifest.docs.firstOrNull { it.id == id } ?: return@withLock
+    suspend fun deleteDocument(id: String) = withLocks(K_MANIFEST, K_PROGRESS, K_ANNOTATIONS, K_COLLECTIONS) {
+        val manifest = readOrCreateManifest()
+        val mDoc = manifest.docs.firstOrNull { it.id == id } ?: return@withLocks
         val docDir = "library/docs/${mDoc.slug}"
 
         // 1. Remove folder
@@ -332,7 +399,6 @@ class LibraryManager(
         val now = nowIso()
         store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = manifest.docs - mDoc, updatedAt = now)))
     }
-
     /**
      * Startup recovery per spec §4 Rule 2: docs/ folders not listed in the
      * manifest are interrupted imports (caller offers finish or delete).
@@ -429,7 +495,7 @@ class LibraryManager(
 
     // --- Progress ---
 
-    suspend fun saveProgress(progress: Progress) {
+    suspend fun saveProgress(progress: Progress) = mutexFor(K_PROGRESS).withLock {
         val progressPath = "library/user/progress.json"
         val map: Map<String, Progress> = runCatching {
             if (store.exists(progressPath)) {
@@ -466,7 +532,7 @@ class LibraryManager(
         }.getOrElse { emptyList() }
     }
 
-    suspend fun saveAnnotation(annotation: Annotation) {
+    suspend fun saveAnnotation(annotation: Annotation) = mutexFor(K_ANNOTATIONS).withLock {
         val annotPath = "library/user/annotations.json"
         val all = runCatching {
             if (store.exists(annotPath)) {
@@ -477,12 +543,12 @@ class LibraryManager(
         store.write(annotPath, json.encodeToString(without + annotation))
     }
 
-    suspend fun removeAnnotation(id: String) {
+    suspend fun removeAnnotation(id: String): Unit = mutexFor(K_ANNOTATIONS).withLock {
         val annotPath = "library/user/annotations.json"
-        if (!store.exists(annotPath)) return
+        if (!store.exists(annotPath)) return@withLock
         val all = runCatching {
             json.decodeFromString<List<Annotation>>(store.readText(annotPath))
-        }.getOrElse { return }
+        }.getOrElse { return@withLock }
         store.write(annotPath, json.encodeToString(all.filter { it.id != id }))
     }
 
@@ -496,53 +562,68 @@ class LibraryManager(
         }.getOrElse { emptyList() }
     }
 
-    suspend fun saveCollections(collections: List<Collection>) {
-        store.write("library/user/collections.json", json.encodeToString(collections))
-    }
+    suspend fun saveCollections(collections: List<Collection>): Unit =
+        mutexFor(K_COLLECTIONS).withLock {
+            store.write("library/user/collections.json", json.encodeToString(collections))
+        }
 
     /** Creates a collection (PWA parity: fresh id, empty docIds, now). */
-    suspend fun createCollection(name: String): Collection {
+    suspend fun createCollection(name: String): Collection = mutexFor(K_COLLECTIONS).withLock {
         val coll = Collection(
             id = uuidProvider(),
             name = name,
             docIds = emptyList(),
             createdAt = nowIso()
         )
-        saveCollections(getCollections() + coll)
-        return coll
+        store.write(
+            "library/user/collections.json",
+            json.encodeToString(getCollections() + coll)
+        )
+        coll
     }
 
     /** Renames a collection; throws when the id is unknown (PWA parity). */
-    suspend fun renameCollection(id: String, name: String): Collection {
-        val collections = getCollections()
-        val coll = collections.firstOrNull { it.id == id }
-            ?: throw IllegalArgumentException("Collection not found: $id")
-        val renamed = coll.copy(name = name)
-        saveCollections(collections.map { if (it.id == id) renamed else it })
-        return renamed
-    }
+    suspend fun renameCollection(id: String, name: String): Collection =
+        mutexFor(K_COLLECTIONS).withLock {
+            val collections = getCollections()
+            val coll = collections.firstOrNull { it.id == id }
+                ?: throw IllegalArgumentException("Collection not found: $id")
+            val renamed = coll.copy(name = name)
+            store.write(
+                "library/user/collections.json",
+                json.encodeToString(collections.map { if (it.id == id) renamed else it })
+            )
+            renamed
+        }
 
     /** Deletes a collection; document meta keeps its ids until reassigned (PWA parity). */
-    suspend fun deleteCollection(id: String) {
-        saveCollections(getCollections().filter { it.id != id })
+    suspend fun deleteCollection(id: String): Unit = mutexFor(K_COLLECTIONS).withLock {
+        val collections = getCollections()
+        store.write(
+            "library/user/collections.json",
+            json.encodeToString(collections.filter { it.id != id })
+        )
     }
 
     /**
      * Assigns a document to exactly [collectionIds] (spec §5): syncs membership
      * in every collection file, then the doc's meta/manifest/search text.
+     * (Reads of collections inside the held lock are fine; reads are lockless
+     * since AppFileStore's atomic rename never exposes torn files.)
      */
-    suspend fun setDocCollections(docId: String, collectionIds: List<String>) {
-        val collections = getCollections()
-        val updates = collections.map { coll ->
-            val has = docId in coll.docIds
-            val shouldHave = coll.id in collectionIds
-            when {
-                shouldHave && !has -> coll.copy(docIds = coll.docIds + docId)
-                !shouldHave && has -> coll.copy(docIds = coll.docIds - docId)
-                else -> coll
+    suspend fun setDocCollections(docId: String, collectionIds: List<String>): Unit =
+        withLocks(K_COLLECTIONS, K_MANIFEST) {
+            val collections = getCollections()
+            val updates = collections.map { coll ->
+                val has = docId in coll.docIds
+                val shouldHave = coll.id in collectionIds
+                when {
+                    shouldHave && !has -> coll.copy(docIds = coll.docIds + docId)
+                    !shouldHave && has -> coll.copy(docIds = coll.docIds - docId)
+                    else -> coll
+                }
             }
+            store.write("library/user/collections.json", json.encodeToString(updates))
+            updateDocMetaLocked(docId, collectionIds = collectionIds)
         }
-        saveCollections(updates)
-        updateDocMeta(docId, collectionIds = collectionIds)
-    }
 }

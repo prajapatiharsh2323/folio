@@ -99,6 +99,14 @@ import java.io.File
 import kotlin.math.abs
 
 /**
+ * Process-lifetime IO scope for writes that must outlive the reader Activity
+ * (the onDestroy progress flush) — an app without a Scene-level application
+ * scope keeps this singleton instead of blocking the main thread.
+ */
+internal val flushScope: CoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+/**
  * R1 core reader: opens the document's `reading/book.epub` through Readium's
  * streamer, attaches an [EpubNavigatorFragment], and mirrors reading progression
  * into the schema-1 Progress store (locator → CFI via [ProgressBridge]).
@@ -314,12 +322,16 @@ class ReaderActivity : FragmentActivity() {
     override fun onDestroy() {
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         progressJob?.cancel()
-        // Flush the last debounced progress write before the scope goes away.
+        // Flush the last debounced progress write before the scope goes away —
+        // fire-and-forget on a process-lifetime IO scope (audit EPUB-006):
+        // no main-thread runBlocking, and LibraryManager.saveProgress is an
+        // idempotent, mutexed map put so a lost activity is never lost data.
         saveJob?.cancel()
         lastSavedProgress?.let { p ->
-            runCatching {
-                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                    LibraryManager(AppFileStore(filesDir)).saveProgress(p)
+            val appContext = applicationContext
+            flushScope.launch {
+                runCatching {
+                    LibraryManager(AppFileStore(appContext.filesDir)).saveProgress(p)
                 }
             }
         }
@@ -420,7 +432,11 @@ class ReaderActivity : FragmentActivity() {
             }
             if (initialLocator == null && savedProgress != null) {
                 // Progress.percent is the PWA 0..100 scale; Readium wants 0..1.
-                // locateProgression touches the navigator's WebView — main only.
+                // locateProgression computes over the publication's Position
+                // services (DefaultLocatorService → PositionsService — no
+                // navigator/WebView involvement, verified against Readium 3.0.0
+                // bytecode); we stay on Main for coroutine etiquette and because
+                // the navigator attach that follows is main-bound.
                 withContext(Dispatchers.Main) {
                     publication.findService(LocatorService::class)
                         ?.locateProgression(savedProgress.percent / 100.0)

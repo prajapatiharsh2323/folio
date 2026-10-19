@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- OS auto-backup must stay OFF: it would sweep the whole filesDir
+         (docs, progress, annotations, doc-settings) into cloud/device
+         backups outside the app's curated BackupZip/Restore contract
+         (audit EPUB-008) — e.g. doc-settings.json is mobile-only and is
+         deliberately excluded from the schema-1 backup ZIP. The app ships
+         its own explicit backup UI (Settings → Backup). -->
     <application
         android:name=".FolioApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"

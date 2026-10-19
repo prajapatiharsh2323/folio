@@ -12,6 +12,15 @@ package dev.folio.mobile.core.store
 data class FileStat(val size: Long, val modifiedAt: Long)
 
 interface FileStore {
+    /**
+     * Stable key naming the storage root this instance addresses. Locking
+     * registries (LibraryManager) key shared mutexes on [rootKey]+"<mutex>"
+     * so two instances of the same tree serialize against each other,
+     * while instances over different roots (tests, multi-store callers)
+     * stay independent.
+     */
+    val rootKey: String
+
     suspend fun read(path: String): ByteArray
     suspend fun readText(path: String): String
 
