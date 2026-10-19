@@ -227,6 +227,12 @@ class ReaderActivity : FragmentActivity() {
     private val pillarTitle = mutableStateOf("")
     private val pillarPercent = mutableStateOf(0.0)
 
+    /** Reading appearance sheet visibility. */
+    private val appearanceVisible = mutableStateOf(false)
+
+    /** Book title for the compact top bar (set once the doc loads). */
+    private var docTitle: String? = null
+
     /** Time-to-finish estimate shown in the pillar (null = not enough data). */
     private val timeLeftText = mutableStateOf<String?>(null)
 
@@ -329,12 +335,14 @@ class ReaderActivity : FragmentActivity() {
                 ReaderChrome(
                     visible = chromeVisible.value,
                     prefs = prefsState.value,
+                    bookTitle = docTitle,
                     onBack = { onBackPressedDispatcher.onBackPressed() },
                     onPrefsChange = { updated -> onPrefsChanged(updated) },
                     onHighlight = { onHighlightTapped() },
                     onBookmark = { onBookmarkTapped() },
                     onToc = { tocVisible.value = true },
                     onSearch = { searchVisible.value = true },
+                    onAppearance = { appearanceVisible.value = true },
                     onScrub = { p ->
                         // Pin the pillar for the whole drag + a short settle.
                         pillarHideJob?.cancel()
@@ -356,8 +364,7 @@ class ReaderActivity : FragmentActivity() {
                     perBookOverride = hasDocOverride.value,
                     onResetPerBook = { onResetPerBookPrefs() }
                 )
-                if (tocVisible.value) {
-                    TocSheet(
+                if (tocVisible.value) {                    TocSheet(
                         entries = tocEntries.value,
                         onEntry = { onTocEntryTapped(it) },
                         onDismiss = { tocVisible.value = false }
@@ -388,6 +395,15 @@ class ReaderActivity : FragmentActivity() {
                             selectionAnnotation.value = null
                             selectionLocator.value = null
                         }
+                    )
+                }
+                if (appearanceVisible.value) {
+                    ReadingAppearanceSheet(
+                        prefs = prefsState.value,
+                        perBookOverride = hasDocOverride.value,
+                        onPrefsChange = { updated -> onPrefsChanged(updated) },
+                        onResetPerBook = { onResetPerBookPrefs() },
+                        onDismiss = { appearanceVisible.value = false },
                     )
                 }
                 // Splash sits ABOVE the chrome so loading is a clean takeover;
@@ -494,6 +510,7 @@ class ReaderActivity : FragmentActivity() {
             return
         }
         docAuthor = meta.author
+        docTitle = meta.title
         val file = store.resolve("library/docs/${meta.slug}/$readingRel")
 
         // Splash cover: display-only, decoded before the navigator mounts so the
@@ -1284,61 +1301,60 @@ private fun SelectionToolbarSheet(
 
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
         androidx.compose.foundation.layout.Column(
-            modifier = androidx.compose.ui.Modifier.padding(16.dp)
+            modifier = androidx.compose.ui.Modifier
+                .padding(bottom = 16.dp)
+                .fillMaxWidth()
         ) {
-            Text("Highlight", style = MaterialTheme.typography.titleMedium)
-            androidx.compose.foundation.layout.Spacer(
-                androidx.compose.ui.Modifier.height(8.dp)
+            dev.folio.mobile.ui.components.FolioSheetHeader(
+                title = "Highlight",
+                subtitle = annotation?.quote?.takeIf { it.isNotBlank() }
+                    ?.let { "\u201C${it.take(60)}\u201D" }
+                    ?: "Select text on the page first",
+                onClose = onDismiss,
             )
-            if (annotation != null) {
-                Text(
-                    "\u201C${annotation.quote.take(80)}\u201D",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
-                androidx.compose.foundation.layout.Spacer(
-                    androidx.compose.ui.Modifier.height(12.dp)
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ANNOTATION_CHIP_ARGBS.forEach { (color, argb) ->
-                    Box(
-                        modifier = androidx.compose.ui.Modifier
-                            .size(36.dp)
-                            .background(androidx.compose.ui.graphics.Color(argb), CircleShape)
-                            .clickable { onColor(color) }
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { noteEditing = true }) { Text("Add note") }
-                TextButton(onClick = onCopy) { Text("Copy") }
-            }
-            if (noteEditing) {
-                androidx.compose.foundation.layout.Spacer(
-                    androidx.compose.ui.Modifier.height(8.dp)
-                )
-                androidx.compose.material3.OutlinedTextField(
-                    value = noteText,
-                    onValueChange = { noteText = it },
-                    placeholder = { Text("Note\u2026") },
-                    singleLine = false,
-                    minLines = 2,
-                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
-                )
-                androidx.compose.foundation.layout.Row(
-                    modifier = androidx.compose.ui.Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = { noteEditing = false }) { Text("Cancel") }
-                    TextButton(
-                        onClick = {
-                            val note = noteText.trim()
-                            if (note.isNotEmpty()) onNote(note)
+            dev.folio.mobile.ui.components.FolioSheetBody {
+                Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ANNOTATION_CHIP_ARGBS.forEach { (color, argb) ->
+                            Box(
+                                modifier = androidx.compose.ui.Modifier
+                                    .size(40.dp)
+                                    .background(androidx.compose.ui.graphics.Color(argb), CircleShape)
+                                    .clickable { onColor(color) }
+                            )
                         }
-                    ) { Text("Save") }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        TextButton(onClick = { noteEditing = true }) { Text("Add note") }
+                        TextButton(onClick = onCopy) { Text("Copy") }
+                    }
+                    if (noteEditing) {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = noteText,
+                            onValueChange = { noteText = it },
+                            placeholder = { Text("Note\u2026") },
+                            singleLine = false,
+                            minLines = 2,
+                            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                        )
+                        androidx.compose.foundation.layout.Row(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { noteEditing = false }) { Text("Cancel") }
+                            TextButton(
+                                onClick = {
+                                    val note = noteText.trim()
+                                    if (note.isNotEmpty()) onNote(note)
+                                }
+                            ) { Text("Save") }
+                        }
+                    }
                 }
             }
         }
@@ -1358,32 +1374,39 @@ private fun TocSheet(
     ModalBottomSheet(onDismissRequest = onDismiss) {
         androidx.compose.foundation.layout.Column(
             modifier = androidx.compose.ui.Modifier
-                .padding(16.dp)
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
         ) {
-            Text("Contents", style = MaterialTheme.typography.titleMedium)
-            androidx.compose.foundation.layout.Spacer(
-                Modifier.height(8.dp)
+            dev.folio.mobile.ui.components.FolioSheetHeader(
+                title = "Contents",
+                onClose = onDismiss,
             )
             if (entries.isEmpty()) {
                 Text(
                     "No table of contents.",
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = androidx.compose.ui.Modifier.padding(horizontal = 24.dp)
                 )
             } else {
                 androidx.compose.foundation.lazy.LazyColumn {
                     items(entries.size) { i ->
                         val e = entries[i]
-                        TextButton(
-                            onClick = { onEntry(e) },
+                        Text(
+                            e.title,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyLarge,
                             modifier = androidx.compose.ui.Modifier
-                                .padding(start = (e.depth * 16).dp)
-                        ) {
-                            Text(
-                                e.title,
-                                maxLines = 2,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                        }
+                                .fillMaxWidth()
+                                .clickable { onEntry(e) }
+                                .padding(
+                                    // Full-width touch row with meaningful
+                                    // heading indentation (design §B Contents).
+                                    start = (24 + e.depth * 16).dp,
+                                    end = 24.dp,
+                                )
+                                .heightIn(min = 48.dp),
+                        )
                     }
                 }
             }
@@ -1410,10 +1433,17 @@ private fun SearchSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         androidx.compose.foundation.layout.Column(
-            modifier = androidx.compose.ui.Modifier.padding(16.dp)
+            modifier = androidx.compose.ui.Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
         ) {
-            Text("Search in book", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+            dev.folio.mobile.ui.components.FolioSheetHeader(
+                title = "Search in book",
+                onClose = onDismiss,
+            )
+            androidx.compose.foundation.layout.Column(
+                modifier = androidx.compose.ui.Modifier.padding(horizontal = 24.dp)
+            ) {
             androidx.compose.material3.OutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
@@ -1437,7 +1467,7 @@ private fun SearchSheet(
                         error != null -> error
                         busy -> "Searching\u2026"
                         hits.isNotEmpty() -> "${hits.size} result${if (hits.size == 1) "" else "s"}"
-                        completed -> "No results."
+                        completed -> "No results. Try different words."
                         else -> "Two characters minimum."
                     },
                     style = MaterialTheme.typography.labelSmall,
@@ -1482,6 +1512,7 @@ private fun SearchSheet(
                         }
                     }
                 }
+            }
             }
         }
     }

@@ -1,18 +1,17 @@
 package dev.folio.mobile.reader
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
@@ -25,25 +24,14 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.NightsStay
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,26 +40,29 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.model.ReadingPrefs
+import dev.folio.mobile.ui.components.FolioIconButton
+import dev.folio.mobile.ui.icons.FolioIcons
+import dev.folio.mobile.ui.theme.FolioSpacing
 
 /**
- * Reader chrome (R2). Layers:
- * - top bar (back / theme / size / flow) — hidden by tapping the page's middle
- *   third (see ReaderActivity's InputListener); visible by default, PWA-parity;
- * - secondary typography row (family, line-height, margins, justify) shown
- *   with the top bar;
- * - bottom pillar: `<chapter title> — <%>` — follows the same middle-third
- *   toggle (auto-hide: it floats over the page's last lines otherwise), and
- *   stays up while the scrubber is in use (ReaderActivity's scrub state).
- *
- * Colors mirror the PWA reader tokens (THEME_COLORS in ReaderPrefsMapper).
+ * Reader chrome (quiet editorial pass): the book text stays dominant.
+ * - Compact, NON-scrolling top bar: back, book title, reading appearance (Aa),
+ *   search, overflow (contents/bookmark/highlight).
+ * - Bottom reading dock: one slim progress control + chapter/percent/time.
+ * - Colors mirror the PWA reader tokens (THEME_COLORS in ReaderPrefsMapper) so
+ *   chrome blends with the page, never flashing app-theme colors.
+ * Auto-hide: tapping the page's middle third toggles visibility (unchanged,
+ * see ReaderActivity's InputListener); the dock stays up while scrubbing.
  */
 @Composable
 fun ReaderChrome(
     visible: Boolean,
     prefs: ReadingPrefs,
+    bookTitle: String?,
     pillarTitle: String,
     pillarPercent: Double,
     onBack: () -> Unit,
@@ -80,6 +71,7 @@ fun ReaderChrome(
     onBookmark: () -> Unit = {},
     onToc: () -> Unit = {},
     onSearch: () -> Unit = {},
+    onAppearance: () -> Unit = {},
     onScrub: (Double) -> Unit = {},
     onScrubFinished: (Double) -> Unit = {},
     timeLeft: String? = null,
@@ -107,10 +99,16 @@ fun ReaderChrome(
                         .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
                 )
             ) {
-                Column {
-                    TopBar(prefs, onBack, onPrefsChange, onHighlight, onBookmark, onToc, onSearch)
-                    TypographyRow(prefs, text, onPrefsChange, perBookOverride, onResetPerBook)
-                }
+                TopBar(
+                    bookTitle = bookTitle,
+                    text = text,
+                    onBack = onBack,
+                    onAppearance = onAppearance,
+                    onSearch = onSearch,
+                    onBookmark = onBookmark,
+                    onToc = onToc,
+                    onHighlight = onHighlight,
+                )
             }
         }
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) // spacer over the canvas
@@ -133,224 +131,90 @@ fun ReaderChrome(
     }
 }
 
+/**
+ * One slim, labelled, NON-scrolling row. Secondary destinations (contents,
+ * bookmark, highlight) live behind the overflow menu — nothing can be lost
+ * off-screen on a 320dp phone.
+ */
 @Composable
 private fun TopBar(
-    prefs: ReadingPrefs,
+    bookTitle: String?,
+    text: Color,
     onBack: () -> Unit,
-    onPrefsChange: (ReadingPrefs) -> Unit,
-    onHighlight: () -> Unit,
-    onBookmark: () -> Unit = {},
-    onToc: () -> Unit = {},
-    onSearch: () -> Unit = {}
+    onAppearance: () -> Unit,
+    onSearch: () -> Unit,
+    onBookmark: () -> Unit,
+    onToc: () -> Unit,
+    onHighlight: () -> Unit
 ) {
-    var themeMenuOpen by remember { mutableStateOf(false) }
+    var overflowOpen by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
-            // Ten 48dp-dp targets overflow narrow screens — scroll to reach the
-            // trailing buttons instead of clipping (same bailout as the row
-            // below; pre-existing issue surfaced by the search icon).
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = FolioSpacing.x1, vertical = FolioSpacing.x1),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-        }
-        Box {
-            IconButton(onClick = { themeMenuOpen = true }) {
-                Icon(Icons.Filled.NightsStay, contentDescription = "Theme")
-            }
-            DropdownMenu(
-                expanded = themeMenuOpen,
-                onDismissRequest = { themeMenuOpen = false }
-            ) {
-                listOf("light", "warm", "dark", "true-black", "system").forEach { key ->
-                    DropdownMenuItem(
-                        text = { Text(if (prefs.theme == key) "• ".plus(key) else key) },
-                        leadingIcon = { ThemeDot(key) },
-                        onClick = {
-                            themeMenuOpen = false
-                            onPrefsChange(prefs.copy(theme = key))
-                        }
-                    )
-                }
-            }
-        }
-        IconButton(onClick = {
-            onPrefsChange(prefs.copy(fontSize = (prefs.fontSize - 2.0).coerceIn(14.0, 32.0)))
-        }) {
-            Icon(Icons.Filled.Remove, contentDescription = "Smaller text")
-        }
-        Text("Aa", style = MaterialTheme.typography.labelLarge)
-        IconButton(onClick = {
-            onPrefsChange(prefs.copy(fontSize = (prefs.fontSize + 2.0).coerceIn(14.0, 32.0)))
-        }) {
-            Icon(Icons.Filled.Add, contentDescription = "Larger text")
-        }
-        IconButton(onClick = {
-            onPrefsChange(
-                prefs.copy(flow = if (prefs.flow == "paginated") "scrolled" else "paginated")
-            )
-        }) {
-            Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Toggle flow")
-        }
-        IconButton(onClick = onToc) {
-            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "Table of contents")
-        }
-        // Audit EPUB-015: in-book search (Readium SearchService → locator jumps).
-        IconButton(onClick = onSearch) {
-            Icon(Icons.Filled.Search, contentDescription = "Search in book")
-        }
-        IconButton(onClick = onBookmark) {
-            Icon(Icons.Filled.Bookmark, contentDescription = "Add bookmark")
-        }
-        // R3 groundwork: captures the current text selection as a highlight.
-        IconButton(onClick = onHighlight) {
-            Icon(Icons.Filled.Brush, contentDescription = "Highlight selection")
-        }
-    }
-}
-
-@Composable
-private fun TypographyRow(
-    prefs: ReadingPrefs,
-    tint: Color,
-    onPrefsChange: (ReadingPrefs) -> Unit,
-    perBookOverride: Boolean = false,
-    onResetPerBook: () -> Unit = {}
-) {
-    var familyMenuOpen by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier
-            // The controls overflow on narrow screens — scroll to reach
-            // the trailing brightness/reset buttons instead of clipping.
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box {
-            Text(
-                text = "font: ${prefs.fontFamily}",
-                style = MaterialTheme.typography.labelMedium,
-                color = tint,
-                maxLines = 1,
-                modifier = Modifier
-                    .padding(vertical = 8.dp)
-                    .background(tint.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .clickable { familyMenuOpen = true }
-            )
-            DropdownMenu(
-                expanded = familyMenuOpen,
-                onDismissRequest = { familyMenuOpen = false }
-            ) {
-                // Audit EPUB-002: "lora" was removed — the module ships no
-                // Lora font, so the css font-family fell through to the
-                // viewer default and the menu entry was a ghost. To support
-                // it for real: bundle the TTF (OFL) + inject a @font-face
-                // into the Readium WebView, then verify on-device.
-                // Stored prefs with fontFamily="lora" keep working: the
-                // mapping pass-through (ReaderPrefsAndroid "else" branch)
-                // renders the same fallback as before.
-                listOf("serif", "sans", "mono", "publisher").forEach { fam ->
-                    DropdownMenuItem(
-                        text = { Text(fam) },
-                        onClick = {
-                            familyMenuOpen = false
-                            onPrefsChange(prefs.copy(fontFamily = fam))
-                        }
-                    )
-                }
-            }
-        }
-        Stepper(
-            label = "lh %.1f".format(prefs.lineHeight),
-            onDown = {
-                onPrefsChange(prefs.copy(lineHeight = (prefs.lineHeight - 0.1).coerceIn(1.3, 2.4)))
-            },
-            onUp = {
-                onPrefsChange(prefs.copy(lineHeight = (prefs.lineHeight + 0.1).coerceIn(1.3, 2.4)))
-            },
-            tint = tint
-        )
-        Stepper(
-            label = "mx ${prefs.margin.toInt()}",
-            onDown = {
-                onPrefsChange(prefs.copy(margin = (prefs.margin - 4.0).coerceIn(12.0, 64.0)))
-            },
-            onUp = {
-                onPrefsChange(prefs.copy(margin = (prefs.margin + 4.0).coerceIn(12.0, 64.0)))
-            },
-            tint = tint
+        FolioIconButton(
+            icon = FolioIcons.ArrowLeft,
+            contentDescription = "Back to library",
+            onClick = onBack,
+            tint = text,
         )
         Text(
-            text = "J",
-            style = MaterialTheme.typography.labelLarge,
-            color = tint,
+            bookTitle.orEmpty().ifBlank { "Reader" },
+            style = MaterialTheme.typography.titleMedium.copy(color = text),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .padding(vertical = 8.dp)
-                .background(
-                    if (prefs.justify) tint.copy(alpha = 0.16f) else Color.Transparent,
-                    RoundedCornerShape(6.dp)
-                )
-                .border(
-                    1.dp,
-                    tint.copy(alpha = if (prefs.justify) 0f else 0.5f),
-                    RoundedCornerShape(6.dp)
-                )
-                .padding(horizontal = 10.dp, vertical = 5.dp)
-                .clickable { onPrefsChange(prefs.copy(justify = !prefs.justify)) }
+                .weight(1f)
+                .padding(horizontal = FolioSpacing.x1),
         )
-        Stepper(
-            label = "br ${prefs.brightness.toInt()}",
-            onDown = {
-                onPrefsChange(
-                    prefs.copy(brightness = (prefs.brightness - 10.0).coerceIn(30.0, 100.0))
-                )
-            },
-            onUp = {
-                onPrefsChange(
-                    prefs.copy(brightness = (prefs.brightness + 10.0).coerceIn(30.0, 100.0))
-                )
-            },
-            tint = tint
+        FolioIconButton(
+            icon = FolioIcons.Typeface,
+            contentDescription = "Reading appearance",
+            onClick = onAppearance,
+            tint = text,
         )
-        if (perBookOverride) {
-            // Batch 2 per-book typography: indicate the doc has its own prefs
-            // and offer one-tap reset to the library-wide defaults.
-            Text(
-                text = "reset",
-                style = MaterialTheme.typography.labelMedium,
-                color = tint,
-                maxLines = 1,
-                modifier = Modifier
-                    .padding(vertical = 8.dp)
-                    .background(tint.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .clickable { onResetPerBook() }
+        FolioIconButton(
+            icon = FolioIcons.Search,
+            contentDescription = "Search in book",
+            onClick = onSearch,
+            tint = text,
+        )
+        Box {
+            FolioIconButton(
+                icon = FolioIcons.MoreVertical,
+                contentDescription = "More reading controls",
+                onClick = { overflowOpen = true },
+                tint = text,
             )
-        }
-    }
-}
-
-@Composable
-private fun Stepper(
-    label: String,
-    onDown: () -> Unit,
-    onUp: () -> Unit,
-    tint: Color
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onDown) {
-            Icon(Icons.Filled.Remove, contentDescription = "$label decrease", tint = tint)
-        }
-        Text(label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
-        IconButton(onClick = onUp) {
-            Icon(Icons.Filled.Add, contentDescription = "$label increase", tint = tint)
+            DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Table of contents") },
+                    leadingIcon = { Icon(FolioIcons.ListTree, contentDescription = null) },
+                    onClick = {
+                        overflowOpen = false
+                        onToc()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Add bookmark") },
+                    leadingIcon = { Icon(FolioIcons.Bookmark, contentDescription = null) },
+                    onClick = {
+                        overflowOpen = false
+                        onBookmark()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Highlight selection") },
+                    leadingIcon = { Icon(FolioIcons.PenLine, contentDescription = null) },
+                    onClick = {
+                        overflowOpen = false
+                        onHighlight()
+                    }
+                )
+            }
         }
     }
 }
@@ -370,29 +234,46 @@ private fun Pillar(
 
     // Local drag value so the thumb doesn't fight live progression updates.
     var scrub by remember { mutableStateOf<Double?>(null) }
+    val shownPercent = ((scrub ?: percent).coerceIn(0.0, 1.0)) * 100
 
-    Box(modifier = modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+    Box(modifier = modifier.fillMaxWidth().padding(bottom = FolioSpacing.x2)) {
         Column(
             modifier = Modifier
                 .align(Alignment.Center)
-                .background(surface.copy(alpha = 0.92f), RoundedCornerShape(10.dp))
-                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .background(surface.copy(alpha = 0.94f), RoundedCornerShape(12.dp))
+                .padding(horizontal = FolioSpacing.x3, vertical = FolioSpacing.x2),
         ) {
-            Text(
-                text = buildString {
-                    append(if (title.isBlank()) "" else "${title.take(24)} — ")
-                    append((((scrub ?: percent).coerceIn(0.0, 1.0)) * 100).toInt())
-                    append("%")
-                    timeLeft?.takeIf { it.isNotBlank() }?.let {
-                        append(" · ")
-                        append(it)
-                    }
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = text.copy(alpha = 0.85f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.widthIn(min = 200.dp, max = 320.dp),
+            ) {
+                Text(
+                    title.takeIf { it.isNotBlank() } ?: "",
+                    style = MaterialTheme.typography.labelMedium.copy(color = text.copy(alpha = 0.85f)),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (title.isNotBlank()) {
+                    Text(
+                        "  ·  ",
+                        style = MaterialTheme.typography.labelMedium.copy(color = text.copy(alpha = 0.4f)),
+                    )
+                }
+                Text(
+                    "${shownPercent.toInt()}%",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        color = text.copy(alpha = 0.85f),
+                        fontWeight = FontWeight.Medium,
+                    ),
+                )
+                timeLeft?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        "  ·  $it",
+                        style = MaterialTheme.typography.labelMedium.copy(color = text.copy(alpha = 0.6f)),
+                    )
+                }
+            }
             Slider(
                 value = (scrub ?: percent.coerceIn(0.0, 1.0)).toFloat(),
                 onValueChange = {
@@ -403,30 +284,17 @@ private fun Pillar(
                     scrub?.let { s -> onScrubFinished(s) }
                     scrub = null
                 },
+                colors = SliderDefaults.colors(
+                    thumbColor = text,
+                    activeTrackColor = text,
+                    inactiveTrackColor = text.copy(alpha = 0.25f),
+                ),
                 modifier = Modifier
-                    .widthIn(max = 280.dp)
-                    .fillMaxWidth(0.9f)
-                    .height(22.dp)
+                    .widthIn(max = 320.dp)
+                    .height(28.dp),
             )
         }
     }
-}
-
-@Composable
-private fun ThemeDot(themeKey: String) {
-    val dotColors = mapOf(
-        "light" to 0xFFFAFAF7,
-        "warm" to 0xFFF4ECD8,
-        "dark" to 0xFF121214,
-        "true-black" to 0xFF000000,
-        "system" to 0xFFFAFAF7
-    )
-    val argb = dotColors[themeKey] ?: 0xFFFAFAF7
-    Box(
-        modifier = Modifier
-            .size(18.dp)
-            .background(Color(argb), CircleShape)
-    )
 }
 
 private fun chromeSurface(theme: String): Color = when (theme) {
