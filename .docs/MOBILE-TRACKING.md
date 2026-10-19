@@ -11,19 +11,26 @@
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-0. **Verify the first mobile-ci runs** (added 2026-10-19, M-20): every push now
-   runs `.github/workflows/mobile-ci.yml` (unit tests + assembleDebug +
-   lintDebug on ubuntu-latest). `gh` is not authenticated locally — check the
-   Actions tab once and confirm green; a red run explains itself from the
-   uploaded test/lint artifacts. M-21 pushed four more commits (2bbbc82,
-   fb97fd2, 3a66ad7 + docs) that all need their first run verdict.
-1. **Device-verify the two new reader features** (M-21, no emulator locally):
-   in-book search (open a book → search icon → query ≥2 chars → tap a hit —
-   should land on the matched text via the locator's text.highlight anchor)
-   and refined resume (reading ~40% into a chapter → close → reopen — should
-   land near-mid-chapter, not at chapter start, for CFI-bearing saves; also
-   notes screen tap → opens at the annotation's chapter). Red results → the
-   fallbacks are safe (chapter-start / no-op), so this can't brick a session.
+0. **User manual-testing round (in flight as of M-21 close):** a debug APK with
+   all M-21 features is at the repo root — `folio-mobile-debug-2026-10-19.apk`
+   (~39 MB, supersedes the removed stale `app-release*.apk`). Test points:
+   (a) in-book search — open a book → search icon → query ≥2 chars → tap a hit
+   → should land ON the matched text; (b) mid-chapter resume — read to ~40%
+   of a chapter → close → reopen → should open near the same percent, NOT at
+   chapter start (single-chapter TXT sample: percent ≈ fraction, so any
+   non-zero open proves the fix); (c) notes/bookmarks tap → opens at the
+   annotation's chapter; (d) hardware page-turn keys now animate; (e)
+   Settings theme section shows the new per-book-override hint. `gh` still
+   unauthenticated — check the mobile-ci Actions tab for the first green
+   verdicts of 2bbbc82/fb97fd2/3a66ad7/2b63a1f.
+1. **Device-verify the two new reader features** (M-21; emulator env REBUILT
+   this session — recipe below verified end-to-end: fresh `D:\Android\avd-sdk`
+   sdkmanager install + handcrafted AVD INIs + `skin.name` key REMOVED from
+   config.ini or boot dies with "unknown skin name ''"), but hands-on check
+   moved to the USER (debug APK at repo root). Emulator notes: kill the
+   Gradle daemon before booting (16 GB host was at 0.8 GB free → SystemUI
+   ANR loop; `gradlew --stop` freed 10 GB and boot was clean), and the debug
+   "Import sample" button builds a SINGLE-chapter TXT EPUB.
 2. **Batch 2 remaining polish** — paragraph-snap scrolling (check Readium's
    reflowable script behavior on device first), tap-zone config (PWA has FIXED
    zones — mobile already matches; only build a config setting if we want a
@@ -293,9 +300,9 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     is non-null String). Selectively rethrow CancellationException around
     suspend library calls wrapped in try/catch (runCatching swallows
     cancellation and desyncs the busy/completed flags).
-  - **Next session:** items 0 (mobile-ci verdicts) + 1 (device-verify search
-    jump + refined resume) of the NEXT SESSION list above; then font
-    packaging / R4 as before.
+  - **Next session:** user manual-testing verdicts on
+    `folio-mobile-debug-2026-10-19.apk` (repo root) drive fixes if any; then
+    font packaging / EPUB-012 branch prototype / R4 as before.
 
 - **Session M-20 (Oct 19, 2026)** — AUDIT REMEDIATION: P1/P2/P3 items from
   `EPUB_READER_AUDIT_REPORT.md` fixed in small pushed batches
