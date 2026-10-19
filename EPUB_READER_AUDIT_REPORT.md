@@ -542,8 +542,9 @@ Six decisive judgments, each proven by evidence the audit generated itself:
 ## 19. Remediation log (2026-10-19)
 
 All P1/P2 and reachable-P3 fixes landed in small pushed batches — see
-`.docs/MOBILE-TRACKING.md` session M-20 for details. **212/212 unit tests
-green, `lintDebug` green, `assembleDebug` green, `mobile-ci` pipeline live.**
+`.docs/MOBILE-TRACKING.md` sessions M-20/M-21 for details. **225/225 unit
+tests green, `lintDebug` green, `assembleDebug` green, `mobile-ci` pipeline
+live.**
 
 | ID | Fix summary | Commit |
 |---|---|---|
@@ -561,9 +562,14 @@ green, `lintDebug` green, `assembleDebug` green, `mobile-ci` pipeline live.**
 | EPUB-002 | Ghost "lora" menu option removed; stored lora prefs keep rendering via existing pass-through; real bundling deferred to the font-packaging session (device verification required) | `48a3e53` |
 | EPUB-014 | LocalLifecycleOwner/AutoMirrored icons migrated; slug date getters → ZonedDateTime with byte-stability equivalence pin; contentHash untouched | `74b94ba` |
 | EPUB-011 | letterSpacing/paragraphSpacing now real Readium CSS (em, 0.0→null); maxWidth/pdfZoom documented legacy-inert | `c512265` |
+| EPUB-015 | In-book search: Readium `SearchService` (parser-registered `StringSearchService`) → streamed hit sheet → `go()` on the hit's `text.highlight` anchor (loadLocator priority verified in bytecode); top bar made scrollable (ten 48dp targets clipped on 360dp screens) | `2bbbc82` |
+| EPUB-010 | **Partial** resume precision: saved CFI still picks the chapter; within-chapter offset now recomputed from the saved total percent over `PositionsService` (`ReaderResume.inChapterFraction`, clamped + null on degenerate spans). The audit's "pass the CFI back to `go()`" fix is unreachable in this pin — no CFI parser classes AND no epubcfi handling in the injected scripts (verified) | `fb97fd2` |
+| EPUB-018 | **Partial tie-in**: notes/bookmarks cards jump to their saved location (CFI → spine index; TXT-era href fallback → reading-order match). The cross-repo `bookmarks.json` schema item stays deferred as before | `fb97fd2` |
+| — | Polish: Settings gains a per-book-override scoping hint; hardware-key page turns animate (matching tap-zone turns) | `3a66ad7` |
 
-**Deliberately NOT fixed (R3+ / device-gated):** EPUB-015 (in-book search),
-EPUB-010 (within-chapter resume), EPUB-012 (Readium/Kotlin toolchain pin),
-EPUB-018 (bookmarks — cross-repo schema item), EPUB-019 (instrumented smoke —
+**Still open, by design:** EPUB-012 (Readium/Kotlin toolchain pin — blocking
+for exact text-anchor CFI restore and real font bundles; must be prototyped on
+a branch: Kotlin 2.1 → Readium 3.1.2+), EPUB-015 decorations (highlighting
+search hits in-page rides the same upgrade), EPUB-019 (instrumented smoke —
 needs emulator/device). EPUB-002 real font bundling rides the font-packaging
 session from the tracking doc's NEXT SESSION list.

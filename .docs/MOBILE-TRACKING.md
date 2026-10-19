@@ -7,29 +7,36 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + session M-20)** - **212/212 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes-jump (EPUB-010 partial, EPUB-018 tie-in) - **225/225 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-0. **Verify the first mobile-ci run** (added 2026-10-19, M-20): every push now
+0. **Verify the first mobile-ci runs** (added 2026-10-19, M-20): every push now
    runs `.github/workflows/mobile-ci.yml` (unit tests + assembleDebug +
    lintDebug on ubuntu-latest). `gh` is not authenticated locally — check the
    Actions tab once and confirm green; a red run explains itself from the
-   uploaded test/lint artifacts.
-1. **Batch 2 remaining polish** — page-turn animations (NOT exposed by Readium
-   3.0.0 `EpubPreferences` — needs custom fragment/pager work or Readium upgrade,
-   de-scope or decide), paragraph-snap scrolling (check Readium's reflowable
-   script behavior on device first), tap-zone config (PWA has FIXED zones —
-   mobile already matches; only build a config setting if we want a native-only
-   extra). Per-book typography overrides are DONE (M-19).
-2. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
+   uploaded test/lint artifacts. M-21 pushed four more commits (2bbbc82,
+   fb97fd2, 3a66ad7 + docs) that all need their first run verdict.
+1. **Device-verify the two new reader features** (M-21, no emulator locally):
+   in-book search (open a book → search icon → query ≥2 chars → tap a hit —
+   should land on the matched text via the locator's text.highlight anchor)
+   and refined resume (reading ~40% into a chapter → close → reopen — should
+   land near-mid-chapter, not at chapter start, for CFI-bearing saves; also
+   notes screen tap → opens at the annotation's chapter). Red results → the
+   fallbacks are safe (chapter-start / no-op), so this can't brick a session.
+2. **Batch 2 remaining polish** — paragraph-snap scrolling (check Readium's
+   reflowable script behavior on device first), tap-zone config (PWA has FIXED
+   zones — mobile already matches; only build a config setting if we want a
+   native-only extra). DONE in M-21: key/page turns animate; Settings hint row
+   explains per-book overrides. Per-book typography overrides are DONE (M-19).
+3. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
    Decision needed (own session). NOTE (M-20): the ghost "lora" menu option was
-   REMOVED; bundling lora for real would ride this same session.
-3. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
-4. **Settings screen parity check** — Settings edits global defaults; reader now
-   edits per-doc only. Add a hint row in Settings ("edits library-wide defaults;
-   changes inside a book override it per book").
+   REMOVED; bundling lora for real would ride this same session. NOTE (M-21):
+   the Readium upgrade is ALSO the unlock for exact text-anchor CFI restore
+   (EPUB-010 remainder) and in-page search-hit decorations (EPUB-015 polish) —
+   one branch prototypes all three.
+4. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
 
 **Carried constraints:** TTS is DROPPED (post-v1 backlog, not debt). PWA schema-1
 contracts (manifest, user/*.json, backup ZIP, annotation anchors, Drive sync) must
@@ -163,6 +170,28 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     cacheDir PNG → FileProvider (`${applicationId}.fileprovider`,
     `file_provider_paths.xml` cache-path `quote-card/`) → ACTION_SEND.
 
+18. **Jump resolution chain (M-21 javap verification)** —
+    `EpubNavigatorFragment.go(locator)` → `PublicationKt.normalizeLocator`
+    (href-only normalization) → pager item → `R2EpubPageFragment.loadLocator`
+    priority: (1) `locator.text.highlight` → `R2WebView.scrollToLocator`
+    (exact text position), (2) `locations.htmlId`, (3)
+    `locations.progression` (0..1 → scroll offset in scroll mode, else
+    `round(numPages * progression)`). `locations.totalProgression` is never
+    consumed here — resource selection happens caller-side (that's why
+    `locateProgression` positions carry href AND progression). So jumping
+    "to position X of chapter Y" = `Locator(href = chapter, locations =
+    Locations(progression = f))`; jumping "to matched text" = hand back the
+    search/match locator with its `text.highlight` untouched. NO `epubcfi`
+    string exists in the injected scripts (`readium-reflowable.js` etc.) —
+    CFI fragments on a locator are IGNORED by the reflowable jump path in
+    this pin; decorations are the only text-anchor consumer that resolves
+    them differently (see 17). Search: `publication.findService(
+    SearchService::class)?.search(query, Options())` → `SearchIterator`
+    (suspend `forEach { LocatorCollection }` → `collection.locators`,
+    each with resolvable text anchors); `StringSearchService` is
+    auto-registered by `EpubParser` (streamer bytecode 1668–1677).
+    Iterate on IO (no WebView); `go` on Main.
+
 ## Environment facts (fresh sessions: re-verify, don't assume)
 
 - Windows host; repo `D:\folio`; branch `main`; remote origin = prajapatiharsh2323/folio.
@@ -217,6 +246,56 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-21 (Oct 19, 2026)** — AUDIT REMEDIATION CONTINUED: the
+  device-gated items re-scoped against actual Readium 3.0.0 bytecode and two
+  shipped as implemented-edge features. **225/225 tests green, lintDebug
+  green, assembleDebug green** (commits 2bbbc82, fb97fd2, 3a66ad7 + this
+  docs commit).
+  - Toolkit verification pass (no device, all via AAR/javap on the gradle
+    cache): `EpubNavigatorFragment` does NOT implement `Searchable` in 3.0.0
+    (the audit's claim was stale), but the publication-side `SearchService`
+    exists and `EpubParser` auto-registers `StringSearchService` (streamer
+    bytecode offsets 1668–1677). `R2EpubPageFragment.loadLocator` jump
+    priority verified: `text.highlight` → `R2WebView.scrollToLocator`,
+    then `locations.htmlId`, then `locations.progression` (scroll offset /
+    page index). No `epubcfi` string exists anywhere in the navigator's
+    injected scripts → text-anchor CFI jumps are impossible in this pin
+    (confirms the tracking hot-note; EPUB-010's "feed CFI back to go()"
+    audit fix is unreachable without the Kotlin 2.1/Readium 3.1.2+ upgrade).
+  - **2bbbc82 — EPUB-015 (in-book search):** the audit's feature actually
+    ships — SearchService iteration on IO streams per-resource batches into
+    a new `SearchSheet` (ModalBottomSheet, ≥2-char guard like lib search,
+    200-hit cap, whitespace-collapsed 160-char snippets, chapter-title
+    labels); tapping a hit calls `navigator.go(locator)` on Main and lands
+    on the matched text (text.highlight anchor). 8 new ReaderSearchTest
+    cases. Chrome top bar now scrolls horizontally — ten 48dp
+    IconButton targets already clipped a 360dp screen BEFORE the search
+    icon was added (pre-existing bug surfaced by the batch).
+  - **fb97fd2 — EPUB-010 partial + EPUB-018 tie-in:** CFI-bearing saves
+    still pick the chapter via the cfi spine component, and the in-chapter
+    offset is now recomputed from the saved total percent over
+    `PositionsService.positionsByReadingOrder` — pure-core
+    `ReaderResume.inChapterFraction` (clamped; null on zero-width/inverted/
+    non-finite spans → falls back to chapter-start). Notes/bookmarks cards
+    now jump to their saved location (CFI → spine index, TXT-era href
+    fallback → reading-order endsWith match); `location` is String?-safe.
+    5 new ReaderResumeTest cases. Exact text-anchor restore stays gated on
+    EPUB-012 (documented in ReaderActivity + ProgressBridge KDoc).
+  - **3a66ad7 — polish:** Settings theme section explains that reader
+    theme/Aa controls set per-book overrides (NEXT-SESSION item 4 done);
+    hardware/media-key page turns animate (`goForward/goBackward(true)`)
+    matching the navigator's own tap-zone turns.
+  - Hot notes for future sessions: `mutableStateOf` writes are snapshot-safe
+    from any thread (search results stream from IO). Readium `Try` has
+    `isSuccess/isFailure/getOrNull/failureOrNull` (no Kotlin-Result
+    interop). `Annotation.location` is `String? = null` (Progress.location
+    is non-null String). Selectively rethrow CancellationException around
+    suspend library calls wrapped in try/catch (runCatching swallows
+    cancellation and desyncs the busy/completed flags).
+  - **Next session:** items 0 (mobile-ci verdicts) + 1 (device-verify search
+    jump + refined resume) of the NEXT SESSION list above; then font
+    packaging / R4 as before.
 
 - **Session M-20 (Oct 19, 2026)** — AUDIT REMEDIATION: P1/P2/P3 items from
   `EPUB_READER_AUDIT_REPORT.md` fixed in small pushed batches
