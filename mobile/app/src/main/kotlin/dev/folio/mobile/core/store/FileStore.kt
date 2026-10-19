@@ -1,5 +1,7 @@
 package dev.folio.mobile.core.store
 
+import java.io.File
+
 /**
  * Direct Kotlin port of packages/core/src/store/file-store.ts.
  *
@@ -33,4 +35,14 @@ interface FileStore {
     suspend fun list(dir: String): List<String>
     suspend fun stat(path: String): FileStat
     suspend fun remove(path: String, recursive: Boolean = false)
+
+    /**
+     * Direct file access for a library path, when the backing store can hand
+     * out a real file (the app-private filesystem). Null for stores that
+     * cannot — callers fall back to [read].
+     *
+     * Used to stream a large file to the network without pulling it into the
+     * heap first.
+     */
+    fun localFile(path: String): File? = null
 }

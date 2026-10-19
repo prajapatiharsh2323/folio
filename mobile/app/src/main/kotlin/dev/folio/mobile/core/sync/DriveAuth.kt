@@ -30,8 +30,15 @@ class DriveAuth(private val context: Context) {
         private const val KEY_ACCOUNT = "account-name"
         private const val KEY_ACCOUNT_TYPE = "account-type"
 
-        /** The only scope Folio ever asks for: a hidden per-app Drive folder. */
-        val SCOPES: List<String> = listOf(DriveScopes.DRIVE_APPDATA)
+        /**
+         * The only scope Folio ever asks for.
+         *
+         * `drive.file` — the same scope the PWA uses: the app can see and
+         * change the files it created (the "Folio Library" mirror) and nothing
+         * else in the user's Drive. It is a sensitive scope, but not a
+         * restricted one, so it needs no security assessment.
+         */
+        val SCOPES: List<String> = listOf(DriveScopes.DRIVE_FILE)
 
         private const val GOOGLE_ACCOUNT_TYPE = "com.google"
     }

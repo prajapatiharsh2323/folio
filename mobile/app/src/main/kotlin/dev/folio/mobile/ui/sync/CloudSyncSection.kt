@@ -20,32 +20,30 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import dev.folio.mobile.core.backup.RestoreMode
+import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.store.AppFileStore
-import dev.folio.mobile.core.sync.CloudSyncOutcome
 import dev.folio.mobile.core.sync.DriveAuth
-import dev.folio.mobile.core.sync.DriveCloudSyncStore
-import dev.folio.mobile.core.sync.RemoteBackupInfo
-import dev.folio.mobile.core.sync.SyncCoordinator
-import dev.folio.mobile.ui.components.FolioDestructiveTextButton
+import dev.folio.mobile.core.sync.DriveSyncProvider
+import dev.folio.mobile.core.sync.SyncManager
+import dev.folio.mobile.core.sync.SyncProgress
+import dev.folio.mobile.core.sync.SyncResult
 import dev.folio.mobile.ui.components.FolioSettingsGroup
 import dev.folio.mobile.ui.components.FolioSettingsRow
 import dev.folio.mobile.ui.theme.FolioSpacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * "Cloud sync" settings section.
  *
  * Folio stays offline-first: the device library is the source of truth and
- * the cloud holds exactly one backup snapshot, mirrored in the user's own
- * hidden Google Drive folder. Syncing therefore reuses the backup contract
- * the app already has — the same ZIP the "Export backup" row produces.
+ * the cloud is a *mirror* of it — the same file-by-file Drive folder the web
+ * app uses, so the books are reachable from the Drive app, a browser, or any
+ * other device with Folio signed in to the same account.
+ *
+ * One action does the work: "Sync now" pushes what is missing and pulls what
+ * the other devices have.
  */
 @Composable
 fun CloudSyncSection() {
@@ -55,64 +53,35 @@ fun CloudSyncSection() {
     val main = remember { Handler(Looper.getMainLooper()) }
 
     var accountName by remember { mutableStateOf(auth.selectedAccountName()) }
-    var remote by remember { mutableStateOf<RemoteBackupInfo?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf<Float?>(null) }
+    var progress by remember { mutableStateOf<SyncProgress?>(null) }
     var status by remember { mutableStateOf("") }
     var showAccountPicker by remember { mutableStateOf(false) }
-    var pendingRestore by remember { mutableStateOf<RestoreMode?>(null) }
 
-    fun coordinator(): SyncCoordinator? {
+    fun syncManager(): SyncManager? {
         val credential = auth.credential() ?: return null
-        return SyncCoordinator(
-            store = DriveCloudSyncStore.create(credential),
-            library = AppFileStore(context.filesDir),
-            stagingDir = context.cacheDir,
+        val store = AppFileStore(context.filesDir)
+        return SyncManager(
+            store = store,
+            library = LibraryManager(store),
+            provider = DriveSyncProvider.create(credential),
+            onProgress = { p -> main.post { progress = p } },
         )
     }
 
-    // Refresh the remote snapshot info whenever the connected account changes.
-    LaunchedEffect(accountName) {
-        if (accountName == null) {
-            remote = null
-            return@LaunchedEffect
-        }
-        val coordinator = coordinator() ?: return@LaunchedEffect
-        remote = withContext(Dispatchers.IO) { coordinator.remoteInfo() }
-    }
-
-    fun startUpload() {
-        val coordinator = coordinator() ?: return
-        busy = true
-        progress = 0f
-        status = "Packing your library…"
-        scope.launch {
-            val outcome = coordinator.upload(
-                onStage = { current, total, _ ->
-                    main.post { status = "Packing your library… $current of $total files" }
-                },
-                onProgress = { uploaded, total ->
-                    main.post {
-                        progress = if (total > 0) uploaded.toFloat() / total else 0f
-                    }
-                },
-            )
-            busy = false
-            progress = null
-            status = describe(outcome)
-            if (outcome is CloudSyncOutcome.Uploaded) remote = outcome.info
-        }
-    }
-
-    fun startRestore(mode: RestoreMode) {
-        val coordinator = coordinator() ?: return
+    fun startSync() {
+        val manager = syncManager() ?: return
         busy = true
         progress = null
-        status = "Restoring from Drive…"
+        status = ""
         scope.launch {
-            val outcome = coordinator.downloadAndRestore(mode)
+            val outcome = runCatching { withContext(Dispatchers.IO) { manager.sync() } }
             busy = false
-            status = describe(outcome)
+            progress = null
+            status = outcome.fold(
+                onSuccess = { describe(it) },
+                onFailure = { "Sync failed: ${it.message ?: it::class.simpleName}" },
+            )
         }
     }
 
@@ -120,8 +89,8 @@ fun CloudSyncSection() {
         if (accountName == null) {
             FolioSettingsRow(
                 title = "Connect Google Drive",
-                summary = "Keep a copy of your library in your own Google Drive " +
-                    "so you can pick it up on any device.",
+                summary = "Mirror your library to a Drive folder so you can pick " +
+                    "it up on any device, and open the books anywhere.",
                 onClick = { showAccountPicker = true },
             )
         } else {
@@ -134,32 +103,38 @@ fun CloudSyncSection() {
                         onClick = {
                             auth.disconnect()
                             accountName = null
-                            remote = null
-                            status = "Cloud sync disconnected. The cloud copy is untouched."
+                            status = "Cloud sync disconnected. Your Drive copy is untouched."
                         },
                     ) { Text("Disconnect") }
                 },
             )
             FolioSettingsRow(
-                title = "Back up to Drive",
-                summary = remoteSummary(remote),
-                onClick = { if (!busy) startUpload() },
-            )
-            FolioSettingsRow(
-                title = "Restore from Drive",
-                summary = "Pull the cloud copy into this device. You choose merge or replace.",
-                onClick = { if (!busy) pendingRestore = RestoreMode.Merge },
+                title = "Sync now",
+                summary = "Uploads what is new here, downloads what other " +
+                    "devices added. Merges notes and progress, never overwrites.",
+                onClick = { if (!busy) startSync() },
             )
         }
     }
 
-    if (progress != null) {
-        LinearProgressIndicator(
-            progress = { progress ?: 0f },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x2),
-        )
+    val current = progress
+    if (current != null) {
+        if (current.phase == "downloading" || current.phase == "uploading") {
+            LinearProgressIndicator(
+                progress = {
+                    if (current.total > 0) current.current.toFloat() / current.total else 0f
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x2),
+            )
+        } else {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x2),
+            )
+        }
     }
 
     if (status.isNotBlank()) {
@@ -208,84 +183,12 @@ fun CloudSyncSection() {
             },
         )
     }
-
-    pendingRestore?.let { mode ->
-        AlertDialog(
-            onDismissRequest = { pendingRestore = null },
-            title = { Text("Restore from Drive") },
-            text = {
-                Text(
-                    "Merge: add what's missing, keep everything local, newer " +
-                        "annotations/progress win. Replace: wipe this library " +
-                        "first and restore exactly the cloud copy."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !busy,
-                    onClick = {
-                        pendingRestore = null
-                        startRestore(RestoreMode.Merge)
-                    },
-                ) { Text("Merge") }
-                FolioDestructiveTextButton(
-                    text = "Replace",
-                    enabled = !busy,
-                    onClick = {
-                        pendingRestore = null
-                        startRestore(RestoreMode.Replace)
-                    },
-                )
-                TextButton(enabled = !busy, onClick = { pendingRestore = null }) { Text("Cancel") }
-            },
-        )
-    }
 }
 
-/** One-line status for a finished sync. */
-private fun describe(outcome: CloudSyncOutcome): String = when (outcome) {
-    is CloudSyncOutcome.Uploaded ->
-        "Backed up to Drive (${formatBytes(outcome.info.sizeBytes)})."
-    is CloudSyncOutcome.Restored -> {
-        val s = outcome.summary
-        val warnings = if (outcome.verification.valid) {
-            ""
-        } else {
-            " Restore completed with warnings: " +
-                outcome.verification.issues.joinToString("; ") { "${it.path} (${it.reason})" }
-        }
-        "${s.mode.replaceFirstChar { it.uppercase() }}: +${s.newDocsAdded} new, " +
-            "${s.duplicatesSkipped} duplicates skipped, ${s.metadataUpdated} updated, " +
-            "${s.annotationsMerged} annotations, ${s.progressUpdated} progress, " +
-            "${s.collectionsMerged} collections.$warnings"
-    }
-    is CloudSyncOutcome.NoRemoteBackup ->
-        "No cloud backup yet. Use “Back up to Drive” to create one."
-    is CloudSyncOutcome.Failed ->
-        "Cloud sync failed: ${outcome.error.message ?: outcome.error::class.simpleName}"
-}
-
-/** Summary line for the "Back up to Drive" row. */
-private fun remoteSummary(remote: RemoteBackupInfo?): String = when {
-    remote == null -> "No cloud copy yet. Back up to create one."
-    else -> "Cloud copy from ${formatTimestamp(remote.modifiedTime)} " +
-        "(${formatBytes(remote.sizeBytes)}). Backing up again replaces it."
-}
-
-private val TIMESTAMP_FORMAT: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.getDefault())
-
-private fun formatTimestamp(iso: String?): String {
-    if (iso.isNullOrBlank()) return "an earlier sync"
-    return runCatching {
-        TIMESTAMP_FORMAT.format(
-            Instant.parse(iso).atZone(ZoneId.systemDefault())
-        )
-    }.getOrElse { "an earlier sync" }
-}
-
-private fun formatBytes(bytes: Long): String = when {
-    bytes <= 0 -> "0 MB"
-    bytes < 1024 * 1024 -> "${(bytes / 1024.0).toInt()} KB"
-    else -> String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
+/** One-line summary of a finished sync. */
+private fun describe(result: SyncResult): String = buildString {
+    append("Synced: ")
+    append("${result.uploadedDocs} uploaded, ${result.downloadedDocs} downloaded")
+    if (result.mergedUserFiles > 0) append(", ${result.mergedUserFiles} shared files merged")
+    append(".")
 }

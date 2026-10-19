@@ -126,6 +126,9 @@ class AppFileStore(private val root: File) : FileStore {
         return FileStat(size = file.length(), modifiedAt = file.lastModified())
     }
 
+    /** Direct access to a library file (used to stream large files to the network). */
+    override fun localFile(path: String): File? = resolve(path).takeIf { it.isFile }
+
     override suspend fun remove(path: String, recursive: Boolean) {
         val file = resolve(path)
         if (!file.exists()) return
