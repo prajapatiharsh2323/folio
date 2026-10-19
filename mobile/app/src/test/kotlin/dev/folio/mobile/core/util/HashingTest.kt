@@ -57,4 +57,52 @@ class HashingTest {
         assertTrue(slug.contains("angel-garcia"))
         assertTrue(!slug.contains("á"))
     }
+
+    /**
+     * Audit EPUB-014: createDocSlug migrated away from the deprecated
+     * java.util.Date getters (year/month/date) to ZonedDateTime. The getters
+     * wrap Calendar.getInstance over the system-default zone, which is exactly
+     * what atZone(ZoneId.systemDefault()) yields — so the output must be
+     * byte-stable. Pinned here over a corpus of edge instants (epoch, leap
+     * day, old/new-year rollovers) so any future migration of the slug date
+     * semantics is a conscious cross-repo decision, not an accident.
+     */
+    @Test
+    fun `zoned fields equal deprecated date getters for every instant`() {
+        val millis = listOf(
+            0L,
+            1L,
+            1709164800000L, // 2024-02-29T00:00Z
+            1709251199999L, // 2024-02-29T23:59:59.999Z
+            1767225599999L, // 2025-12-31T23:59:59.999Z
+            1767225600000L, // 2026-01-01T00:00:00Z
+            1735689600000L, // 2025-01-01T00:00:00Z
+            2000000000000L,
+            System.currentTimeMillis()
+        )
+        for (ms in millis) {
+            val date = Date(ms)
+            val zoned = date.toInstant().atZone(java.time.ZoneId.systemDefault())
+            assertEquals("year@$ms", date.year + 1900, zoned.year)
+            assertEquals("month@$ms", date.month + 1, zoned.monthValue)
+            assertEquals("day@$ms", date.date, zoned.dayOfMonth)
+        }
+    }
+
+    @Test
+    fun `slug date prefix equals deprecated-getter semantics`() {
+        for (ms in listOf(0L, 1709164800000L, 1767225600000L)) {
+            val date = Date(ms)
+            val zoned = date.toInstant().atZone(java.time.ZoneId.systemDefault())
+            val expectedPrefix = String.format(
+                Locale.ROOT, "%04d-%02d-%02d",
+                zoned.year, zoned.monthValue, zoned.dayOfMonth
+            )
+            val slug = createDocSlug("Stability Check", date)
+            assertTrue(
+                "slug date prefix must stay stable: $slug",
+                slug.startsWith("$expectedPrefix-stability-check-")
+            )
+        }
+    }
 }

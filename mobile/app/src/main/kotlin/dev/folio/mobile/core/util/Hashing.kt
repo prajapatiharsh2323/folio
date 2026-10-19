@@ -19,11 +19,19 @@ fun sha256Hex(data: ByteArray): String =
  * Slug per spec §4: `YYYY-MM-DD-title-words-xxxx` — lowercase ASCII (diacritics
  * stripped, non-alphanumerics collapsed to dashes, fallback "doc"), at most 60
  * chars, ending with 4 random hex chars. Hindi titles fall back to "doc".
+ *
+ * Audit EPUB-014: computes the date fields through
+ * [java.time.ZonedDateTime] instead of the deprecated `Date.year/month/date`
+ * getters. Both resolve through the system-default zone (these getters *are*
+ * a wrap of Calendar.getInstance()) so the output string is byte-stable with
+ * the PWA slug contract — DateSlugEquivalenceTest pins the equivalence, do not
+ * switch the zone or the semantics without a cross-repo byte-check.
  */
 fun createDocSlug(title: String, date: Date = Date()): String {
+    val zoned = date.toInstant().atZone(java.time.ZoneId.systemDefault())
     val datePrefix = String.format(
         Locale.ROOT, "%04d-%02d-%02d",
-        date.year + 1900, date.month + 1, date.date
+        zoned.year, zoned.monthValue, zoned.dayOfMonth
     )
 
     var cleanTitle = Normalizer.normalize(title.lowercase(Locale.ROOT), Normalizer.Form.NFD)

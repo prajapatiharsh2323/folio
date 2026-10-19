@@ -27,10 +27,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -182,7 +182,7 @@ private fun TopBar(
             Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Toggle flow")
         }
         IconButton(onClick = onToc) {
-            Icon(Icons.Filled.FormatListBulleted, contentDescription = "Table of contents")
+            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "Table of contents")
         }
         IconButton(onClick = onBookmark) {
             Icon(Icons.Filled.Bookmark, contentDescription = "Add bookmark")
