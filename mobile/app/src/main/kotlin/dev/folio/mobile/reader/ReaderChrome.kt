@@ -229,7 +229,15 @@ private fun TypographyRow(
                 expanded = familyMenuOpen,
                 onDismissRequest = { familyMenuOpen = false }
             ) {
-                listOf("serif", "sans", "mono", "lora", "publisher").forEach { fam ->
+                // Audit EPUB-002: "lora" was removed — the module ships no
+                // Lora font, so the css font-family fell through to the
+                // viewer default and the menu entry was a ghost. To support
+                // it for real: bundle the TTF (OFL) + inject a @font-face
+                // into the Readium WebView, then verify on-device.
+                // Stored prefs with fontFamily="lora" keep working: the
+                // mapping pass-through (ReaderPrefsAndroid "else" branch)
+                // renders the same fallback as before.
+                listOf("serif", "sans", "mono", "publisher").forEach { fam ->
                     DropdownMenuItem(
                         text = { Text(fam) },
                         onClick = {
