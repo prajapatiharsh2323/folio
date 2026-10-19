@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes-jump (EPUB-010 partial, EPUB-018 tie-in) - **225/225 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes exact-text jump (EPUB-010 partial, EPUB-018) + bottom-pillar auto-hide + collections Details row-tap fix + folio-collections logcat trace (M-22) - **225/225 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
@@ -253,6 +253,39 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-22 (Oct 19, 2026)** — USER TESTING FIX ROUND (three bugs from
+  the manual-testing round of the `folio-mobile-debug-2026-10-19.apk`). Tests
+  + assembleDebug green; fresh APK replaced at the repo root.
+  - **Collections "unable to add from Details" — diagnose-then-fix.** Static
+    audit of every hop (DetailsDialog → setDocCollections → updateDocMeta →
+    refresh → filter chips) matched the covered JVM tests, so the failing hop
+    is device-side. Landed: (a) the collection checkbox row is now fully
+    tappable (PWA parity — previously only the bare Checkbox box toggled, so
+    tapping the label read as "can't add"); (b) debug-only `folio-collections`
+    logcat trace at each hop (details open, toggle, create, save ids, save
+    readback of memberships + meta.collectionIds) + a `Log.w` in
+    `getCollections` so a corrupt/unreadable collections.json can no longer
+    masquerade as "no collections". Next device run: `adb logcat -s
+    folio-collections` pinpoints the failing hop if the row-tap fix alone
+    doesn't clear it.
+  - **Bottom progress pillar auto-hide (user choice).** The always-floating
+    pillar covered the last lines of paginated AND scrolled pages (the
+    navigator container only pads system bars). `ReaderChrome` gained a
+    `pillarVisible` param — the pillar now follows the middle-third chrome
+    toggle (tap to show) and stays pinned while scrubbing, dropping ~1.2 s
+    after the drag ends. No layout reflow when it shows/hides.
+  - **Notes-tab jump lands on the exact highlighted text (EPUB-018
+    completion).** `locationTarget()` was chapter-granular by design. Now the
+    annotation's quote+context (always stored: `SelectionBridge` prefix/
+    quote/suffix) rides `createIntent` extras; the reader lands chapter-
+    accurate first (`AnnotationLocators.anchorIndex`), then fires a text-
+    quote `go()` on the navigator's FIRST locator emission — the same
+    `loadLocator` text-highlight priority proven by the EPUB-015 search-hit
+    jumps. Bookmarks (no quote) and any resolution failure degrade to the
+    chapter-start landing.
+  - Commits: `ec964f8` (collections fix) + `deb3e7d` (reader UX) + this
+    docs/APK commit.
 
 - **Session M-21 (Oct 19, 2026)** — AUDIT REMEDIATION CONTINUED: the
   device-gated items re-scoped against actual Readium 3.0.0 bytecode and two
