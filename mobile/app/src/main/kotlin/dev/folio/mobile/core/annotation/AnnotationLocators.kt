@@ -42,11 +42,11 @@ object AnnotationLocators {
         readingOrderHrefs.indexOfFirst { it == location }
             .takeIf { it >= 0 }
             ?.let { return it }
-        if (location.startsWith("/")) {
-            readingOrderHrefs.indexOfFirst { it == location.removePrefix("/").removePrefix("./") }
-                .takeIf { it >= 0 }
-                ?.let { return it }
-        }
+        val stripped = location.removePrefix("/").removePrefix("./")
+        readingOrderHrefs.indexOfFirst { it.removePrefix("/").removePrefix("./") == stripped }
+            .takeIf { it >= 0 }?.let { return it }
+        readingOrderHrefs.indexOfFirst { it.endsWith(location) || location.endsWith(it) }
+            .takeIf { it >= 0 }?.let { return it }
         return null
     }
 }

@@ -574,9 +574,11 @@ class LibraryManager(
 
     /** Creates a collection (PWA parity: fresh id, empty docIds, now). */
     suspend fun createCollection(name: String): Collection = mutexFor(K_COLLECTIONS).withLock {
+        val clean = name.trim()
+        require(clean.isNotEmpty()) { "Collection name cannot be blank" }
         val coll = Collection(
             id = uuidProvider(),
-            name = name,
+            name = clean,
             docIds = emptyList(),
             createdAt = nowIso()
         )

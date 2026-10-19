@@ -206,14 +206,8 @@ private fun TopBar(
                         onBookmark()
                     }
                 )
-                DropdownMenuItem(
-                    text = { Text("Highlight selection") },
-                    leadingIcon = { Icon(FolioIcons.PenLine, contentDescription = null) },
-                    onClick = {
-                        overflowOpen = false
-                        onHighlight()
-                    }
-                )
+                /* Highlight selection removed: highlights go through the ActionMode
+                   popup (see ReaderActivity selectionActionModeCallback). */
             }
         }
     }

@@ -635,8 +635,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                             library.setDocCollections(target.id, collectionIds)
                             library.updateDocMeta(target.id, tags = tags)
                         }
-                        detailsTarget = null
                         refresh()
+                        detailsTarget = null
                         if (BuildConfig.DEBUG) {
                             val readback = withContext(Dispatchers.IO) { appLibrary(context) }
                             android.util.Log.d(
@@ -662,7 +662,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.d("folio-collections", "details create collection: $name")
                 }
-                withContext(Dispatchers.IO) {
+                val created = withContext(Dispatchers.IO) {
                     try {
                         appLibrary(context).createCollection(name)
                     } catch (t: Throwable) {
@@ -671,6 +671,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         throw t
                     }
                 }
+                refresh()
+                created
             },
             onDismiss = { detailsTarget = null }
         )
@@ -921,7 +923,7 @@ private fun DetailsDialog(
     var selected by remember(item.id) { mutableStateOf(item.collectionIds.toSet()) }
     var tagInput by remember { mutableStateOf("") }
     var newCollName by remember { mutableStateOf("") }
-    var localCollections by remember(collections) { mutableStateOf(collections) }
+    var localCollections by remember(item.id) { mutableStateOf(collections) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(

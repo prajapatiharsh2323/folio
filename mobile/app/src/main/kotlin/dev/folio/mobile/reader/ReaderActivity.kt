@@ -81,6 +81,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.HyperlinkNavigator
@@ -620,6 +622,7 @@ class ReaderActivity : FragmentActivity() {
         return opener.open(asset, allowUserInteraction = true).getOrNull()
     }
 
+    @OptIn(androidx.compose.runtime.ExperimentalComposeApi::class)
     private fun attachNavigator(publication: Publication, docId: String, initialLocator: Locator) {
         val currentPrefs = prefsState.value
         val mappedPrefs = ReaderPrefsMapper.mapPrefs(currentPrefs, isSystemDark())
@@ -664,11 +667,42 @@ class ReaderActivity : FragmentActivity() {
                         mode: android.view.ActionMode,
                         item: android.view.MenuItem
                     ): Boolean {
+                        val navigator = navigatorRef ?: run { mode.finish(); return true }
                         when (item.itemId) {
-                            SEL_ITEM_HIGHLIGHT -> onHighlightTapped()
-                            SEL_ITEM_COPY -> onSelectionCopyTapped()
+                            SEL_ITEM_HIGHLIGHT -> lifecycleScope.launch(Dispatchers.Main) {
+                                val selection = navigator.currentSelection()
+                                mode.finish()
+                                if (selection == null) {
+                                    android.widget.Toast.makeText(
+                                        this@ReaderActivity, "Select text first", android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                    return@launch
+                                }
+                                val annotation = SelectionBridge.annotationFromSelection(
+                                    docId = currentDocId,
+                                    locator = selection.locator,
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    updatedAt = java.time.Instant.now().toString()
+                                )
+                                selectionAnnotation.value = annotation
+                                selectionLocator.value = selection.locator
+                                selectionToolbarVisible.value = true
+                            }
+                            SEL_ITEM_COPY -> lifecycleScope.launch(Dispatchers.Main) {
+                                val selection = navigator.currentSelection()
+                                mode.finish()
+                                if (selection == null) return@launch
+                                val quote = SelectionBridge.annotationFromSelection(
+                                    docId = currentDocId,
+                                    locator = selection.locator,
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    updatedAt = java.time.Instant.now().toString()
+                                ).quote
+                                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("Folio", quote))
+                                android.widget.Toast.makeText(this@ReaderActivity, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
-                        mode.finish()
                         return true
                     }
 
@@ -707,6 +741,7 @@ class ReaderActivity : FragmentActivity() {
             val annotations = withContext(Dispatchers.IO) {
                 LibraryManager(AppFileStore(filesDir)).getAnnotations(docId)
             }
+            snapshotFlow { readerReady.value }.first { it }
             manager.boot(annotations)
         }
     }
@@ -813,9 +848,8 @@ class ReaderActivity : FragmentActivity() {
     private fun onHighlightTapped() {
         val navigator = navigatorRef ?: return
         val docId = currentDocId
-        // currentSelection() drives the WebView — it must run on the MAIN
-        // thread (a Dispatchers.IO resume here crashes with
-        // "A WebView method was called on the wrong thread").
+        selectionAnnotation.value = null
+        selectionLocator.value = null
         lifecycleScope.launch(Dispatchers.Main) {
             val selection = navigator.currentSelection()
             if (selection == null) {
@@ -1051,7 +1085,7 @@ class ReaderActivity : FragmentActivity() {
         val navigator = navigatorRef ?: return
         val docId = currentDocId
         loadScope.launch {
-            val selection = navigator.currentLocator.value
+            val locator = navigator.currentLocator.first { it.href.toString().isNotBlank() }
             val now = java.time.Instant.now().toString()
             val annotation = Annotation(
                 id = java.util.UUID.randomUUID().toString(),
@@ -1059,7 +1093,7 @@ class ReaderActivity : FragmentActivity() {
                 quote = "",
                 prefix = "",
                 suffix = "",
-                location = ProgressBridge.buildProgress(docId, selection, now).location,
+                location = ProgressBridge.buildProgress(docId, locator, now).location,
                 kind = AnnotationKind.Bookmark,
                 createdAt = now,
                 updatedAt = now
