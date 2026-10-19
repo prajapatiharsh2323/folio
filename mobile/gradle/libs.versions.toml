@@ -14,6 +14,10 @@ activityCompose = "1.9.3"
 composeBom = "2024.10.01"
 junit = "4.13.2"
 junitExt = "1.2.1"
+googleApiClientAndroid = "2.7.0"
+googleApiServicesDrive = "v3-rev20251210-2.0.0"
+googleHttpClientGson = "1.44.1"
+playServicesAuth = "21.5.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +41,10 @@ readium-navigator = { group = "org.readium.kotlin-toolkit", name = "readium-navi
 androidx-fragment = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }
 androidx-activity = { group = "androidx.activity", name = "activity-ktx", version.ref = "activity" }
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
+google-api-client-android = { group = "com.google.api-client", name = "google-api-client-android", version.ref = "googleApiClientAndroid" }
+google-api-services-drive = { group = "com.google.apis", name = "google-api-services-drive", version.ref = "googleApiServicesDrive" }
+google-http-client-gson = { group = "com.google.http-client", name = "google-http-client-gson", version.ref = "googleHttpClientGson" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
