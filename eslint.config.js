@@ -14,7 +14,12 @@ export default tseslint.config(
       "**/coverage/**",
       "**/playwright-report/**",
       "**/.agents/**",
-      "**/design/**"
+      "**/design/**",
+      // Android build output (not part of the JS workspace)
+      "**/mobile/app/build/**",
+      "**/mobile/build/**",
+      "**/mobile/.gradle/**",
+      "**/mobile/.kotlin/**"
     ]
   },
   js.configs.recommended,
