@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.sync.DriveAuth
@@ -78,9 +79,20 @@ fun CloudSyncSection() {
             val outcome = runCatching { withContext(Dispatchers.IO) { manager.sync() } }
             busy = false
             progress = null
-            status = outcome.fold(
-                onSuccess = { describe(it) },
-                onFailure = { "Sync failed: ${it.message ?: it::class.simpleName}" },
+            outcome.fold(
+                onSuccess = { status = describe(it) },
+                onFailure = { error ->
+                    // The first Drive call needs the user to grant the
+                    // drive.file scope; the credential hands back a recovery
+                    // intent for exactly that.
+                    val recoverable = error as? UserRecoverableAuthIOException
+                    if (recoverable != null) {
+                        status = "Folio needs permission to use your Drive folder."
+                        runCatching { context.startActivity(recoverable.intent) }
+                    } else {
+                        status = "Sync failed: ${error.message ?: error::class.simpleName}"
+                    }
+                },
             )
         }
     }

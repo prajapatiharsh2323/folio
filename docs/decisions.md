@@ -174,3 +174,14 @@ To enable Google Drive sync, create a free OAuth 2.0 Web Client ID in the Google
    - Paste the Client ID into the input field and click **Sign In**.
    - Choose your Google account and grant permission for the `drive.file` scope.
    - Once connected, click **Sync Now** to mirror your library to Google Drive!
+
+## Phase 7: Android Cloud Sync (Google Drive Mirror)
+
+- **Offline-first, cloud as mirror**: the device library stays the source of truth. The cloud holds a mirror of the library, never a database. Nothing in the app requires the network to read or import a book.
+- **Same protocol as the PWA**: the Android app mirrors the library file by file into a Drive folder named `Folio Library`, with each file's relative path and SHA-256 in the Drive `appProperties` (`relPath`, `sha256`) and a local `sync/state.json` mapping path -> `{driveId, sha256, remoteModifiedAt}`. The manifest is uploaded **last** so the mirror never advertises a half-synced library. This is the `spec.md` §8 contract, so both apps speak the same layout.
+- **Scope `drive.file`** (same as the web app): Folio can only touch the files it created. It is a sensitive scope, but not a restricted one, so no security assessment is required for a public release. The trade-off is documented in `docs/mobile-cloud-sync.md`: with `drive.file` the access is granted per OAuth client, so the web app and the Android app cannot see each other's mirror files.
+- **Visible folder, not a hidden one**: the earlier plan (a single `folio-latest.zip` in `appDataFolder`) was replaced. A hidden app folder keeps the books out of reach of the user's browser, Drive app and other readers; the visible `Folio Library` folder is what makes "open my books anywhere" real, and it keeps the two apps on one protocol.
+- **Convergence rules ported from `packages/core/src/sync/sync-manager.ts`**: documents are diffed by content hash first, then by id; notes/progress/collections merge with the newer `updatedAt` winning; document ids are remapped when two devices imported the same book independently; deletions never propagate (version-one rule).
+- **Byte-stable JSON**: the merged user files are written with the same 2-space `JSON.stringify` shape as the PWA, so the two apps produce identical bytes and don't re-upload each other's work on every sync.
+- **Search corpus is rebuilt locally**: the mirror excludes the search index (spec §8), so a downloaded book would be invisible to search. The receiving device re-extracts the text from the downloaded original — cheap next to the download itself.
+- **Streaming uploads**: `FileStore.localFile` exposes the on-disk file so large EPUBs are uploaded from disk; uploads above 5 MB use Drive's resumable protocol, below that a plain multipart upload.

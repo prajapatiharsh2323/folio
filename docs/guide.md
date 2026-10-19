@@ -355,6 +355,14 @@ If you read on a phone and a laptop:
 2. Sync on Device B (downloads the updates and merges notes).
 3. Both devices now match seamlessly.
 
+### The Android app
+
+The native Android app (Folio for Android) mirrors the same library to the
+same `Folio Library` Drive folder: **Settings → Cloud sync → Connect Google
+Drive**, then **Sync now**. Setup, the `drive.file` limitation and the
+one-time OAuth client steps are documented in
+[`docs/mobile-cloud-sync.md`](./mobile-cloud-sync.md).
+
 ---
 
 ## 10. Windows Folder Mode (Direct Filesystem)
