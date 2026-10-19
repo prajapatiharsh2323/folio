@@ -64,7 +64,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -1355,16 +1354,20 @@ fun LibraryCard(
     var menuOpen by remember { mutableStateOf(false) }
 
     // Cover thumbnail: decoded off the main thread, LRU-cached in CoverLoader.
+    // remember(item.cover) resets to null and LaunchedEffect restarts per key,
+    // producing the same reset-and-redecode semantics produceState(key1 =…)
+    // would give. (Written as remember+LaunchedEffect because the Kotlin-2
+    // UAST bridge keeps failing to resolve `value =` in produceState producer
+    // lambdas, which produceState's own lint check then wrongly flags.)
     val context = LocalContext.current
     val store = remember { AppFileStore(context.filesDir) }
-    val coverBitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-        initialValue = null,
-        item.cover
-    ) {
-        value = item.cover?.let { rel ->
-            withContext(Dispatchers.IO) {
-                CoverLoader.decode(store, rel)?.asImageBitmap()
-            }
+    var coverBitmap by remember(item.cover) {
+        mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+    }
+    LaunchedEffect(item.cover) {
+        val rel = item.cover ?: return@LaunchedEffect
+        coverBitmap = withContext(Dispatchers.IO) {
+            CoverLoader.decode(store, rel)?.asImageBitmap()
         }
     }
 
