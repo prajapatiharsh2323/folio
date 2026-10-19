@@ -22,6 +22,8 @@ import dev.folio.mobile.core.model.ReadingPrefs
  * - `spread: none|auto|both`, `flow: paginated|scrolled`, `justify`,
  *   `hyphenate` map 1:1.
  * - `fontFamily: publisher` → null (don't override the publisher's choice).
+ * - `letterSpacing` / `paragraphSpacing` (audit EPUB-011): em pass-through to
+ *   the ReadiumCSS user vars — the schema's dormant settings are now real.
  */
 object ReaderPrefsMapper {
 
@@ -76,7 +78,17 @@ object ReaderPrefsMapper {
         /** Text color, 0xAARRGGBB. */
         val textArgb: Int,
         /** Font family key, null = honor publisher styles. */
-        val fontFamily: String?
+        val fontFamily: String?,
+        /**
+         * Audit EPUB-011: pass-through of the schema's dormant CSS prefs.
+         * Values are em-units in both the schema and ReadiumCSS
+         * (--USER__letterSpacing / --USER__paragraphSpacing): exact 1:1.
+         * The schema default is 0.0; ReaderPrefsAndroid maps that to null so
+         * untouched users do not gain explicit `0` styles that stomp publisher
+         * CSS hand-tuning.
+         */
+        val letterSpacing: Double = 0.0,
+        val paragraphSpacing: Double = 0.0
     )
 
     fun mapPrefs(prefs: ReadingPrefs, systemDark: Boolean = false): MappedReaderPrefs {
@@ -101,7 +113,9 @@ object ReaderPrefsMapper {
             },
             backgroundArgb = argbOf(tokens.bg),
             textArgb = argbOf(tokens.text),
-            fontFamily = prefs.fontFamily.takeUnless { it == "publisher" }
+            fontFamily = prefs.fontFamily.takeUnless { it == "publisher" },
+            letterSpacing = prefs.letterSpacing,
+            paragraphSpacing = prefs.paragraphSpacing
         )
     }
 

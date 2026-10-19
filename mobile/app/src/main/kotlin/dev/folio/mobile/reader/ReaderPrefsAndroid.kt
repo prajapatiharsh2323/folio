@@ -25,6 +25,11 @@ object ReaderPrefsAndroid {
         lineHeight = mapped.lineHeight,
         pageMargins = mapped.pageMargins,
         scroll = mapped.scroll,
+        // Audit EPUB-011: the schema's dormant spacing prefs are now real CSS.
+        // Schema default 0.0 → null (no explicit style, publisher rules stay in
+        // charge); any non-zero value is unambiguous user intent → pass 1:1 (em).
+        letterSpacing = mapped.letterSpacing.takeIf { it != 0.0 },
+        paragraphSpacing = mapped.paragraphSpacing.takeIf { it != 0.0 },
         columnCount = if (mapped.scroll) null else ColumnCount.AUTO,
         spread = when (mapped.spread) {
             "always" -> Spread.ALWAYS

@@ -24,6 +24,9 @@ class ReaderPrefsMapperTest {
         // exact PWA tokens (epub-engine.ts THEME_COLORS.light)
         assertEquals(0xFFFAFAF7.toInt(), m.backgroundArgb)
         assertEquals(0xFF1C1B19.toInt(), m.textArgb)
+        // Audit EPUB-011: dormant spacing fields ride along as em pass-through.
+        assertEquals(0.0, m.letterSpacing, 0.00001)
+        assertEquals(0.0, m.paragraphSpacing, 0.00001)
     }
 
     @Test
@@ -83,5 +86,18 @@ class ReaderPrefsMapperTest {
     fun `publisher font family disables the override`() {
         assertNull(ReaderPrefsMapper.mapPrefs(defaults.copy(fontFamily = "publisher")).fontFamily)
         assertEquals("lora", ReaderPrefsMapper.mapPrefs(defaults.copy(fontFamily = "lora")).fontFamily)
+    }
+
+    /**
+     * Audit EPUB-011: letterSpacing/paragraphSpacing are em pass-throughs —
+     * the schema-1 round-trip keeps them stable while making them real CSS.
+     */
+    @Test
+    fun `spacing prefs pass through as em values`() {
+        val m = ReaderPrefsMapper.mapPrefs(
+            defaults.copy(letterSpacing = 0.05, paragraphSpacing = 0.3)
+        )
+        assertEquals(0.05, m.letterSpacing, 0.00001)
+        assertEquals(0.3, m.paragraphSpacing, 0.00001)
     }
 }

@@ -211,11 +211,22 @@ data class ReadingPrefs(
     val margin: Double = 20.0,
     val justify: Boolean = false,
     val hyphenate: Boolean = false,
-    val paragraphSpacing: Double = 0.0,
-    val letterSpacing: Double = 0.0,
+    // Audit EPUB-011: letterSpacing + paragraphSpacing are byte-compat schema
+    // fields that now map 1:1 (em) into the Readium navigator (legend:
+    // ReaderPrefsMapper → ReaderPrefsAndroid).
+    val paragraphSpacing: Double = 0.0, // em
+    val letterSpacing: Double = 0.0, // em
+    // maxWidth stays byte-compat but is legacy-inert on mobile: it is the PWA
+    // reader's desktop text-column cap (px). Android's Readium navigator has
+    // no max-width preference, and injecting the CSS variable into the WebView
+    // would need on-device verification (audit EPUB-019) — deferred until that
+    // path exists.
     val maxWidth: Double = 720.0,
     val brightness: Double = 100.0,
     val flow: String = "paginated",
     val spread: String = "none",
+    // pdfZoom stays byte-compat but is commitment-dead: PDF support was
+    // deliberately removed (see ImportDispatch). Candidate for removal in a
+    // cross-repo schema revision only (dropping it breaks PWA round-trips).
     val pdfZoom: String = "fit-width"
 )
