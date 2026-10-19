@@ -559,7 +559,12 @@ class LibraryManager(
         if (!store.exists(collPath)) return emptyList()
         return runCatching {
             json.decodeFromString<List<Collection>>(store.readText(collPath))
-        }.getOrElse { emptyList() }
+        }.getOrElse {
+            // Never silent: a corrupt/unreadable collections.json must not
+            // masquerade as "no collections" in the details dialog.
+            android.util.Log.w("folio-collections", "collections.json unreadable", it)
+            emptyList()
+        }
     }
 
     suspend fun saveCollections(collections: List<Collection>): Unit =

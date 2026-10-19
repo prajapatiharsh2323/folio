@@ -554,12 +554,24 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
 
     // Details dialog: tags + collections (PWA DocumentSheet parity).
     detailsTarget?.let { target ->
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "folio-collections",
+                "details open: doc=${target.id} collectionIds=${target.collectionIds}"
+            )
+        }
         DetailsDialog(
             item = target,
             collections = collections,
             onSave = { tags, collectionIds ->
                 scope.launch {
                     try {
+                        if (BuildConfig.DEBUG) {
+                            android.util.Log.d(
+                                "folio-collections",
+                                "details save: doc=${target.id} tags=$tags collectionIds=$collectionIds"
+                            )
+                        }
                         withContext(Dispatchers.IO) {
                             val library = appLibrary(context)
                             library.setDocCollections(target.id, collectionIds)
@@ -567,13 +579,31 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         }
                         detailsTarget = null
                         refresh()
+                        if (BuildConfig.DEBUG) {
+                            val readback = withContext(Dispatchers.IO) { appLibrary(context) }
+                            android.util.Log.d(
+                                "folio-collections",
+                                "save readback: memberships=" +
+                                    readback.getCollections()
+                                        .associate { it.name to it.docIds.size } +
+                                    " docCollectionIds=" +
+                                    (readback.listDocuments()
+                                        .firstOrNull { it.id == target.id }?.collectionIds ?: "MISSING")
+                            )
+                        }
                         snackbar.showSnackbar("Saved")
                     } catch (t: Throwable) {
+                        if (BuildConfig.DEBUG) {
+                            android.util.Log.w("folio-collections", "details save failed", t)
+                        }
                         snackbar.showSnackbar(t.message ?: "Save failed")
                     }
                 }
             },
             onCreateCollection = { name ->
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.d("folio-collections", "details create collection: $name")
+                }
                 withContext(Dispatchers.IO) {
                     try {
                         appLibrary(context).createCollection(name)
@@ -887,7 +917,29 @@ private fun DetailsDialog(
                 } else {
                     Column {
                         for (coll in localCollections) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    // Whole-row tap: on the PWA the entire row
+                                    // toggles the checkbox, on the phone only the
+                                    // bare Checkbox did — read as "unable to add
+                                    // to collection" when tapping the label.
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val nowChecked = coll.id !in selected
+                                        selected = if (nowChecked) {
+                                            selected + coll.id
+                                        } else {
+                                            selected - coll.id
+                                        }
+                                        if (BuildConfig.DEBUG) {
+                                            android.util.Log.d(
+                                                "folio-collections",
+                                                "details toggle: ${coll.name} -> $nowChecked"
+                                            )
+                                        }
+                                    }
+                            ) {
                                 Checkbox(
                                     checked = coll.id in selected,
                                     onCheckedChange = { checked ->
