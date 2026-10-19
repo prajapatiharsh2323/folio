@@ -7,10 +7,15 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0–100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes — **188/188 tests green, assembleDebug green, per-book overrides + highlight flow VERIFIED ON DEVICE (M-19)**. TTS + PDF + audio dropped from v1 scope.
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + session M-20)** - **212/212 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
+0. **Verify the first mobile-ci run** (added 2026-10-19, M-20): every push now
+   runs `.github/workflows/mobile-ci.yml` (unit tests + assembleDebug +
+   lintDebug on ubuntu-latest). `gh` is not authenticated locally — check the
+   Actions tab once and confirm green; a red run explains itself from the
+   uploaded test/lint artifacts.
 1. **Batch 2 remaining polish** — page-turn animations (NOT exposed by Readium
    3.0.0 `EpubPreferences` — needs custom fragment/pager work or Readium upgrade,
    de-scope or decide), paragraph-snap scrolling (check Readium's reflowable
@@ -19,7 +24,8 @@
    extra). Per-book typography overrides are DONE (M-19).
 2. **Font packaging** — Devanagari/Literata: either bundle ttf + @font-face, or
    upgrade Kotlin→2.1.x to unlock Readium 3.1.2+ `FontFamilyDeclaration`.
-   Decision needed (own session).
+   Decision needed (own session). NOTE (M-20): the ghost "lora" menu option was
+   REMOVED; bundling lora for real would ride this same session.
 3. **R4** — footnote popups + media overlays (own session; TTS stays dropped).
 4. **Settings screen parity check** — Settings edits global defaults; reader now
    edits per-doc only. Add a hint row in Settings ("edits library-wide defaults;
@@ -63,9 +69,9 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 | R4 | Footnote popups, media overlays (**TTS dropped for now** — user, Oct 17 2026) | pending |
 | L1 | Library UI: real list screen (progress, delete, sort), SAF import (content-sniffed), ACTION_VIEW open-with, ImportDispatch; launcher icon from canonical `folio-logo.png` (b0863c4); EPUB covers: extraction + card thumbnails (fb2cb20); spec §4 Rule 2 recovery: damaged banner (59422ea) + interrupted imports finish/delete (3f6cae6); tags + collections: CRUD data APIs, details dialog, filter chips (051c94c); reader splash: cover + spinner while the navigator mounts (e2f8181); collections management: rename/delete dialog + filter rebind (f8b80a0) | **DONE** (01f5dfb — `.docs/results/L1-library.md`; icon M-11; covers M-12; recovery M-13/M-14; tags/collections M-15 — `.docs/results/L1-tags-collections.md`; reader splash M-16 — `.docs/results/L1-reader-splash.md`; collections management M-17 — `.docs/results/L1-collections-manage.md`) |
 | M4 | Search: in-memory MiniSearch port (normalise + Hindi stems + boosts 4/3/3/1 + snippet) + library search UI + reader jump; PWA `search.test.ts` golden cases all ported (SQLDelight/FTS5 dropped — decision 3) | **DONE** (da75560 + ecff505 — `.docs/results/M4-search.md`) |
-| M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | pending |
-| M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending |
-| M7 | CI: lint/detekt on PR, emulator instrumented job, AAB artifact, release-on-tag | pending |
+| M5 | Notes/collections/backup/Drive: streaming ZIP backup, merge/replace (typed REPLACE), WorkManager auto-backup, AppAuth + Drive REST mirror | **partial** — streaming backup core DONE in audit remediation (M-20, commits f37b830 + 3f49775: StagedArchive streaming restore/export, staged under file locks); WorkManager auto-backup + Drive mirror still pending |
+| M6 | Play hardening: signing, AAB, R8 rules, baseline profile, Data Safety, in-app updates | pending (allowBackup=false + data-extraction-rules landed with M-20) |
+| M7 | CI: lint/detekt on PR, emulator instrumented job, AAB artifact, release-on-tag | **partial** — mobile-ci workflow live (M-20, 423f0cf): unit tests + assembleDebug + lintDebug on every mobile push/PR with report artifacts; detekt + instrumented job + AAB/release still pending |
 
 ## Key decisions & rationale (do not re-litigate without user)
 
@@ -211,6 +217,71 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-20 (Oct 19, 2026)** — AUDIT REMEDIATION: P1/P2/P3 items from
+  `EPUB_READER_AUDIT_REPORT.md` fixed in small pushed batches
+  (3f49775 → c512265). **212/212 tests green, lintDebug green, assembleDebug
+  green.** Device-gated items (EPUB-010/012/015/018/019) intentionally remain
+  R3+; schema-1 byte-compat untouched throughout.
+  - **3f49775 — P1 data-safety (EPUB-005/006/008):** process-wide mutex
+    registry on LibraryManager for every user-file writer (progress/
+    annotations/collections/manifest restore), sorted-key `withLocks`,
+    non-reentrant discipline (private `*Locked()` helpers), `moveWithRetry`
+    for Windows rename races; reader onDestroy flush is fire-and-forget on a
+    process-lifetime scope (no runBlocking); allowBackup=false (+ later
+    data-extraction-rules). New LibraryManagerConcurrencyTest.
+  - **f37b830 — EPUB-007 streaming + EPUB-006 Settings:** restore/export
+    stage the ZIP to a temp file (`StagedArchive`, 64 KiB chunks, delete on
+    close) and read entry-by-entry; `VerificationResult` no longer holds an
+    in-RAM entry map; restore mutation phase runs under the manager's 4 file
+    locks; Settings export/restore are suspend on `Dispatchers.IO` with UI
+    updates marshalled back to Main. BackupRestoreStreamingTest (120-doc
+    multi-MB round-trip, lazy reads, unicode producer parity, trailing-junk).
+  - **b4db671 — EPUB-001:** dropped `application/octet-stream` from the
+    import picker and the ACTION_VIEW manifest filter (the pipeline refuses
+    it → guaranteed dead-end UX); ImportMimeContractTest pins the advertised
+    set (first app-package test).
+  - **ae1b43c — EPUB-016 + EPUB-009:** the five real Hindi EPUBs from
+    `sample/` are checked into `app/src/test/resources/fixtures/` (byte-stable,
+    sha256-pinned; ASCII copies of the Devanagari-named originals) and parsed
+    by EpubCorpusTest with per-fixture goldens (title/author/language/
+    chapters/wordCount incl. the 54-chapter Osho अंतर की खोज), spine-density
+    + hash-roundtrip invariants, and a real-data DRM refusal test. Golden
+    strings were derived via codepoint dumps (Windows console mangles
+    Devanagari — do not eyeball these).
+  - **423f0cf — EPUB-017:** `.github/workflows/mobile-ci.yml` (temurin 17,
+    test + assembleDebug + lintDebug, test/lint artifacts, path-filtered,
+    concurrency-cancel); `mobile/gradlew` exec bit restored for Linux. Lint
+    made green to gate: `ProduceStateDoesNotAssignValue` at MainActivity cover
+    thumbnail was unresolvable under the K2 UAST bridge → restructured to
+    remember(item.cover) + LaunchedEffect (same semantics); AppLinkUrlError
+    suppressed with justification on the MIME-only VIEW filter;
+    res/xml/data_extraction_rules.xml added (12+ backup-off intent, no-op with
+    allowBackup=false). First run not yet verified (gh unauthenticated).
+  - **238266d — EPUB-013/003:** dead `importFromUri` deleted (runImport is the
+    one import path); Settings "Storage" now shows `directoryBytes(filesDir)`
+    ("Folio uses X MB" + device free space) instead of the whole app partition
+    (StatFs totalBytes/availableBytes).
+  - **48a3e53 — EPUB-002:** ghost "lora" option removed from the typography
+    menu (no font shipped; fallback rendering lied). Stored lora prefs keep
+    the same pass-through rendering; real support needs TTF bundling +
+    WebView @font-face + device verification.
+  - **74b94ba — EPUB-014:** LocalLifecycleOwner → androidx.lifecycle.compose;
+    Sort/FormatListBulleted → AutoMirrored icons; createDocSlug date prefix
+    migrated from deprecated Date getters to ZonedDateTime with an
+    equivalence test pinning byte-stable output (contentHash untouched — no
+    schema drift). BackupJson ExperimentalSerializationApi item was already
+    moot.
+  - **c512265 — EPUB-011:** dormant letterSpacing/paragraphSpacing now map 1:1
+    (em) into Readium's EpubPreferences; 0.0 schema default → null (publisher
+    CSS stays in charge for untouched users); maxWidth/pdfZoom documented as
+    legacy-inert (no navigator slot; desktop-column concept / PDF dropped).
+    ReaderPrefsAndroidSpacingTest added.
+  - Verification summary: `:app:testDebugUnitTest` 212/212 green;
+    `:app:lintDebug` exits 0 (remaining warnings = version-update noise + a
+    few style items, visible in the uploaded lint report); assembleDebug OK.
+  - **Next session:** verify the first mobile-ci run on GitHub Actions; then
+    the standing NEXT SESSION list (Batch 2 polish / font packaging / R4).
 
 - **Session M-19 (Oct 18, 2026)** — Batch 2 partial: per-book typography
   overrides + WebView selection bar + MAIN-THREAD CRASH FIXES (commits f2c0565,
