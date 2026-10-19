@@ -44,6 +44,7 @@ import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.PrefsStore
+import dev.folio.mobile.core.store.directoryBytes
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -204,14 +205,22 @@ fun SettingsScreen() {
     }
 }
 
+/**
+ * Audit EPUB-003: the stat was StatFs on filesDir labelled "Used" — that is
+ * the whole app partition (dozens of GB), functionally static device info.
+ * The actual signal for "how big is my library" is folio's own payload:
+ * byte sum of everything under filesDir (schema-1 library + prefs + backups).
+ * Free space on the partition stays as secondary info.
+ */
 private fun storageInfo(context: Context): String {
     val dir = context.filesDir
-    val stat = StatFs(dir.absolutePath)
-    val total = stat.totalBytes
-    val free = stat.availableBytes
-    val used = total - free
-    return "Used: ${used / (1024 * 1024)} MB of ${total / (1024 * 1024)} MB"
+    val folioBytes = directoryBytes(dir)
+    val free = StatFs(dir.absolutePath).availableBytes
+    return "Folio uses ${formatMb(folioBytes)} — ${formatMb(free)} free on device"
 }
+
+private fun formatMb(bytes: Long): String =
+    String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0))
 
 /**
  * Streams a verified, PWA-compatible backup ZIP (entries added one file at a

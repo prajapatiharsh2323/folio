@@ -141,33 +141,6 @@ class MainActivity : ComponentActivity() {
 private fun appLibrary(context: android.content.Context): LibraryManager =
     LibraryManager(AppFileStore(context.filesDir))
 
-/**
- * Reads the SAF uri, routes through [ImportDispatch] (content-based detection),
- * and commits unless the same bytes are already in the library.
- * Returns false ONLY for the duplicate case; throws for read/import failures.
- */
-private suspend fun importFromUri(
-    context: android.content.Context,
-    uri: Uri
-): Boolean = withContext(Dispatchers.IO) {
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        ?: throw IOException("Cannot read the selected file")
-    // Guard against OOM on huge files (no streaming reader exists yet).
-    if (bytes.size > 50 * 1024 * 1024) {
-        throw IOException("File too large (max 50 MB)")
-    }
-    val displayName = uri.lastPathSegment?.substringAfterLast('/')
-        ?.takeIf { it.isNotBlank() } ?: "import"
-    val result = ImportDispatch.import(bytes, displayName)
-    val library = appLibrary(context)
-    if (library.findDuplicate(result.meta.contentHash) != null) {
-        false
-    } else {
-        library.addDocument(result)
-        true
-    }
-}
-
 /** Sample import kept for the blocked device-smoke flow (no files needed). */
 private suspend fun runSample(context: android.content.Context) {
     withContext(Dispatchers.IO) {
