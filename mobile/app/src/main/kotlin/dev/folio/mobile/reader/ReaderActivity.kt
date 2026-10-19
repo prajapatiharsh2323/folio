@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -65,6 +66,7 @@ import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.reader.PageTurnKeys
 import dev.folio.mobile.core.reader.ProgressBridge
 import dev.folio.mobile.core.reader.ReaderPrefsMapper
+import dev.folio.mobile.core.reader.ReaderSearch
 import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.DocPrefsStore
@@ -88,6 +90,7 @@ import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.LocatorService
+import org.readium.r2.shared.publication.services.search.SearchService
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.Url
 import org.readium.r2.shared.util.mediatype.MediaType
@@ -203,6 +206,24 @@ class ReaderActivity : FragmentActivity() {
     private val selectionAnnotation = mutableStateOf<Annotation?>(null)
     private val selectionLocator = mutableStateOf<Locator?>(null)
 
+    // ---- In-book search state (EPUB-015) ----
+
+    /** Search sheet visibility + live query text. */
+    private val searchVisible = mutableStateOf(false)
+    private val searchQuery = mutableStateOf("")
+
+    /** Streaming results (painted batch-by-batch as the iterator yields). */
+    private val searchHits = mutableStateOf<List<ReaderSearch.Hit>>(emptyList())
+
+    /** Sheet footer state: running spinner / terminal message / ran-at-least-once. */
+    private val searchBusy = mutableStateOf(false)
+    private val searchError = mutableStateOf<String?>(null)
+    private val searchCompleted = mutableStateOf(false)
+
+    /** Locators parallel to [searchHits] — tap index → navigator.go. */
+    private var searchLocators: List<Locator> = emptyList()
+    private var searchJob: Job? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
             // The OS killed the process mid-session: the navigator can only be
@@ -254,6 +275,7 @@ class ReaderActivity : FragmentActivity() {
                     onHighlight = { onHighlightTapped() },
                     onBookmark = { onBookmarkTapped() },
                     onToc = { tocVisible.value = true },
+                    onSearch = { searchVisible.value = true },
                     onScrub = { p -> pillarPercent.value = p },
                     onScrubFinished = { p -> scrubTo(p) },
                     pillarTitle = pillarTitle.value,
@@ -268,6 +290,19 @@ class ReaderActivity : FragmentActivity() {
                         entries = tocEntries.value,
                         onEntry = { onTocEntryTapped(it) },
                         onDismiss = { tocVisible.value = false }
+                    )
+                }
+                if (searchVisible.value) {
+                    SearchSheet(
+                        query = searchQuery.value,
+                        busy = searchBusy.value,
+                        error = searchError.value,
+                        completed = searchCompleted.value,
+                        hits = searchHits.value,
+                        onQueryChange = { searchQuery.value = it },
+                        onSubmit = { onSearchSubmit() },
+                        onHit = { index -> onSearchResultTapped(index) },
+                        onDismiss = { onSearchClose() }
                     )
                 }
                 if (selectionToolbarVisible.value) {
@@ -834,6 +869,87 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
+    // ---- In-book search (EPUB-015) ----
+
+    /**
+     * Runs the PWA-style full-text search through the publication's
+     * Readium `SearchService` (`StringSearchService`, auto-registered by the
+     * parser). The iterator streams per-resource batches, so the sheet repaints
+     * while long books are still walking. Iteration over publication
+     * resources is plain IO (no WebView), so this runs on IO; hit jumps hop to
+     * Main like every other navigator call.
+     */
+    private fun onSearchSubmit() {
+        val publication = publicationRef ?: return
+        val query = searchQuery.value.trim()
+        if (!ReaderSearch.isRunnableQuery(query)) return
+        searchJob?.cancel()
+        searchHits.value = emptyList()
+        searchLocators = emptyList()
+        searchError.value = null
+        searchCompleted.value = false
+        searchBusy.value = true
+        searchJob = loadScope.launch(Dispatchers.IO) {
+            val iterator = try {
+                publication.findService(SearchService::class)
+                    ?.search(query, SearchService.Options())
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null // "search failed" surfaces post-run; never crash the scope.
+            }
+            if (iterator == null) {
+                searchError.value = "Search failed."
+                searchBusy.value = false
+                searchCompleted.value = true
+                return@launch
+            }
+            val hits = mutableListOf<ReaderSearch.Hit>()
+            val locators = mutableListOf<Locator>()
+            val outcome = iterator.forEach { collection ->
+                for (locator in collection.locators) {
+                    if (hits.size >= ReaderSearch.MAX_HITS) break
+                    hits.add(ReaderSearch.hitFromLocator(locator))
+                    locators.add(locator)
+                }
+                // Paint after each resource batch (streaming results).
+                searchHits.value = hits.toList()
+                searchLocators = locators.toList()
+            }
+            searchBusy.value = false
+            searchCompleted.value = true
+            searchError.value = when {
+                hits.isNotEmpty() -> null // partial results are still useful
+                outcome.isFailure -> "Search failed."
+                else -> null // a clean zero-result walk
+            }
+            iterator.close()
+        }
+    }
+
+    /** Closes the sheet and stops any in-flight walk. */
+    private fun onSearchClose() {
+        searchVisible.value = false
+        searchJob?.cancel()
+        searchJob = null
+        searchBusy.value = false
+    }
+
+    /**
+     * Jump at the hit's text anchor. `go()` reuses the reflowable page's
+     * `loadLocator` priority (text.highlight → htmlId → progression), so this
+     * lands on the matched text, not the chapter head.
+     */
+    private fun onSearchResultTapped(index: Int) {
+        val locator = searchLocators.getOrNull(index) ?: return
+        val navigator = navigatorRef ?: return
+        searchJob?.cancel()
+        searchVisible.value = false
+        lifecycleScope.launch(Dispatchers.Main) {
+            navigator.go(locator, false)
+        }
+    }
+
     /** Navigator wires external links to a browser. */
     private fun readerListener() = object : EpubNavigatorFragment.Listener {
         override fun onExternalLinkActivated(absoluteUrl: AbsoluteUrl) {
@@ -1063,6 +1179,102 @@ private fun TocSheet(
                                 maxLines = 2,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * In-book search sheet (EPUB-015): query box + streamed hit list. Tapping a
+ * cell jumps to the matched text anchor and dismisses the sheet.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchSheet(
+    query: String,
+    busy: Boolean,
+    error: String?,
+    completed: Boolean,
+    hits: List<ReaderSearch.Hit>,
+    onQueryChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onHit: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        androidx.compose.foundation.layout.Column(
+            modifier = androidx.compose.ui.Modifier.padding(16.dp)
+        ) {
+            Text("Search in book", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                placeholder = { Text("Find in book\u2026") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onSearch = { onSubmit() }
+                ),
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+            )
+            androidx.compose.foundation.layout.Row(
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    when {
+                        error != null -> error
+                        busy -> "Searching\u2026"
+                        hits.isNotEmpty() -> "${hits.size} result${if (hits.size == 1) "" else "s"}"
+                        completed -> "No results."
+                        else -> "Two characters minimum."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = androidx.compose.ui.Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onSubmit,
+                    enabled = !busy && ReaderSearch.isRunnableQuery(query)
+                ) { Text("Search") }
+            }
+            if (busy) {
+                androidx.compose.material3.LinearProgressIndicator(
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = androidx.compose.ui.Modifier.heightIn(max = 340.dp)
+            ) {
+                items(hits.size) { i ->
+                    val hit = hits[i]
+                    TextButton(
+                        onClick = { onHit(i) },
+                        modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                    ) {
+                        androidx.compose.foundation.layout.Column {
+                            Text(
+                                hit.snippet,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            hit.sectionTitle?.let { title ->
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }

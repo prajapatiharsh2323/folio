@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -76,6 +77,7 @@ fun ReaderChrome(
     onHighlight: () -> Unit = {},
     onBookmark: () -> Unit = {},
     onToc: () -> Unit = {},
+    onSearch: () -> Unit = {},
     onScrub: (Double) -> Unit = {},
     onScrubFinished: (Double) -> Unit = {},
     timeLeft: String? = null,
@@ -102,7 +104,7 @@ fun ReaderChrome(
                 )
             ) {
                 Column {
-                    TopBar(prefs, onBack, onPrefsChange, onHighlight, onBookmark, onToc)
+                    TopBar(prefs, onBack, onPrefsChange, onHighlight, onBookmark, onToc, onSearch)
                     TypographyRow(prefs, text, onPrefsChange, perBookOverride, onResetPerBook)
                 }
             }
@@ -132,12 +134,19 @@ private fun TopBar(
     onPrefsChange: (ReadingPrefs) -> Unit,
     onHighlight: () -> Unit,
     onBookmark: () -> Unit = {},
-    onToc: () -> Unit = {}
+    onToc: () -> Unit = {},
+    onSearch: () -> Unit = {}
 ) {
     var themeMenuOpen by remember { mutableStateOf(false) }
 
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        modifier = Modifier
+            // Ten 48dp-dp targets overflow narrow screens — scroll to reach the
+            // trailing buttons instead of clipping (same bailout as the row
+            // below; pre-existing issue surfaced by the search icon).
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack) {
@@ -183,6 +192,10 @@ private fun TopBar(
         }
         IconButton(onClick = onToc) {
             Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "Table of contents")
+        }
+        // Audit EPUB-015: in-book search (Readium SearchService → locator jumps).
+        IconButton(onClick = onSearch) {
+            Icon(Icons.Filled.Search, contentDescription = "Search in book")
         }
         IconButton(onClick = onBookmark) {
             Icon(Icons.Filled.Bookmark, contentDescription = "Add bookmark")
