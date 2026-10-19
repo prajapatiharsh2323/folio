@@ -60,6 +60,7 @@ import dev.folio.mobile.ui.components.FolioSectionHeader
 import dev.folio.mobile.ui.components.FolioSettingsGroup
 import dev.folio.mobile.ui.components.FolioSettingsRow
 import dev.folio.mobile.ui.icons.FolioIcons
+import dev.folio.mobile.ui.sync.CloudSyncSection
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import dev.folio.mobile.ui.theme.FolioSpacing
 import kotlinx.coroutines.Dispatchers
@@ -312,6 +313,10 @@ fun SettingsScreen() {
                     modifier = Modifier.padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x2),
                 )
             }
+
+            FolioSectionHeader(text = "Cloud sync")
+
+            CloudSyncSection()
 
             FolioSectionHeader(text = "Storage")
 
