@@ -24,9 +24,11 @@ object ProgressBridge {
     /**
      * Spine index encoded in a CFI's first path component.
      * `epubcfi(/6/<even>!/...)` where the even ref = 2*(spineIndex+1).
-     * Used for chapter-accurate restore in v1 (within-chapter offset stays an
-     * open item — Readium 3.0.0 ships no CFI parser: org.readium has no Cfi
-     * classes; verified via AAR class list).
+     * Drives chapter-accurate restore; the within-chapter offset is
+     * recomputed from the saved total percent via [ReaderResume]
+     * (Readium 3.0.0 ships no CFI parser: org.readium has no Cfi classes
+     * and the reflowable scripts have no epubcfi support — verified via the
+     * AAR class list and injected assets).
      */
     fun cfiSpineIndex(cfi: String): Int? {
         if (!cfi.startsWith(CFI_PREFIX)) return null

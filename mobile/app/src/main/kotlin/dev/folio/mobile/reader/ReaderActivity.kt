@@ -66,6 +66,7 @@ import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.reader.PageTurnKeys
 import dev.folio.mobile.core.reader.ProgressBridge
 import dev.folio.mobile.core.reader.ReaderPrefsMapper
+import dev.folio.mobile.core.reader.ReaderResume
 import dev.folio.mobile.core.reader.ReaderSearch
 import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
@@ -119,8 +120,11 @@ internal val flushScope: CoroutineScope =
  * live ([EpubNavigatorFragment.submitPreferences]) and persist back to the same
  * file — byte-compatible with the schema-1 backup contract.
  *
- * Restore-by-CFI (exact) is an open R1 item; v1 restores by saved percent via
- * the publication's LocatorService.
+ * Restore: jumps beat saved progress (library-search spine order, then the
+ * notes/bookmarks location extra); with saved progress, the CFI's spine
+ * component picks the CHAPTER and the within-chapter offset is recomputed
+ * from the saved total percent over PositionsService (EPUB-010 partial —
+ * exact text-anchor CFI restore is gated on a Readium upgrade, EPUB-012).
  */
 class ReaderActivity : FragmentActivity() {
 
@@ -128,6 +132,8 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_DOC_ID = "dev.folio.mobile.READER_DOC_ID"
         /** 1-based spine order for a search-hit jump; 0 = resume normally. */
         const val EXTRA_TARGET_ORDER = "dev.folio.mobile.READER_TARGET_ORDER"
+        /** Saved location string (epubcfi or href fallback) to jump to on open. */
+        const val EXTRA_TARGET_LOCATION = "dev.folio.mobile.READER_TARGET_LOCATION"
         private const val NAV_TAG = "EpubNavigatorFragment"
 
         /** Custom floating selection-bar item ids (PWA parity). */
@@ -147,6 +153,15 @@ class ReaderActivity : FragmentActivity() {
             Intent(context, ReaderActivity::class.java)
                 .putExtra(EXTRA_DOC_ID, docId)
                 .putExtra(EXTRA_TARGET_ORDER, targetOrder)
+
+        /**
+         * Notes/bookmarks jump (EPUB-018 tie-in): open at the annotation's
+         * saved location string (Progress.location format).
+         */
+        fun createIntent(context: Context, docId: String, targetLocation: String): Intent =
+            Intent(context, ReaderActivity::class.java)
+                .putExtra(EXTRA_DOC_ID, docId)
+                .putExtra(EXTRA_TARGET_LOCATION, targetLocation)
     }
 
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -443,25 +458,39 @@ class ReaderActivity : FragmentActivity() {
             return
         }
 
-        // v1 restore: chapter-accurate via the saved CFI's spine component;
-        // percent fallback when the location has no CFI (TXT-era/href fallback).
-        // An explicit search-hit jump (EXTRA_TARGET_ORDER) beats any restore.
+        // Restore: explicit jumps (library-search spine, notes/bookmark
+        // location) beat saved progress; saved CFI → chapter from its spine
+        // component with the within-chapter offset recomputed from the saved
+        // total percent (EPUB-010 partial); saved percent → deep locator;
+        // nothing → first spine item.
         val savedProgress: Progress? = library.getProgress(docId)
         // Restore accumulated pace from previous sessions (optional field).
         paceState = savedProgress?.pace
         var initialLocator: Locator? = null
         val targetOrder = intent?.getIntExtra(EXTRA_TARGET_ORDER, 0) ?: 0
         val targetSpine = targetOrder - 1
+        val targetLocation = intent?.getStringExtra(EXTRA_TARGET_LOCATION)
         if (targetOrder > 0 && publication.readingOrder.getOrNull(targetSpine) != null) {
             publication.readingOrder[targetSpine].let { link ->
                 initialLocator = chapterLocator(link)
             }
         } else {
-            if (savedProgress != null && savedProgress.location.startsWith(ProgressBridge.CFI_PREFIX)) {
+            if (!targetLocation.isNullOrBlank()) {
+                // Notes/bookmarks jump (EPUB-018): chapter-accurate at the
+                // saved location's resource.
+                initialLocator = locationTarget(publication, targetLocation)
+            }
+            if (initialLocator == null && savedProgress != null &&
+                savedProgress.location.startsWith(ProgressBridge.CFI_PREFIX)
+            ) {
                 val spineIdx = ProgressBridge.cfiSpineIndex(savedProgress.location)
                 if (spineIdx != null) {
                     publication.readingOrder.getOrNull(spineIdx)?.let { link ->
-                        initialLocator = chapterLocator(link)
+                        // EPUB-010 partial: refines chapter-start into an
+                        // in-chapter fraction from the saved percent.
+                        initialLocator = refinedChapterLocator(
+                            publication, savedProgress.percent, spineIdx, link
+                        )
                     }
                 }
             }
@@ -813,6 +842,69 @@ class ReaderActivity : FragmentActivity() {
             href = link.href.resolve(Url("/")),
             mediaType = MediaType.XHTML
         )
+
+    /**
+     * Notes/bookmark jump target (EPUB-018 tie-in): resolves a saved
+     * Progress-format location string to a chapter-accurate locator. CFI
+     * locations decompose through [ProgressBridge.cfiSpineIndex]; the
+     * TXT-era href fallback matches against the reading order. Null → the
+     * caller keeps its normal restore.
+     */
+    private fun locationTarget(publication: Publication, target: String): Locator? {
+        if (target.startsWith(ProgressBridge.CFI_PREFIX)) {
+            val spineIdx = ProgressBridge.cfiSpineIndex(target) ?: return null
+            return publication.readingOrder.getOrNull(spineIdx)?.let { chapterLocator(it) }
+        }
+        val href = target.substringBefore('#').trim()
+        if (href.isBlank()) return null
+        return publication.readingOrder
+            .lastOrNull { link -> link.href.toString().endsWith(href) }
+            ?.let { chapterLocator(it) }
+    }
+
+    /**
+     * EPUB-010 partial: turns the chapter-start locator into an in-chapter
+     * progression. The saved CFI carries no resolvable text anchor (Readium
+     * 3.0.0 has no CFI parser, and the reflowable scripts contain no
+     * epubcfi handling — verified via the AAR), but the reflowable page's
+     * loadLocator honors `locations.progression`. We recompute that offset
+     * from the saved total percent minus the chapter's total-progression
+     * span (PositionsService — the same service locateProgression uses;
+     * left on Main per the coroutine etiquette noted at open).
+     *
+     * Falls back to the plain chapter-start locator whenever the positions
+     * span is unusable (no positions service, empty chapter, degenerate
+     * span, or the saved percent doesn't fall inside the chapter).
+     */
+    private suspend fun refinedChapterLocator(
+        publication: Publication,
+        savedPercent: Double,
+        spineIndex: Int,
+        link: Link
+    ): Locator = withContext(Dispatchers.Main) {
+        val spans = runCatching {
+            publication.findService(org.readium.r2.shared.publication.services.PositionsService::class)
+                ?.positionsByReadingOrder()
+        }.getOrNull()
+        val start = spans?.getOrNull(spineIndex)
+            ?.firstOrNull()
+            ?.locations?.totalProgression
+        if (start == null) return@withContext chapterLocator(link)
+        val nextStart = spans.orEmpty()
+            .drop(spineIndex + 1)
+            .firstNotNullOfOrNull { later -> later.firstOrNull()?.locations?.totalProgression }
+            ?: 1.0
+        val fraction = ReaderResume.inChapterFraction(
+            percentTotal = savedPercent / 100.0,
+            startTotal = start,
+            nextStartTotal = nextStart
+        ) ?: return@withContext chapterLocator(link)
+        Locator(
+            href = link.href.resolve(Url("/")),
+            mediaType = MediaType.XHTML,
+            locations = Locator.Locations(progression = fraction)
+        )
+    }
 
     /** Flattens a (possibly nested) TOC into a depth-annotated list. */
     private fun flattenToc(links: List<Link>, depth: Int): List<TocEntry> {

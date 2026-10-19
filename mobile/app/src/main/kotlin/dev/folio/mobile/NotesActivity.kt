@@ -121,7 +121,13 @@ fun NotesScreen() {
                                     .weight(1f)
                                     .padding(vertical = 8.dp)
                                     .clickable {
-                                        context.startActivity(ReaderActivity.createIntent(context, a.docId))
+                                        // EPUB-018 tie-in: jump back to the
+                                        // annotation's saved location.
+                                        context.startActivity(
+                                            ReaderActivity.createIntent(
+                                                context, a.docId, a.location ?: ""
+                                            )
+                                        )
                                     }
                             ) {
                                 Text(
