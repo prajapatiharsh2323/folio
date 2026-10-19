@@ -25,14 +25,15 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Open imported docs from other apps (file managers). Content
-                 detection handles the format, so accept broad base types. -->
+            <!-- Open imported docs from other apps (file managers). Only types
+                 the pipeline actually accepts are listed (audit EPUB-001):
+                 octet-stream is refused by ImportDispatch, so advertising it
+                 launched users into the "Unsupported format" dead-end. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.OPENABLE" />
                 <data android:mimeType="application/epub+zip" />
-                <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="text/html" />
                 <data android:mimeType="text/plain" />
             </intent-filter>

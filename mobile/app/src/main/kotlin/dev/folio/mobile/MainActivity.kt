@@ -113,9 +113,12 @@ import java.io.IOException
 class MainActivity : ComponentActivity() {
 
     companion object {
+        // Audit EPUB-001: the pipeline refuses anything that is not EPUB/HTML/
+        // TXT (PDF/mobi deliberately unsupported), so the picker must not
+        // advertise application/octet-stream — selecting a PDF or .mobi there
+        // always ended in the "Unsupported format" dead-end.
         val IMPORT_MIMES = arrayOf(
             "application/epub+zip",
-            "application/octet-stream",
             "text/html",
             "text/plain"
         )
