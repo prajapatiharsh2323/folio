@@ -1,0 +1,60 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig
+> Task :app:generateDebugResValues
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:checkDebugAarMetadata
+> Task :app:packageDebugResources
+> Task :app:parseDebugLocalResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebug
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugResources
+> Task :app:processDebugResources
+
+> Task :app:compileDebugKotlin
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/core/backup/BackupJson.kt:16:5 This declaration needs opt-in. Its usage should be marked with '@kotlinx.serialization.ExperimentalSerializationApi' or '@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)'
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:639:51 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:689:19 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:907:48 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1100:29 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1100:41 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1101:23 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1101:37 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1101:51 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1107:17 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1115:27 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1115:36 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1129:17 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1129:25 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1132:13 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1132:22 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderActivity.kt:1161:22 Base declaration of supertype 'Listener' needs opt-in. This API is still experimental. It might change in the future without notice. The declaration override should be annotated with '@org.readium.r2.shared.ExperimentalReadiumApi' or '@OptIn(org.readium.r2.shared.ExperimentalReadiumApi::class)'
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderPrefsAndroid.kt:21:80 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderPrefsAndroid.kt:33:52 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderPrefsAndroid.kt:33:64 This API is still experimental. It might change in the future without notice.
+w: file:///D:/folio/mobile/app/src/main/kotlin/dev/folio/mobile/reader/ReaderPrefsAndroid.kt:57:67 This API is still experimental. It might change in the future without notice.
+
+> Task :app:compileDebugJavaWithJavac
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///D:/folio/mobile/app/src/test/kotlin/dev/folio/mobile/core/util/HashingTest.kt:86:43 'var year: Int' is deprecated. Deprecated in Java.
+w: file:///D:/folio/mobile/app/src/test/kotlin/dev/folio/mobile/core/util/HashingTest.kt:87:44 'var month: Int' is deprecated. Deprecated in Java.
+w: file:///D:/folio/mobile/app/src/test/kotlin/dev/folio/mobile/core/util/HashingTest.kt:88:42 'var date: Int' is deprecated. Deprecated in Java.
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 52s
+24 actionable tasks: 24 executed

@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -34,6 +35,16 @@ android {
                 storePassword = props.getProperty("storePassword")
                 keyAlias = props.getProperty("keyAlias")
                 keyPassword = props.getProperty("keyPassword")
+            } else {
+                // No keystore.properties: sign with the debug keystore so
+                // `assembleRelease` still produces an installable APK.
+                val debugKeystore = File(System.getProperty("user.home"), ".android/debug.keystore")
+                if (debugKeystore.exists()) {
+                    this.storeFile = debugKeystore
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                }
             }
         }
     }
