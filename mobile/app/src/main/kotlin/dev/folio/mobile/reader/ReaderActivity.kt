@@ -55,6 +55,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dev.folio.mobile.R
 import dev.folio.mobile.core.annotation.SelectionBridge
+import dev.folio.mobile.core.annotation.AnnotationLocators
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Annotation
@@ -134,6 +135,16 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_TARGET_ORDER = "dev.folio.mobile.READER_TARGET_ORDER"
         /** Saved location string (epubcfi or href fallback) to jump to on open. */
         const val EXTRA_TARGET_LOCATION = "dev.folio.mobile.READER_TARGET_LOCATION"
+        /**
+         * Text-quote context for the notes-tab jump: with a non-blank
+         * highlight + context the reader issues a second `go()` on a
+         * text-quote locator once the initial chapter renders, landing on the
+         * highlighted text itself (the same loadLocator text-highlight
+         * priority the in-book search-hit jumps use, EPUB-015).
+         */
+        const val EXTRA_TEXT_PREFIX = "dev.folio.mobile.READER_TEXT_PREFIX"
+        const val EXTRA_TEXT_HIGHLIGHT = "dev.folio.mobile.READER_TEXT_HIGHLIGHT"
+        const val EXTRA_TEXT_SUFFIX = "dev.folio.mobile.READER_TEXT_SUFFIX"
         private const val NAV_TAG = "EpubNavigatorFragment"
 
         /** Custom floating selection-bar item ids (PWA parity). */
@@ -159,9 +170,27 @@ class ReaderActivity : FragmentActivity() {
          * saved location string (Progress.location format).
          */
         fun createIntent(context: Context, docId: String, targetLocation: String): Intent =
+            createIntent(context, docId, targetLocation, null, null, null)
+
+        /**
+         * Notes-tab jump with the annotation's quote+context: the quote snaps
+         * the jump to the exact highlighted text (see [EXTRA_TEXT_HIGHLIGHT]).
+         * Null/blank quote → chapter-accurate only (bookmark behavior).
+         */
+        fun createIntent(
+            context: Context,
+            docId: String,
+            targetLocation: String,
+            textPrefix: String?,
+            textHighlight: String?,
+            textSuffix: String?
+        ): Intent =
             Intent(context, ReaderActivity::class.java)
                 .putExtra(EXTRA_DOC_ID, docId)
                 .putExtra(EXTRA_TARGET_LOCATION, targetLocation)
+                .putExtra(EXTRA_TEXT_PREFIX, textPrefix)
+                .putExtra(EXTRA_TEXT_HIGHLIGHT, textHighlight)
+                .putExtra(EXTRA_TEXT_SUFFIX, textSuffix)
     }
 
     private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -185,6 +214,14 @@ class ReaderActivity : FragmentActivity() {
 
     /** Chrome overlay visibility — toggled by tapping the page's middle third. */
     private val chromeVisible = mutableStateOf(true)
+
+    /**
+     * Bottom pillar is auto-hide (it otherwise covers the page's last lines):
+     * follows the chrome toggle, and is pinned up while the scrubber is in
+     * use, dropping a short grace period after the drag ends.
+     */
+    private val pillarScrubbing = mutableStateOf(false)
+    private var pillarHideJob: Job? = null
 
     /** Bottom pillar: current chapter title + total percent. */
     private val pillarTitle = mutableStateOf("")
@@ -237,6 +274,13 @@ class ReaderActivity : FragmentActivity() {
 
     /** Locators parallel to [searchHits] — tap index → navigator.go. */
     private var searchLocators: List<Locator> = emptyList()
+
+    /**
+     * Notes-tab exact-place jump (EPUB-018): held between the restore and the
+     * navigator's first locator emission, then fired as a text-quote anchor
+     * `go()` (see [exactTextTarget]).
+     */
+    private var pendingExactJump: Locator? = null
     private var searchJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -291,8 +335,20 @@ class ReaderActivity : FragmentActivity() {
                     onBookmark = { onBookmarkTapped() },
                     onToc = { tocVisible.value = true },
                     onSearch = { searchVisible.value = true },
-                    onScrub = { p -> pillarPercent.value = p },
-                    onScrubFinished = { p -> scrubTo(p) },
+                    onScrub = { p ->
+                        // Pin the pillar for the whole drag + a short settle.
+                        pillarHideJob?.cancel()
+                        pillarScrubbing.value = true
+                        pillarPercent.value = p
+                    },
+                    onScrubFinished = { p ->
+                        scrubTo(p)
+                        pillarHideJob = lifecycleScope.launch {
+                            delay(1200)
+                            pillarScrubbing.value = false
+                        }
+                    },
+                    pillarVisible = chromeVisible.value || pillarScrubbing.value,
                     pillarTitle = pillarTitle.value,
                     pillarPercent = pillarPercent.value,
                     timeLeft = timeLeftText.value,
@@ -476,9 +532,19 @@ class ReaderActivity : FragmentActivity() {
             }
         } else {
             if (!targetLocation.isNullOrBlank()) {
-                // Notes/bookmarks jump (EPUB-018): chapter-accurate at the
-                // saved location's resource.
+                // Notes/bookmarks jump (EPUB-018): land chapter-accurate at the
+                // saved location's resource first, then — when the annotation
+                // carries quote+context (highlights/notes always do) — the
+                // collector fires the exact text-quote jump once this chapter
+                // has rendered (see pendingExactJump / exactTextTarget).
                 initialLocator = locationTarget(publication, targetLocation)
+                pendingExactJump = exactTextTarget(
+                    publication,
+                    targetLocation,
+                    intent?.getStringExtra(EXTRA_TEXT_PREFIX),
+                    intent?.getStringExtra(EXTRA_TEXT_HIGHLIGHT),
+                    intent?.getStringExtra(EXTRA_TEXT_SUFFIX)
+                )
             }
             if (initialLocator == null && savedProgress != null &&
                 savedProgress.location.startsWith(ProgressBridge.CFI_PREFIX)
@@ -863,6 +929,37 @@ class ReaderActivity : FragmentActivity() {
     }
 
     /**
+     * Text-quote locator for the notes-tab exact-place jump: same shape as the
+     * decoration locators HighlightManager boots persisted highlights with
+     * (spine anchored via AnnotationLocators, quote+context carried in the
+     * Locator's Text) — i.e. the
+     * same `text.highlight` anchor the in-book search-hit jumps land on.
+     * Null (blank quote, unresolvable location) → the caller keeps the
+     * chapter-start landing — the pre-fix behavior.
+     */
+    private fun exactTextTarget(
+        publication: Publication,
+        target: String,
+        prefix: String?,
+        highlight: String?,
+        suffix: String?
+    ): Locator? {
+        if (highlight.isNullOrBlank()) return null
+        val hrefIdx = publication.readingOrder.map { it.url().toString() }
+        val spineIdx = AnnotationLocators.anchorIndex(hrefIdx, target) ?: return null
+        val link = publication.readingOrder.getOrNull(spineIdx) ?: return null
+        return Locator(
+            href = link.url(),
+            mediaType = link.mediaType ?: MediaType.XHTML,
+            text = Locator.Text(
+                before = prefix?.takeIf { it.isNotBlank() },
+                highlight = highlight,
+                after = suffix?.takeIf { it.isNotBlank() }
+            )
+        )
+    }
+
+    /**
      * EPUB-010 partial: turns the chapter-start locator into an in-chapter
      * progression. The saved CFI carries no resolvable text anchor (Readium
      * 3.0.0 has no CFI parser, and the reflowable scripts contain no
@@ -1060,7 +1157,20 @@ class ReaderActivity : FragmentActivity() {
                 navigator.currentLocator.collect { locator ->
                     // First locator = the navigator has a rendered position:
                     // drop the splash (idempotent for later emissions).
-                    if (!readerReady.value) readerReady.value = true
+                    if (!readerReady.value) {
+                        readerReady.value = true
+                        pendingExactJump?.let { target ->
+                            // Notes-tab exact-place jump: the initial chapter
+                            // has rendered, so this go() runs the same
+                            // loadLocator text-highlight pipeline an in-book
+                            // search-hit tap does. Swallowed failures degrade
+                            // to the chapter-start landing.
+                            pendingExactJump = null
+                            lifecycleScope.launch(Dispatchers.Main) {
+                                runCatching { navigator.go(target, false) }
+                            }
+                        }
+                    }
 
                     // Pillar: chapter title + total percent (cheap, no IO).
                     // The pillar slider works in Readium 0..1 progression.

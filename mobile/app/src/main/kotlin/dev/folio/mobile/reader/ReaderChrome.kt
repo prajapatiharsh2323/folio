@@ -62,7 +62,9 @@ import dev.folio.mobile.core.model.ReadingPrefs
  *   third (see ReaderActivity's InputListener); visible by default, PWA-parity;
  * - secondary typography row (family, line-height, margins, justify) shown
  *   with the top bar;
- * - always-visible bottom pillar: `<chapter title> — <%>`.
+ * - bottom pillar: `<chapter title> — <%>` — follows the same middle-third
+ *   toggle (auto-hide: it floats over the page's last lines otherwise), and
+ *   stays up while the scrubber is in use (ReaderActivity's scrub state).
  *
  * Colors mirror the PWA reader tokens (THEME_COLORS in ReaderPrefsMapper).
  */
@@ -86,6 +88,8 @@ fun ReaderChrome(
     /** Batch 2: this document has its own typography override. */
     perBookOverride: Boolean = false,
     onResetPerBook: () -> Unit = {},
+    /** Pillar layer — false hides it so it stops covering the last page lines. */
+    pillarVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val surface = chromeSurface(resolvedThemeKey(prefs.theme, systemDark))
@@ -110,20 +114,22 @@ fun ReaderChrome(
             }
         }
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) // spacer over the canvas
-        Pillar(
-            pillarTitle,
-            pillarPercent,
-            surface,
-            text,
-            onScrub,
-            onScrubFinished,
-            timeLeft,
-            modifier = Modifier.windowInsetsPadding(
-                WindowInsets.navigationBars
-                    .union(WindowInsets.displayCutout)
-                    .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+        if (pillarVisible) {
+            Pillar(
+                pillarTitle,
+                pillarPercent,
+                surface,
+                text,
+                onScrub,
+                onScrubFinished,
+                timeLeft,
+                modifier = Modifier.windowInsetsPadding(
+                    WindowInsets.navigationBars
+                        .union(WindowInsets.displayCutout)
+                        .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+                )
             )
-        )
+        }
     }
 }
 

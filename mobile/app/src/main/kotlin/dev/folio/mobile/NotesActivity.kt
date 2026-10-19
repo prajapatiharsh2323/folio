@@ -122,10 +122,15 @@ fun NotesScreen() {
                                     .padding(vertical = 8.dp)
                                     .clickable {
                                         // EPUB-018 tie-in: jump back to the
-                                        // annotation's saved location.
+                                        // annotation's saved location — chapter-
+                                        // accurate for the href/CFI plus, when a
+                                        // quote+context exists (highlights/notes),
+                                        // a second text-quote anchored go() that
+                                        // lands on the exact highlighted text.
                                         context.startActivity(
                                             ReaderActivity.createIntent(
-                                                context, a.docId, a.location ?: ""
+                                                context, a.docId, a.location ?: "",
+                                                a.prefix, a.quote, a.suffix
                                             )
                                         )
                                     }
