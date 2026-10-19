@@ -172,7 +172,14 @@ data class Collection(
     val id: String,
     val name: String,
     val docIds: List<String> = emptyList(),
-    val createdAt: String
+    /** ISO 8601 UTC */
+    val createdAt: String,
+    /**
+     * ISO 8601 UTC of the last membership/rename change. Optional (mobile-
+     * added refinement): older PWA readers that don't expect the key must
+     * tolerate it (their JSON ignores unknown keys — same policy as DocMeta).
+     */
+    val updatedAt: String? = null
 )
 
 @Serializable

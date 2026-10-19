@@ -87,6 +87,7 @@ import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.BuildConfig
 import dev.folio.mobile.reader.ReaderActivity
 import dev.folio.mobile.ui.components.FolioBookRow
+import dev.folio.mobile.ui.components.CollectionPickerSheet
 import dev.folio.mobile.ui.components.FolioDestructiveTextButton
 import dev.folio.mobile.ui.components.FolioEmptyState
 import dev.folio.mobile.ui.components.FolioIconButton
@@ -138,7 +139,12 @@ class MainActivity : ComponentActivity() {
         intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data
 }
 
-private fun appLibrary(context: android.content.Context): LibraryManager =
+/**
+ * New LibraryManager per operation. Cheap (file store, no caches); callers
+ * wrap the whole op in one call so every file access races identically. Also
+ * used by the collections panels (LibraryCollections.kt).
+ */
+internal fun appLibrary(context: android.content.Context): LibraryManager =
     LibraryManager(AppFileStore(context.filesDir))
 
 /** Sample import kept for the blocked device-smoke flow (no files needed). */
@@ -187,7 +193,11 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var collections by remember { mutableStateOf<List<Collection>>(emptyList()) }
     var activeFilter by remember { mutableStateOf<LibraryUi.LibraryFilter?>(null) }
     var detailsTarget by remember { mutableStateOf<LibraryUi.LibraryItem?>(null) }
-    var manageCollectionsOpen by remember { mutableStateOf(false) }
+    var collectionsScreen by remember { mutableStateOf(false) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }
+    var bulkAddPicker by remember { mutableStateOf(false) }
+    var addToCollectionTarget by remember { mutableStateOf<LibraryUi.LibraryItem?>(null) }
     var sortBy by remember { mutableStateOf("recent") }
     var duplicateResult by remember { mutableStateOf<ImportResult?>(null) }
     var duplicateDialogOpen by remember { mutableStateOf(false) }
@@ -271,9 +281,30 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     val filterOptions = LibraryUi.filters(collections, entries)
     val visibleEntries = LibraryUi.applyFilter(entries, activeFilter)
 
+    // Long-press shelf: system back exits selection before leaving the screen.
+    if (selectionMode) {
+        BackHandler {
+            selectionMode = false
+            selectedIds = emptySet()
+        }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (selectionMode) {
+                SelectionTopBar(
+                    selectedCount = selectedIds.size,
+                    onClose = {
+                        selectionMode = false
+                        selectedIds = emptySet()
+                    },
+                    onSelectAll = {
+                        selectedIds = visibleEntries.map { it.id }.toSet()
+                    },
+                    onClear = { selectedIds = emptySet() },
+                )
+            } else if (!collectionsScreen) {
+                TopAppBar(
                 title = {
                     Column {
                         Text(
@@ -353,11 +384,11 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                             onDismissRequest = { topMenuOpen = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Manage collections") },
-                                leadingIcon = { Icon(FolioIcons.Filter, contentDescription = null) },
+                                text = { Text("Collections") },
+                                leadingIcon = { Icon(FolioIcons.Library, contentDescription = null) },
                                 onClick = {
                                     topMenuOpen = false
-                                    manageCollectionsOpen = true
+                                    collectionsScreen = true
                                 }
                             )
                             DropdownMenuItem(
@@ -380,6 +411,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                     }
                 }
             )
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
@@ -394,6 +426,16 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         )
                     },
                     onClose = { searchActive = false }
+                )
+            } else if (collectionsScreen) {
+                CollectionsPanel(
+                    collections = collections,
+                    entries = entries,
+                    snackbar = snackbar,
+                    onBack = { collectionsScreen = false },
+                    onLibraryChanged = { scope.launch { refresh() } },
+                    onDocDetails = { detailsTarget = it },
+                    onDocDelete = { deleteTarget = it },
                 )
             } else {
                 damagedNotice?.let { notice ->
@@ -414,7 +456,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
                     )
                 }
-                if (filterOptions.isNotEmpty()) {
+                if (filterOptions.isNotEmpty() && !selectionMode) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -512,10 +554,61 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                     )
                                 },
                                 onDetails = { detailsTarget = item },
-                                onDelete = { deleteTarget = item }
+                                onDelete = { deleteTarget = item },
+                                onToggleSelect = if (selectionMode) {
+                                    {
+                                        selectedIds = if (item.id in selectedIds) {
+                                            selectedIds - item.id
+                                        } else {
+                                            selectedIds + item.id
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                selected = item.id in selectedIds,
+                                onLongPress = if (!selectionMode) {
+                                    {
+                                        selectionMode = true
+                                        selectedIds = setOf(item.id)
+                                    }
+                                } else {
+                                    null
+                                },
+                                onAddToCollection = { addToCollectionTarget = item },
                             )
                         }
                     }
+                }
+                if (selectionMode) {
+                    SelectionActionBar(
+                        selectedIds = selectedIds,
+                        showRemove = activeFilter is LibraryUi.LibraryFilter.CollectionFilter,
+                        onAddToCollection = { bulkAddPicker = true },
+                        onRemove = {
+                            val collFilter = activeFilter as? LibraryUi.LibraryFilter.CollectionFilter
+                            val coll = collFilter?.let { f -> collections.firstOrNull { it.id == f.id } }
+                            if (coll != null) {
+                                scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            appLibrary(context).removeDocsFromCollection(coll.id, selectedIds.toList())
+                                        }
+                                        refresh()
+                                        selectionMode = false
+                                        val count = selectedIds.size
+                                        selectedIds = emptySet()
+                                        snackbar.showSnackbar(
+                                            if (count == 1) "Removed 1 book from \"${coll.name}\""
+                                            else "Removed $count books from \"${coll.name}\""
+                                        )
+                                    } catch (t: Throwable) {
+                                        snackbar.showSnackbar(t.message ?: "Remove failed")
+                                    }
+                                }
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -738,164 +831,102 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         )
     }
 
-    // Collections manager: rename + delete (creation lives in the details dialog).
-    if (manageCollectionsOpen) {
-        ManageCollectionsDialog(
+    // Single book → collections (row overflow "Add to collection…"): exact
+    // membership sync per spec §5 (like the details sheet), inline create.
+    addToCollectionTarget?.let { target ->
+        CollectionPickerSheet(
             collections = collections,
-            onRename = { id, name ->
+            initialChecked = target.collectionIds.toSet(),
+            selectionLabel = target.title,
+            onApply = { ids ->
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            appLibrary(context).renameCollection(id, name)
+                            appLibrary(context).setDocCollections(target.id, ids.toList())
                         }
                         refresh()
-                        snackbar.showSnackbar("Collection renamed")
+                        snackbar.showSnackbar("Saved")
                     } catch (t: Throwable) {
-                        snackbar.showSnackbar(t.message ?: "Rename failed")
+                        snackbar.showSnackbar(t.message ?: "Save failed")
                     }
                 }
             },
-            onDelete = { id ->
+            onCreate = { name, onCreated ->
                 scope.launch {
                     try {
-                        withContext(Dispatchers.IO) {
-                            appLibrary(context).deleteCollection(id)
+                        val created = withContext(Dispatchers.IO) {
+                            appLibrary(context).createCollection(name)
                         }
                         refresh()
-                        snackbar.showSnackbar("Collection deleted")
+                        // Membership is applied by the picker's Add action.
+                        onCreated(created)
                     } catch (t: Throwable) {
-                        snackbar.showSnackbar(t.message ?: "Delete failed")
+                        snackbar.showSnackbar(t.message ?: "Create collection failed")
                     }
                 }
             },
-            onDismiss = { manageCollectionsOpen = false }
+            onDismiss = { addToCollectionTarget = null },
         )
     }
-}
 
-/** Collections manager: per-row rename/delete (delete keeps doc meta ids — PWA parity). */
-@Composable
-private fun ManageCollectionsDialog(
-    collections: List<Collection>,
-    onRename: (id: String, name: String) -> Unit,
-    onDelete: (id: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var renameTarget by remember { mutableStateOf<Collection?>(null) }
-    var deleteTarget by remember { mutableStateOf<Collection?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Collections") },
-        text = {
-            if (collections.isEmpty()) {
-                Text(
-                    "No collections yet — add one from a book's Details dialog.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            } else {
-                Column {
-                    for (coll in collections) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    coll.name,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                val count = coll.docIds.size
-                                Text(
-                                    if (count == 1) "1 document" else "$count documents",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                )
+    // Bulk multi-select → collections: additions only (membership Add), one
+    // atomic write per collection, documents shared across picks.
+    if (bulkAddPicker) {
+        val selection = selectedIds
+        val preChecked = collections
+            .filter { selection.all { docId -> docId in it.docIds } }
+            .map { it.id }
+            .toSet()
+        CollectionPickerSheet(
+            collections = collections,
+            initialChecked = preChecked,
+            selectionLabel = when {
+                selection.size == 1 -> "1 selected book"
+                else -> "${selection.size} selected books"
+            },
+            onApply = { ids ->
+                scope.launch {
+                    var touched = 0
+                    for (collId in ids) {
+                        val name = collections.firstOrNull { it.id == collId }?.name ?: "collection"
+                        try {
+                            withContext(Dispatchers.IO) {
+                                appLibrary(context).addDocsToCollection(collId, selection.toList())
                             }
-                            IconButton(onClick = { renameTarget = coll }) {
-                                Icon(
-                                    FolioIcons.PenLine,
-                                    contentDescription = "Rename ${coll.name}"
-                                )
-                            }
-                            IconButton(onClick = { deleteTarget = coll }) {
-                                Icon(
-                                    FolioIcons.Trash,
-                                    contentDescription = "Delete ${coll.name}"
-                                )
-                            }
+                            touched += 1
+                            snackbar.showSnackbar("Added to \"$name\"")
+                        } catch (t: Throwable) {
+                            snackbar.showSnackbar(t.message ?: "Add failed")
                         }
                     }
+                    if (touched > 0) {
+                        refresh()
+                        selectionMode = false
+                        selectedIds = emptySet()
+                    }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
-        }
-    )
-
-    renameTarget?.let { target ->
-        RenameCollectionDialog(
-            collection = target,
-            onSave = { name ->
-                renameTarget = null
-                onRename(target.id, name)
             },
-            onDismiss = { renameTarget = null }
+            onCreate = { name, onCreated ->
+                scope.launch {
+                    try {
+                        val created = withContext(Dispatchers.IO) {
+                            appLibrary(context).createCollection(name)
+                        }
+                        if (selection.isNotEmpty()) {
+                            withContext(Dispatchers.IO) {
+                                appLibrary(context).addDocsToCollection(created.id, selection.toList())
+                            }
+                        }
+                        refresh()
+                        onCreated(created)
+                    } catch (t: Throwable) {
+                        snackbar.showSnackbar(t.message ?: "Create collection failed")
+                    }
+                }
+            },
+            onDismiss = { bulkAddPicker = false },
         )
     }
-
-    deleteTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete collection?") },
-            text = {
-                Text(
-                    "\"${target.name}\" will be removed. Its documents stay in the library."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    deleteTarget = null
-                    onDelete(target.id)
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            }
-        )
-    }
-}
-
-/** Rename sub-dialog: prefilled field; blank or unchanged names are rejected. */
-@Composable
-private fun RenameCollectionDialog(
-    collection: Collection,
-    onSave: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var name by remember(collection.id) { mutableStateOf(collection.name) }
-    val clean = name.trim()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename collection") },
-        text = {
-            DialogTextField(
-                value = name,
-                onValueChange = { name = it },
-                placeholder = "Collection name…",
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(
-                enabled = clean.isNotEmpty() && clean != collection.name,
-                onClick = { onSave(clean) }
-            ) { Text("Save") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
 }
 
 private fun filterLabel(filter: LibraryUi.LibraryFilter): String = when (filter) {
@@ -963,7 +994,7 @@ private fun DetailsDialog(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DialogTextField(
+                    dev.folio.mobile.ui.components.FolioTextField(
                         value = tagInput,
                         onValueChange = { tagInput = it },
                         placeholder = "Add a tag…",
@@ -1033,7 +1064,7 @@ private fun DetailsDialog(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DialogTextField(
+                    dev.folio.mobile.ui.components.FolioTextField(
                         value = newCollName,
                         onValueChange = { newCollName = it },
                         placeholder = "New collection…",
@@ -1079,38 +1110,7 @@ private fun DetailsDialog(
     }
 }
 
-/** Small filled input used inside dialogs (BasicTextField + placeholder). */
-@Composable
-private fun DialogTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 10.dp, vertical = 10.dp)
-    ) {
-        if (value.isEmpty()) {
-            Text(
-                placeholder,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-            )
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        )
-    }
-}
-
+/* (dialog input removed — shared FolioTextField in ui/components covers it) */
 /** Lists damaged docs; Remove deletes the entry's remaining files (reuses deleteDocument). */
 @Composable
 private fun DamagedDocsDialog(
@@ -1388,9 +1388,92 @@ private fun SearchHitRow(
     }
 }
 
+/**
+ * Selection mode top bar (long-press shelf): count as the title, close stops
+ * selecting, overflow offers select-all/clear over the *visible* list.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionTopBar(
+    selectedCount: Int,
+    onClose: () -> Unit,
+    onSelectAll: () -> Unit,
+    onClear: () -> Unit,
+) {
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = onClose) {
+                Icon(FolioIcons.Close, contentDescription = "Stop selecting")
+            }
+        },
+        title = { Text("$selectedCount selected") },
+        actions = {
+            Box {
+                var menuOpen by remember { mutableStateOf(false) }
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(FolioIcons.MoreVertical, contentDescription = "Selection actions")
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Select all") }, onClick = {
+                        menuOpen = false
+                        onSelectAll()
+                    })
+                    DropdownMenuItem(text = { Text("Clear selection") }, onClick = {
+                        menuOpen = false
+                        onClear()
+                    })
+                }
+            }
+        },
+    )
+}
+
+/**
+ * Selection action bar: Add to collection always; Remove from the filtered
+ * collection only when the current filter is a collection (removal is only
+ * meaningful relative to a shelf — books stay in the library either way).
+ */
+@Composable
+private fun SelectionActionBar(
+    selectedIds: Set<String>,
+    showRemove: Boolean,
+    onAddToCollection: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    if (showRemove) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+        ) {
+            dev.folio.mobile.ui.components.FolioOutlinedButton(
+                text = "Remove",
+                enabled = selectedIds.isNotEmpty(),
+                onClick = onRemove,
+                modifier = Modifier.weight(1f),
+            )
+            dev.folio.mobile.ui.components.FolioFilledButton(
+                text = "Add to collection",
+                enabled = selectedIds.isNotEmpty(),
+                onClick = onAddToCollection,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    } else {
+        dev.folio.mobile.ui.components.FolioFilledButton(
+            text = "Add to collection",
+            enabled = selectedIds.isNotEmpty(),
+            onClick = onAddToCollection,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+        )
+    }
+}
+
 /** Sorts library items by the chosen key. */
-private fun sortLibrary(
-    items: List<LibraryUi.LibraryItem>,
+private fun sortLibrary(    items: List<LibraryUi.LibraryItem>,
     sortBy: String,
     progress: Map<String, dev.folio.mobile.core.model.Progress>
 ): List<LibraryUi.LibraryItem> = when (sortBy) {
@@ -1415,37 +1498,29 @@ fun LibraryCard(
     item: LibraryUi.LibraryItem,
     onOpen: () -> Unit,
     onDetails: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleSelect: (() -> Unit)? = null,
+    selected: Boolean = false,
+    onLongPress: (() -> Unit)? = null,
+    onAddToCollection: (() -> Unit)? = null,
+    onRemoveFromCollection: (() -> Unit)? = null,
 ) {
-    // Cover thumbnail: decoded off the main thread, LRU-cached in CoverLoader.
-    // remember(item.cover) resets to null and LaunchedEffect restarts per key,
-    // producing the same reset-and-redecode semantics produceState(key1 =…)
-    // would give. (Written as remember+LaunchedEffect because the Kotlin-2
-    // UAST bridge keeps failing to resolve `value =` in produceState producer
-    // lambdas, which produceState's own lint check then wrongly flags.)
-    val context = LocalContext.current
-    val store = remember { AppFileStore(context.filesDir) }
-    var coverBitmap by remember(item.cover) {
-        mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
-    }
-    LaunchedEffect(item.cover) {
-        val rel = item.cover ?: return@LaunchedEffect
-        coverBitmap = withContext(Dispatchers.IO) {
-            CoverLoader.decode(store, rel)?.asImageBitmap()
-        }
-    }
-
     FolioBookRow(
         title = item.title,
         subtitle = item.subtitle,
         kindLabel = item.kindLabel,
         colorSeed = item.colorSeed,
-        cover = coverBitmap,
+        coverPath = item.cover,
         percent = item.percent,
         percentLabel = item.percentLabel,
         onOpen = onOpen,
         onDetails = onDetails,
         onDelete = onDelete,
+        onToggleSelect = onToggleSelect,
+        selected = selected,
+        onLongPress = onLongPress,
+        onAddToCollection = onAddToCollection,
+        onRemoveFromCollection = onRemoveFromCollection,
     )
 }
 

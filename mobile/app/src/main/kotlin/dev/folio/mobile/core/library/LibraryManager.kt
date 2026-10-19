@@ -580,7 +580,8 @@ class LibraryManager(
             id = uuidProvider(),
             name = clean,
             docIds = emptyList(),
-            createdAt = nowIso()
+            createdAt = nowIso(),
+            updatedAt = nowIso()
         )
         store.write(
             "library/user/collections.json",
@@ -595,7 +596,7 @@ class LibraryManager(
             val collections = getCollections()
             val coll = collections.firstOrNull { it.id == id }
                 ?: throw IllegalArgumentException("Collection not found: $id")
-            val renamed = coll.copy(name = name)
+            val renamed = coll.copy(name = name.trim(), updatedAt = nowIso())
             store.write(
                 "library/user/collections.json",
                 json.encodeToString(collections.map { if (it.id == id) renamed else it })
@@ -610,6 +611,66 @@ class LibraryManager(
             "library/user/collections.json",
             json.encodeToString(collections.filter { it.id != id })
         )
+    }
+
+    /**
+     * Bulk-membership writes (collections screen): change one collection's
+     * docIds in one atomic write, then re-derive every *changed* document's
+     * meta.collectionIds from the full collection list (dual-write invariant
+     * kept, spec §5). Really-changed docs only — membership identities are
+     * preserved and updatedAt bumps so the UI can sort by recent activity.
+     */
+    suspend fun addDocsToCollection(collectionId: String, docIds: List<String>): Collection =
+        mutateCollectionDocs(collectionId) { (it + docIds).distinct() }
+
+    suspend fun removeDocsFromCollection(collectionId: String, docIds: List<String>): Collection =
+        mutateCollectionDocs(collectionId) { it - docIds.toSet() }
+
+    private suspend fun mutateCollectionDocs(
+        collectionId: String,
+        transform: (List<String>) -> List<String>
+    ): Collection = withLocks(K_COLLECTIONS, K_MANIFEST) {
+        val collections = getCollections()
+        val coll = collections.firstOrNull { it.id == collectionId }
+            ?: throw IllegalArgumentException("Collection not found: $collectionId")
+        val newDocIds = transform(coll.docIds)
+        if (newDocIds == coll.docIds) return@withLocks coll
+
+        val updated = coll.copy(docIds = newDocIds, updatedAt = nowIso())
+        store.write(
+            "library/user/collections.json",
+            json.encodeToString(collections.map { if (it.id == collectionId) updated else it })
+        )
+        // Only docs whose membership actually changed: added or dropped.
+        val changedDocIds = ((newDocIds - coll.docIds.toSet()) +
+            (coll.docIds - newDocIds.toSet())).toSet()
+        syncDocMembershipLocked(collections.map { if (it.id == collectionId) updated else it }, changedDocIds)
+        updated
+    }
+
+    /**
+     * Re-derives doc meta collectionIds from the given collection list for the
+     * changed docs. Assumes K_COLLECTIONS + K_MANIFEST are held. A doc id in
+     * collections.json that is not in the manifest (stale hand-edited data)
+     * must not abort the whole sync — logged and skipped.
+     */
+    private suspend fun syncDocMembershipLocked(
+        collections: List<Collection>,
+        changedDocIds: Set<String>
+    ) {
+        val byDoc = collections.flatMap { c -> c.docIds.map { it to c.id } }
+            .groupBy(keySelector = { it.first }, valueTransform = { it.second })
+        for (docId in changedDocIds) {
+            try {
+                updateDocMetaLocked(docId, collectionIds = byDoc[docId].orEmpty())
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "folio-collections",
+                    "membership sync skipped for missing doc $docId",
+                    e
+                )
+            }
+        }
     }
 
     /**

@@ -406,4 +406,57 @@ class LibraryManagerTest {
         )
         assertTrue(onDisk.collectionIds.isEmpty())
     }
+
+    @Test
+    fun `addDocsToCollection bulk-adds once and keeps doc meta in sync`() = runBlocking {
+        val meta = manager.addDocument(importResult())
+        val coll = manager.createCollection("Shelf")
+        assertTrue(coll.updatedAt != null)
+
+        val updated = manager.addDocsToCollection(coll.id, listOf(meta.id))
+        assertEquals(listOf(meta.id), updated.docIds)
+        assertEquals(listOf(meta.id), manager.getCollections().first().docIds)
+        val onDisk = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertEquals(listOf(coll.id), onDisk.collectionIds)
+
+        // idempotent: re-adding an existing member is a no-op (same identity)
+        val again = manager.addDocsToCollection(coll.id, listOf(meta.id))
+        assertEquals(listOf(meta.id), again.docIds)
+    }
+
+    @Test
+    fun `removeDocsFromCollection bulk-removes and clears doc meta`() = runBlocking {
+        val meta = manager.addDocument(importResult())
+        val coll = manager.createCollection("Shelf")
+        manager.addDocsToCollection(coll.id, listOf(meta.id))
+
+        val updated = manager.removeDocsFromCollection(coll.id, listOf(meta.id))
+        assertTrue(updated.docIds.isEmpty())
+        assertTrue(manager.getCollections().first().docIds.isEmpty())
+        val onDisk = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertTrue(onDisk.collectionIds.isEmpty())
+    }
+
+    @Test
+    fun `bulk membership writes move a doc between shelves atomically`() = runBlocking {
+        val meta = manager.addDocument(importResult())
+        val a = manager.createCollection("A")
+        val b = manager.createCollection("B")
+
+        manager.addDocsToCollection(a.id, listOf(meta.id))
+        manager.removeDocsFromCollection(a.id, listOf(meta.id))
+        manager.addDocsToCollection(b.id, listOf(meta.id))
+
+        val byId = manager.getCollections().associateBy { it.id }
+        assertTrue(byId[a.id]!!.docIds.isEmpty())
+        assertEquals(listOf(meta.id), byId[b.id]!!.docIds)
+        val onDisk = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertEquals(listOf(b.id), onDisk.collectionIds)
+    }
 }
