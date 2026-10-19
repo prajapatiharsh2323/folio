@@ -213,16 +213,18 @@ private fun storageInfo(context: Context): String {
     return "Used: ${used / (1024 * 1024)} MB of ${total / (1024 * 1024)} MB"
 }
 
-/** Streams a verified, PWA-compatible backup ZIP (entries added one file at a
- *  time — the whole library never sits in memory). */
-private fun exportBackup(context: Context): String {
+/**
+ * Streams a verified, PWA-compatible backup ZIP (entries added one file at a
+ *  time — the whole library never sits in memory). Suspend + inline zip
+ *  hashing below — the caller is already on Dispatchers.IO (audit EPUB-006:
+ *  no main-thread runBlocking).
+ */
+private suspend fun exportBackup(context: Context): String {
     val store = AppFileStore(context.filesDir)
     val outDir = File(context.getExternalFilesDir(null), "backups").apply { mkdirs() }
     val out = File(outDir, generateBackupFilename())
     FileOutputStream(out).use { fos ->
-        kotlinx.coroutines.runBlocking {
-            exportBackupZip(store, fos)
-        }
+        exportBackupZip(store, fos)
         fos.flush()
     }
     return "Backup saved: ${out.name}"
@@ -230,25 +232,27 @@ private fun exportBackup(context: Context): String {
 
 /**
  * Verified restore via BackupRestore (spec §8 merge/replace rules ported from
- * packages/core/src/backup/import-zip.ts) — no more unzip-overwrite clobbering.
+ * packages/core/src/backup/import-zip.ts). The archive is staged to a temp
+ * file and streamed per entry — the entire library never sits in RAM
+ * (audit EPUB-007), and the caller is already on Dispatchers.IO (EPUB-006).
  */
-private fun restoreBackup(context: Context, uri: Uri, mode: RestoreMode): String {
-    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-        input.readBytes()
-    } ?: throw IllegalStateException("Cannot read backup")
+private suspend fun restoreBackup(context: Context, uri: Uri, mode: RestoreMode): String {
     val store = AppFileStore(context.filesDir)
-    return kotlinx.coroutines.runBlocking {
-        val library = LibraryManager(store)
-        val (summary, verification) = BackupRestore.restore(store, library, bytes, mode)
+    val library = LibraryManager(store)
+    val input = context.contentResolver.openInputStream(uri)
+        ?: throw IllegalStateException("Cannot read backup")
+    return input.use { stream ->
+        val (summary, verification) = BackupRestore.restore(store, library, stream, context.cacheDir, mode)
         if (!verification.valid) {
-            return@runBlocking "Restore completed with warnings: " +
+            "Restore completed with warnings: " +
                 verification.issues.joinToString("; ") { "${it.path} (${it.reason})" }
+        } else {
+            "${summary.mode.replaceFirstChar { it.uppercase() }}: +${summary.newDocsAdded} new, " +
+                "${summary.duplicatesSkipped} duplicates skipped, " +
+                "${summary.metadataUpdated} updated, " +
+                "${summary.annotationsMerged} annotations, " +
+                "${summary.progressUpdated} progress, " +
+                "${summary.collectionsMerged} collections"
         }
-        "${summary.mode.replaceFirstChar { it.uppercase() }}: +${summary.newDocsAdded} new, " +
-            "${summary.duplicatesSkipped} duplicates skipped, " +
-            "${summary.metadataUpdated} updated, " +
-            "${summary.annotationsMerged} annotations, " +
-            "${summary.progressUpdated} progress, " +
-            "${summary.collectionsMerged} collections"
     }
 }

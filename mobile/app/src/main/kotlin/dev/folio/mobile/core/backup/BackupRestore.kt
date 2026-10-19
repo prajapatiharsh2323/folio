@@ -1,6 +1,7 @@
 package dev.folio.mobile.core.backup
 
 import dev.folio.mobile.core.library.LibraryManager
+import dev.folio.mobile.core.library.LibraryManager.FileLock
 import dev.folio.mobile.core.library.MANIFEST_PATH
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.Collection
@@ -10,6 +11,8 @@ import dev.folio.mobile.core.store.FileStore
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import java.io.File
+import java.io.InputStream
 import java.util.UUID
 
 /**
@@ -30,20 +33,39 @@ import java.util.UUID
  *
  * The archive is verified before any local state is touched; unsafe/corrupt
  * archives (or a missing/corrupt manifest) throw and nothing is modified.
+ *
+ * Audit EPUB-006/007: the archive is staged on disk and streamed entry by
+ * entry ([StagedArchive]) instead of being fully loaded into RAM, and the
+ * mutation phase runs under the manager's file locks so concurrent
+ * progress/annotation writers cannot interleave their read-modify-writes
+ * with the restore (audit EPUB-005).
  */
 object BackupRestore {
 
     private fun epochMs(iso: String?): Long =
         runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrElse { 0L }
 
+    /** Staging entrypoint: streams [input] to a temp file under [stagingDir], then restores. */
     suspend fun restore(
         store: FileStore,
         manager: LibraryManager,
-        zipBytes: ByteArray,
+        input: InputStream,
+        stagingDir: File,
+        mode: RestoreMode
+    ): Pair<RestoreSummary, VerificationResult> =
+        StagedArchive.stage(input, stagingDir).use { archive ->
+            restore(store, manager, archive, mode)
+        }
+
+    /** Restore from an already-staged [archive] (caller closes it). */
+    suspend fun restore(
+        store: FileStore,
+        manager: LibraryManager,
+        archive: StagedArchive,
         mode: RestoreMode
     ): Pair<RestoreSummary, VerificationResult> {
         // 1. Verify the archive thoroughly before touching local state.
-        val verification = unzipAndVerifyBackup(zipBytes)
+        val verification = unzipAndVerifyBackup(archive)
         val fatal = verification.issues.filter {
             it.reason == "unsafe_path" || it.reason == "corrupted" ||
                     it.path == "library/manifest.json"
@@ -54,10 +76,9 @@ object BackupRestore {
                     (fatal.joinToString("; ") { it.message }.ifBlank { "Invalid archive" })
             )
         }
-        val unzipped = verification.unzipped
 
         // 2. Validate the backup manifest.
-        val backupManifestBytes = unzipped[MANIFEST_PATH]
+        val backupManifestBytes = archive.readEntry(MANIFEST_PATH)
             ?: throw IllegalArgumentException("Missing library/manifest.json in backup archive")
         val backupManifest: Manifest = runCatching { parseManifest(backupManifestBytes.decodeToString()) }
             .getOrElse { throw IllegalArgumentException("Corrupted library/manifest.json in backup archive") }
@@ -73,6 +94,25 @@ object BackupRestore {
             collectionsMerged = 0
         )
 
+        // Mutation phase under the manager's file locks so a concurrent reader
+        // progress/annotation save or deleteDocument cannot interleave its own
+        // read-modify-write with the restore's (audit EPUB-005).
+        return manager.lockFiles(
+            FileLock.MANIFEST, FileLock.PROGRESS, FileLock.ANNOTATIONS, FileLock.COLLECTIONS
+        ) {
+            applyRestore(store, manager, archive, backupManifest, mode, summary, verification)
+        }
+    }
+
+    private suspend fun applyRestore(
+        store: FileStore,
+        manager: LibraryManager,
+        unzipped: StagedArchive,
+        backupManifest: Manifest,
+        mode: RestoreMode,
+        summary: RestoreSummary,
+        verification: VerificationResult
+    ): Pair<RestoreSummary, VerificationResult> {
         // 3. Replace mode wipes first (verified archive only).
         if (mode == RestoreMode.Replace) {
             if (store.exists(MANIFEST_PATH)) store.remove(MANIFEST_PATH)
@@ -118,7 +158,7 @@ object BackupRestore {
                 }
                 if (byId != null) {
                     if (epochMs(bDoc.updatedAt) > epochMs(byId.updatedAt)) {
-                        (unzipped["library/docs/${bDoc.slug}/meta.json"])?.let {
+                        (unzipped.readEntry("library/docs/${bDoc.slug}/meta.json"))?.let {
                             store.write("library/docs/${bDoc.slug}/meta.json", it)
                         }
                         val idx = mergedDocs.indexOfFirst { it.id == byId.id }
@@ -134,9 +174,9 @@ object BackupRestore {
 
             // Write all files belonging to this document (meta.json included).
             for (f in bDoc.files) {
-                unzipped[f.path]?.let { store.write(f.path, it) }
+                unzipped.readEntry(f.path)?.let { store.write(f.path, it) }
             }
-            unzipped["library/docs/${bDoc.slug}/meta.json"]?.let {
+            unzipped.readEntry("library/docs/${bDoc.slug}/meta.json")?.let {
                 store.write("library/docs/${bDoc.slug}/meta.json", it)
             }
 
@@ -148,7 +188,7 @@ object BackupRestore {
 
         // 5. Annotations: replace → overwrite; merge → newer-wins by id.
         var annotationsMerged = 0
-        val annotBytes = unzipped["library/user/annotations.json"]
+        val annotBytes = unzipped.readEntry("library/user/annotations.json")
         if (annotBytes != null) {
             runCatching {
                 val backupAnnots = parseAnnotations(annotBytes.decodeToString())
@@ -175,7 +215,7 @@ object BackupRestore {
 
         // 6. Progress: newer-wins per doc (replace overwrites).
         var progressUpdated = 0
-        val progBytes = unzipped["library/user/progress.json"]
+        val progBytes = unzipped.readEntry("library/user/progress.json")
         if (progBytes != null) {
             runCatching {
                 val backupProg = parseProgressMap(progBytes.decodeToString())
@@ -204,7 +244,7 @@ object BackupRestore {
 
         // 7. Collections: replace overwrites; merge unions docIds.
         var collectionsMerged = 0
-        val collBytes = unzipped["library/user/collections.json"]
+        val collBytes = unzipped.readEntry("library/user/collections.json")
         if (collBytes != null) {
             runCatching {
                 val backupColls = parseCollections(collBytes.decodeToString())
@@ -234,7 +274,7 @@ object BackupRestore {
         }
 
         // 8. Settings: restore only in replace mode (merge keeps local).
-        unzipped["library/user/settings.json"]?.takeIf { mode == RestoreMode.Replace }?.let {
+        unzipped.readEntry("library/user/settings.json")?.takeIf { mode == RestoreMode.Replace }?.let {
             store.write("library/user/settings.json", it)
         }
 

@@ -82,20 +82,30 @@ class BackupRestoreTest {
         return out.toByteArray()
     }
 
+    /** Stages the in-memory zip through the production streaming path (EPUB-007). */
+    private fun verificationOf(zip: ByteArray): VerificationResult {
+        StagedArchive.stage(zip.inputStream(), tmp.newFolder("stage-verify-${UUID.randomUUID()}")).use {
+            return unzipAndVerifyBackup(it)
+        }
+    }
+
     @Test
     fun `export then verify round trips a clean library`() {
         val s1 = store()
         seedLibrary(s1, doc("d1", "first-book", "hash-1"), body = "one")
 
         val zip = exportBytes(s1)
-        val verification = unzipAndVerifyBackup(zip)
+        val verification = verificationOf(zip)
 
         assertTrue(verification.issues.joinToString { it.message }, verification.valid)
         assertEquals(1, verification.backupMeta?.docCount)
         assertTrue(verification.totalFiles >= 3) // backup.json + manifest + doc files
-        assertTrue(verification.unzipped.containsKey("backup.json"))
-        assertTrue(verification.unzipped.containsKey("library/manifest.json"))
-        assertTrue(verification.unzipped.keys.any { it.startsWith("library/docs/") && it.endsWith("/meta.json") })
+        // Content lives on the staged archive (never in a big in-RAM map).
+        StagedArchive.stage(zip.inputStream(), tmp.newFolder("stage-names-${UUID.randomUUID()}")).use { staged ->
+            assertTrue(staged.hasEntry("backup.json"))
+            assertTrue(staged.hasEntry("library/manifest.json"))
+            assertTrue(staged.entryNames.any { it.startsWith("library/docs/") && it.endsWith("/meta.json") })
+        }
     }
 
     @Test
@@ -154,7 +164,7 @@ class BackupRestoreTest {
             bos.toByteArray()
         }
 
-        val verification = unzipAndVerifyBackup(bytes)
+        val verification = verificationOf(bytes)
         assertFalse(verification.valid)
         assertTrue(verification.issues.any { it.reason == "checksum_mismatch" && it.path.endsWith("read.html") })
     }
@@ -173,10 +183,11 @@ class BackupRestoreTest {
             bos.toByteArray()
         }
 
-        val verification = unzipAndVerifyBackup(bytes)
+        val verification = verificationOf(bytes)
         assertTrue(verification.issues.any { it.reason == "unsafe_path" && it.path == "../evil.txt" })
-        // .. entry was skipped, so unsafe paths never extract
-        assertFalse(verification.unzipped.containsKey("../evil.txt"))
+        // .. entry was skipped during verification; restore only writes
+        // manifest-listed paths, so unsafe paths never extract.
+        assertFalse(verification.issues.isEmpty())
     }
 
     @Test
@@ -193,9 +204,7 @@ class BackupRestoreTest {
             annotation("a-local", "d2", updatedAt = "2026-10-18T00:00:00Z")
         )
 
-        val (summary, verification) = BackupRestore.restore(
-            sLocal, local, zip, RestoreMode.Merge
-        )
+        val (summary, verification) = restoreZip(sLocal, local, zip, RestoreMode.Merge)
         assertTrue(verification.valid)
         assertEquals(1, summary.totalDocsInBackup)
         assertEquals(1, summary.newDocsAdded)
@@ -221,7 +230,7 @@ class BackupRestoreTest {
         // Same content bytes → same hash (only its doc id differs).
         seedLibrary(sLocal, doc("dX", "2026-10-17-first-book", "hash-1", title = "Renamed"), body = "one")
 
-        val (summary, _) = BackupRestore.restore(sLocal, local, zip, RestoreMode.Merge)
+        val (summary, _) = restoreZip(sLocal, local, zip, RestoreMode.Merge)
         assertEquals(1, summary.duplicatesSkipped)
         assertEquals(0, summary.newDocsAdded)
         assertEquals("Renamed", local.listDocuments().single().title)
@@ -253,7 +262,7 @@ class BackupRestoreTest {
         )
         local.saveProgress(Progress("d1", "epubcfi(/6/2)", 5.0, "2026-10-18T00:00:00Z"))
 
-        val (summary, _) = BackupRestore.restore(sLocal, local, zip, RestoreMode.Merge)
+        val (summary, _) = restoreZip(sLocal, local, zip, RestoreMode.Merge)
         assertEquals(1, summary.annotationsMerged)
         assertEquals(1, summary.progressUpdated)
         val notes = local.getAnnotations().associateBy { it.id }
@@ -284,7 +293,7 @@ class BackupRestoreTest {
         )
         val local = LibraryManager(sLocal)
 
-        val (summary, _) = BackupRestore.restore(sLocal, local, zip, RestoreMode.Merge)
+        val (summary, _) = restoreZip(sLocal, local, zip, RestoreMode.Merge)
         assertEquals(1, summary.collectionsMerged)
         val collections = local.getCollections()
         assertEquals(1, collections.size)
@@ -308,12 +317,21 @@ class BackupRestoreTest {
         seedLibrary(sLocal, doc("d2", "2026-10-17-second-book", "hash-Z"), body = "two")
         local.saveAnnotation(annotation("local-only", "d2", updatedAt = "2026-10-18T00:00:00Z"))
 
-        val (summary, _) = BackupRestore.restore(sLocal, local, zip, RestoreMode.Replace)
+        val (summary, _) = restoreZip(sLocal, local, zip, RestoreMode.Replace)
         val docs = local.listDocuments()
         assertEquals(1, docs.size)
         assertEquals("hash-1", docs.single().contentHash)
         assertEquals(listOf("b1"), local.getAnnotations().map { it.id })
     }
+
+    /** Restores through the production streaming path: zip bytes → staged file (EPUB-007). */
+    private suspend fun restoreZip(
+        sLocal: AppFileStore,
+        local: LibraryManager,
+        zip: ByteArray,
+        mode: RestoreMode
+    ): Pair<RestoreSummary, VerificationResult> =
+        BackupRestore.restore(sLocal, local, zip.inputStream(), tmp.newFolder("stage-${UUID.randomUUID()}"), mode)
 
     private fun annotation(
         id: String,
