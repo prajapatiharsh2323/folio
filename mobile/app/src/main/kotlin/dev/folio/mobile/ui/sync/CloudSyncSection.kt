@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.store.AppFileStore
+import dev.folio.mobile.core.sync.CloudSyncScheduler
 import dev.folio.mobile.core.sync.DriveAuth
 import dev.folio.mobile.core.sync.DriveSyncProvider
 import dev.folio.mobile.core.sync.SyncManager
@@ -54,6 +56,7 @@ fun CloudSyncSection() {
     val main = remember { Handler(Looper.getMainLooper()) }
 
     var accountName by remember { mutableStateOf(auth.selectedAccountName()) }
+    var autoSync by remember { mutableStateOf(CloudSyncScheduler.isEnabled(context)) }
     var busy by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<SyncProgress?>(null) }
     var status by remember { mutableStateOf("") }
@@ -115,6 +118,10 @@ fun CloudSyncSection() {
                         onClick = {
                             auth.disconnect()
                             accountName = null
+                            if (autoSync) {
+                                autoSync = false
+                                CloudSyncScheduler.setEnabled(context, false)
+                            }
                             status = "Cloud sync disconnected. Your Drive copy is untouched."
                         },
                     ) { Text("Disconnect") }
@@ -125,6 +132,25 @@ fun CloudSyncSection() {
                 summary = "Uploads what is new here, downloads what other " +
                     "devices added. Merges notes and progress, never overwrites.",
                 onClick = { if (!busy) startSync() },
+            )
+            FolioSettingsRow(
+                title = "Auto-sync",
+                summary = "Mirror to Drive every few hours, on Wi-Fi, while " +
+                    "the battery is not low.",
+                trailing = {
+                    Switch(
+                        checked = autoSync,
+                        onCheckedChange = { enabled ->
+                            autoSync = enabled
+                            CloudSyncScheduler.setEnabled(context, enabled)
+                            status = if (enabled) {
+                                "Auto-sync on. Folio will mirror to Drive in the background."
+                            } else {
+                                "Auto-sync off."
+                            }
+                        },
+                    )
+                },
             )
         }
     }

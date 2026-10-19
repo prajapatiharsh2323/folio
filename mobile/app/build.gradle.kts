@@ -114,6 +114,8 @@ dependencies {
     implementation(libs.readium.navigator)
     implementation(libs.androidx.fragment)
     implementation(libs.androidx.activity)
+    // Opt-in background cloud sync (WorkManager).
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Cloud sync (Google Drive appDataFolder). The Drive service client is the
     // only network dependency in the app; everything else stays local.

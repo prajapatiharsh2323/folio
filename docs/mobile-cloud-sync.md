@@ -14,6 +14,8 @@ the Drive app, a browser, or any other device with Folio signed in.
   and collections (newer timestamp wins).
 - Files are mirrored one by one into a Drive folder named **Folio Library**,
   so the books are visible and downloadable outside Folio.
+- **Auto-sync** (opt-in) mirrors the library every six hours, on an unmetered
+  network, while the battery is not low. It is off until you turn it on.
 - Deletions never propagate (version-one rule, same as the web app).
 
 ## Layout in Drive
@@ -82,6 +84,5 @@ user's entire Drive. The narrow scope is the deliberate trade-off.
 
 ## Not implemented yet
 
-- Background/periodic sync (planned via WorkManager, opt-in).
 - Deletion propagation and tombstones.
 - The mirror folder name is fixed (`Folio Library`).
