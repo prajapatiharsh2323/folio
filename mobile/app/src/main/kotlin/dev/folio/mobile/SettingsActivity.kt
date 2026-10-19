@@ -164,6 +164,14 @@ fun SettingsScreen() {
                     ) { Text(if (prefs.theme == key) "• $key" else key) }
                 }
             }
+            // Per-book overrides: the reader's Aa/theme controls write THAT
+            // document's override only (Batch 2); make the scoping visible.
+            Text(
+                "Used by every book that has no reading override — the " +
+                    "reader's theme and Aa controls set a per-book override.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
 
             Spacer(Modifier.height(8.dp))
             Text("Storage", style = MaterialTheme.typography.titleMedium)

@@ -1129,8 +1129,10 @@ class ReaderActivity : FragmentActivity() {
         ) {
             val navigator = navigatorRef
             when (direction) {
-                PageTurnKeys.Direction.FORWARD -> navigator?.goForward(false)
-                PageTurnKeys.Direction.BACKWARD -> navigator?.goBackward(false)
+                // Animated: matches the navigator's own tap-zone turns
+                // (ViewPager2 smooth scroll) — audit Batch-2 polish item.
+                PageTurnKeys.Direction.FORWARD -> navigator?.goForward(true)
+                PageTurnKeys.Direction.BACKWARD -> navigator?.goBackward(true)
             }
             if (navigator != null) return true
         }
