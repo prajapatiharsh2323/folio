@@ -71,4 +71,30 @@ object CoverLoader {
         cache.put(cacheKey, bitmap)
         return bitmap
     }
+
+    /**
+     * Decodes a bundled drawable cover (default art) at the same sampled size
+     * contract as [decode], sharing the LRU so a list of coverless books never
+     * holds five full-resolution bitmaps. [id] comes from `DefaultCoverArt`.
+     * Blocking — call from a background dispatcher.
+     */
+    fun decodeResource(
+        resources: android.content.res.Resources,
+        id: Int,
+        reqW: Int = REQ_W,
+        reqH: Int = REQ_H
+    ): Bitmap? {
+        val cacheKey = "res:$id@${reqW}x$reqH"
+        cache.get(cacheKey)?.let { return it }
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeResource(resources, id, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, reqW, reqH)
+        }
+        val bitmap = BitmapFactory.decodeResource(resources, id, opts) ?: return null
+        cache.put(cacheKey, bitmap)
+        return bitmap
+    }
 }

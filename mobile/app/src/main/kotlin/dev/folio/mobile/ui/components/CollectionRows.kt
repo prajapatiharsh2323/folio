@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.ui.icons.FolioIcons
+import dev.folio.mobile.ui.theme.CoverInk
 import dev.folio.mobile.ui.theme.FolioDimensions
 import dev.folio.mobile.ui.theme.FolioRadii
 import dev.folio.mobile.ui.theme.FolioSpacing
@@ -53,9 +54,10 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Book cover thumbnail decoded once (LRU-cached in [CoverLoader]) or the
- * designed tinted placeholder when the doc has no cover file. Shared so the
- * library rows, collections fan and pickers all render covers identically.
+ * Book cover thumbnail decoded once (LRU-cached in [CoverLoader]): a real
+ * extracted cover when present, otherwise one of the bundled cover-imgs
+ * illustrations chosen from [seed]. The tinted initial remains only as the
+ * transient decode frame.
  */
 @Composable
 fun BookCover(
@@ -65,27 +67,53 @@ fun BookCover(
     modifier: Modifier = Modifier,
     width: Dp = Dp.Unspecified,
     height: Dp = Dp.Unspecified,
+    fallbackVariant: Int? = null,
+    /** False keeps the quiet initial placeholder (e.g. empty fan slots). */
+    fallbackArt: Boolean = true,
 ) {
     val context = LocalContext.current
     val store = remember { AppFileStore(context.filesDir) }
-    var bitmap by remember(coverPath) {
+    val variant = fallbackVariant ?: DefaultCoverArt.indexFor(seed)
+    var bitmap by remember(coverPath, variant, fallbackArt) {
         mutableStateOf<ImageBitmap?>(null)
     }
-    LaunchedEffect(coverPath) {
-        val rel = coverPath ?: return@LaunchedEffect
-        bitmap = withContext(Dispatchers.IO) {
-            CoverLoader.decode(store, rel)?.asImageBitmap()
+    // Fallback art is warm and light; a hairline keeps it from melting into the
+    // canvas (the tinted placeholder already had one). Real covers keep their
+    // own edge.
+    var bundledArt by remember(coverPath, variant, fallbackArt) { mutableStateOf(false) }
+    LaunchedEffect(coverPath, variant, fallbackArt) {
+        val resources = context.resources
+        val fallback = DefaultCoverArt.resourceAt(variant)
+        val (decoded, usedBundled) = withContext(Dispatchers.IO) {
+            val real = coverPath?.let { CoverLoader.decode(store, it) }
+            if (real != null) {
+                real to false
+            } else {
+                val art = if (fallbackArt) CoverLoader.decodeResource(resources, fallback) else null
+                art to (art != null)
+            }
         }
+        bitmap = decoded?.asImageBitmap()
+        bundledArt = usedBundled
     }
     val sized = modifier
         .then(if (width != Dp.Unspecified) Modifier.width(width) else Modifier)
         .then(if (height != Dp.Unspecified) Modifier.height(height) else Modifier)
     if (bitmap != null) {
+        val coverShape = RoundedCornerShape(FolioRadii.cover)
         Image(
             bitmap = bitmap!!,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = sized.clip(RoundedCornerShape(FolioRadii.cover)),
+            modifier = sized
+                .clip(coverShape)
+                .then(
+                    if (bundledArt) {
+                        Modifier.border(1.dp, CoverInk.copy(alpha = 0.16f), coverShape)
+                    } else {
+                        Modifier
+                    }
+                ),
         )
     } else {
         FolioCoverPlaceholder(
@@ -136,6 +164,10 @@ fun FolioCoverFan(
                         MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                         RoundedCornerShape(FolioRadii.cover),
                     ),
+                // Distinct fallback art per fan slot; real covers ignore it.
+                // Missing slots (fewer than 3 members) stay quiet placeholders.
+                fallbackVariant = index,
+                fallbackArt = slot != null,
             )
         }
     }

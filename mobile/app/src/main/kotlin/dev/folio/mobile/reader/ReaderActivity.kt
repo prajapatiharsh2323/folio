@@ -58,6 +58,7 @@ import dev.folio.mobile.core.annotation.SelectionBridge
 import dev.folio.mobile.core.annotation.AnnotationLocators
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
+import dev.folio.mobile.core.library.LibraryUi
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.AnnotationKind
 import dev.folio.mobile.core.model.HighlightColor
@@ -73,6 +74,7 @@ import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.DocPrefsStore
 import dev.folio.mobile.core.store.PrefsStore
+import dev.folio.mobile.ui.components.DefaultCoverArt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -522,6 +524,17 @@ class ReaderActivity : FragmentActivity() {
             CoverLoader.decode(
                 store,
                 "library/docs/${meta.slug}/$cover",
+                SPLASH_COVER_W,
+                SPLASH_COVER_H
+            )?.let { bitmap -> splashCover.value = bitmap.asImageBitmap() }
+        }
+        // Coverless docs get the same bundled art as their library card, so the
+        // splash never opens blank.
+        if (splashCover.value == null) {
+            val seed = LibraryUi.titleSeed(meta.title.ifBlank { meta.slug })
+            CoverLoader.decodeResource(
+                resources,
+                DefaultCoverArt.resourceAt(DefaultCoverArt.indexFor(seed)),
                 SPLASH_COVER_W,
                 SPLASH_COVER_H
             )?.let { bitmap -> splashCover.value = bitmap.asImageBitmap() }

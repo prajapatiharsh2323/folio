@@ -298,7 +298,16 @@ Create one coherent, clean outline icon set for Folio instead of mixing filled M
 
 ### 7.5 Book placeholder cover
 
-- Preserve the original title and any real author metadata; do not fabricate a cover image.
+- Preserve the original title and any real author metadata; never fabricate a
+  *book-specific* cover image.
+- When a document has no extracted cover (or its cover file is missing), use
+  the bundled Folio cover-art set (`cover-imgs/`, normalised to 600×840 5:7
+  WebP). Selection is deterministic from `LibraryUi.titleSeed` and the art has
+  identical dimensions to real covers, so rows and collection fans align. Real
+  covers always win; this is a display fallback only and is never written to
+  `meta.files.cover`.
+- The quiet tinted-initial placeholder below remains the decode/loading frame
+  (and the last-resort fallback if the bundled art cannot load).
 - Use a restrained tint palette derived from the Folio green/warm neutral system, not the current saturated multi-color strip.
 - Use one quiet visual motif: a thin border, a large initial, or abstract book-spine geometry. The placeholder should have identical dimensions to real covers so rows align.
 - Ensure contrast in both themes and distinguish different books without relying on color alone.
