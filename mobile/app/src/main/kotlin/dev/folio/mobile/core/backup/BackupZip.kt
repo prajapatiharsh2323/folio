@@ -48,9 +48,12 @@ private val STORE_SUFFIXES =
 private fun useStore(path: String): Boolean =
     STORE_SUFFIXES.any { path.lowercase().endsWith(it) }
 
-/** Standard backup filename: folio-backup-YYYYMMDD-HHMM.zip (local time). */
+/** Standard backup filename: folio-backup-YYYYMMDD-HHMM.zip (local time).
+ *  Same bytes-format contract as the PWA's export-zip.ts, so backups from
+ *  either client share one naming scheme. */
 fun generateBackupFilename(now: java.util.Date = java.util.Date()): String =
-    java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.ROOT).format(now)
+    java.text.SimpleDateFormat("'folio-backup-'yyyyMMdd-HHmm'.zip'", java.util.Locale.ROOT)
+        .format(now)
 
 /**
  * A backup archive staged on disk. Entry contents are read from the staged

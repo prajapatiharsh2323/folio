@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -47,8 +48,11 @@ private suspend fun sheetFocus(requester: FocusRequester) {
 
 /**
  * New collection sheet: auto-focused name field (the fixed [FolioTextField],
- * always full-width and tappable) + Create. [onCreate] returns null when the
- * store rejects the name so the sheet can stay open with the text intact.
+ * always full-width and tappable) + Cancel/Create. [onCreate] returns null
+ * when the store rejects the name so the sheet can stay open with the text
+ * intact. The sheet rides above the IME so the focused field and the Create
+ * button stay reachable on short devices, Done submits the trimmed name, and
+ * the busy flag guards against duplicate submissions.
  */
 @Composable
 fun CreateCollectionSheet(
@@ -61,6 +65,20 @@ fun CreateCollectionSheet(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
+    fun create() {
+        val trimmed = name.trim()
+        if (creating || trimmed.isEmpty()) return
+        creating = true
+        scope.launch {
+            val created = onCreate(trimmed)
+            creating = false
+            if (created != null) {
+                keyboard?.hide()
+                onDismiss()
+            }
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -68,6 +86,7 @@ fun CreateCollectionSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(bottom = FolioSpacing.x6),
         ) {
             FolioSheetHeader(title = "New collection", onClose = onDismiss)
@@ -79,13 +98,9 @@ fun CreateCollectionSheet(
                     value = name,
                     onValueChange = { name = it },
                     placeholder = "Collection name…",
+                    label = "Collection name",
                     focusRequester = focusRequester,
-                    onDone = { keyboard?.hide() },
-                )
-                Text(
-                    "Group books and articles so they're easy to browse together.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    onDone = { create() },
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
@@ -101,15 +116,7 @@ fun CreateCollectionSheet(
                         text = if (creating) "Creating…" else "Create",
                         enabled = !creating && name.isNotBlank(),
                         onClick = {
-                            if (creating) return@FolioFilledButton
-                            creating = true
-                            scope.launch {
-                                val created = onCreate(name.trim())
-                                creating = false
-                                if (created != null) {
-                                    onDismiss()
-                                }
-                            }
+                            if (!creating) create()
                         },
                         modifier = Modifier.weight(1f),
                     )
@@ -139,6 +146,7 @@ fun RenameCollectionSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(bottom = FolioSpacing.x6),
         ) {
             FolioSheetHeader(title = "Rename collection", onClose = onDismiss)
@@ -150,8 +158,17 @@ fun RenameCollectionSheet(
                     value = name,
                     onValueChange = { name = it },
                     placeholder = "Collection name…",
+                    label = "Collection name",
                     focusRequester = focusRequester,
-                    onDone = { keyboard?.hide() },
+                    onDone = {
+                        if (clean.isNotEmpty() && clean != currentName) {
+                            keyboard?.hide()
+                            onSave(clean)
+                            onDismiss()
+                        } else {
+                            keyboard?.hide()
+                        }
+                    },
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
@@ -196,6 +213,7 @@ fun CollectionPickerSheet(
 ) {
     var checked by remember { mutableStateOf(initialChecked) }
     var newCollName by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -206,6 +224,7 @@ fun CollectionPickerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(bottom = FolioSpacing.x6),
         ) {
             FolioSheetHeader(
@@ -278,14 +297,16 @@ fun CollectionPickerSheet(
                         value = newCollName,
                         onValueChange = { newCollName = it },
                         placeholder = "New collection…",
+                        label = "New collection name",
                         modifier = Modifier.weight(1f),
                         focusRequester = focusRequester.takeIf { collections.isEmpty() },
                         onDone = { keyboard?.hide() },
                     )
                     TextButton(
+                        enabled = !creating,
                         onClick = {
                             val name = newCollName.trim()
-                            if (name.isNotEmpty()) {
+                            if (name.isNotEmpty() && !creating) {
                                 onCreate(name) { created ->
                                     checked = checked + created.id
                                 }
@@ -361,6 +382,7 @@ fun BookPickerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .padding(bottom = FolioSpacing.x6),
         ) {
             FolioSheetHeader(title = "Add books", onClose = onDismiss)

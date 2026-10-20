@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -100,10 +101,20 @@ fun CloudSyncSection() {
     }
 
     // The user can remove the saved account in Android Settings while Folio is
-    // in the background. Revalidate whenever Settings becomes visible again.
+    // in the background, and the 6-hour worker can stop auto-sync. Revalidate
+    // account state and surface pending background-sync attention whenever
+    // Settings becomes visible again (a manual sync in progress is untouched).
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) refreshAccountState()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshAccountState()
+                if (state == SyncUiState.Idle) {
+                    CloudSyncScheduler.attentionMessage(context)?.let {
+                        message = it
+                        state = SyncUiState.Error
+                    }
+                }
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -254,6 +265,12 @@ fun CloudSyncSection() {
                 busy = false
                 progress = null
                 val failure = SyncFailureMapper.from(error)
+                // Safe diagnostics: categories and class names only. Never
+                // tokens, exception messages or library content.
+                Log.w(
+                    TAG,
+                    "Manual sync failed: kind=${failure.kind}, thrown=${error.javaClass.simpleName}",
+                )
                 state = when (failure.kind) {
                     SyncFailureKind.Offline -> SyncUiState.Offline
                     SyncFailureKind.AuthRequired,
@@ -379,6 +396,8 @@ private enum class SyncUiState {
     Offline,
     Error,
 }
+
+private const val TAG = "FolioCloudSync"
 
 /** One-line summary of a finished sync; only called after persistence. */
 private fun describe(result: SyncResult): String = buildString {

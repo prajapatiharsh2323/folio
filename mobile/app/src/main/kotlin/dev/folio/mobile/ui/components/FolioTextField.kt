@@ -20,6 +20,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.ui.theme.FolioDimensions
@@ -46,6 +48,8 @@ fun FolioTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     focusRequester: FocusRequester? = null,
     onDone: (() -> Unit)? = null,
+    /** Accessible field name for TalkBack; the placeholder is only an example. */
+    label: String? = null,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -83,6 +87,13 @@ fun FolioTextField(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(26.dp)
+                        .then(
+                            if (label != null) {
+                                Modifier.semantics { contentDescription = label }
+                            } else {
+                                Modifier
+                            }
+                        )
                         .then(
                             if (focusRequester != null) {
                                 Modifier.focusRequester(focusRequester)

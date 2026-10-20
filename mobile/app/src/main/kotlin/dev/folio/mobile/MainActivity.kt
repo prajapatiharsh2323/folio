@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -954,12 +955,14 @@ private fun DetailsDialog(
     var selected by remember(item.id) { mutableStateOf(item.collectionIds.toSet()) }
     var tagInput by remember { mutableStateOf("") }
     var newCollName by remember { mutableStateOf("") }
+    var creatingCollection by remember { mutableStateOf(false) }
     var localCollections by remember(item.id) { mutableStateOf(collections) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = FolioSpacing.x6)
         ) {
@@ -998,6 +1001,7 @@ private fun DetailsDialog(
                         value = tagInput,
                         onValueChange = { tagInput = it },
                         placeholder = "Add a tag…",
+                        label = "Tag",
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = {
@@ -1068,23 +1072,30 @@ private fun DetailsDialog(
                         value = newCollName,
                         onValueChange = { newCollName = it },
                         placeholder = "New collection…",
+                        label = "New collection name",
                         modifier = Modifier.weight(1f)
                     )
-                    TextButton(onClick = {
-                        val name = newCollName.trim()
-                        if (name.isNotEmpty()) {
-                            scope.launch {
-                                try {
-                                    val created = onCreateCollection(name)
-                                    localCollections = localCollections + created
-                                    selected = selected + created.id
-                                    newCollName = ""
-                                } catch (_: Throwable) {
-                                    // Surfaced upstream via the snackbar in onCreateCollection.
+                    TextButton(
+                        enabled = !creatingCollection,
+                        onClick = {
+                            val name = newCollName.trim()
+                            if (name.isNotEmpty() && !creatingCollection) {
+                                creatingCollection = true
+                                scope.launch {
+                                    try {
+                                        val created = onCreateCollection(name)
+                                        localCollections = localCollections + created
+                                        selected = selected + created.id
+                                        newCollName = ""
+                                    } catch (_: Throwable) {
+                                        // Surfaced upstream via the snackbar in onCreateCollection.
+                                    } finally {
+                                        creatingCollection = false
+                                    }
                                 }
                             }
                         }
-                    }) { Text("Create") }
+                    ) { Text("Create") }
                 }
 
                 Row(

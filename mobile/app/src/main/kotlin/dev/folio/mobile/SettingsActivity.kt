@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -360,93 +363,140 @@ private fun DefaultThemePicker(
     prefs: ReadingPrefs,
     onSelect: (String) -> Unit,
 ) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x3),
-        contentPadding = PaddingValues(
-            start = FolioSpacing.x4,
-            end = FolioSpacing.x4,
-            top = FolioSpacing.x3,
-        ),
-        modifier = Modifier.selectableGroup(),
-    ) {
-        items(THEME_OPTIONS, key = { it.key }) { option ->
-            val selected = prefs.theme == option.key
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .selectable(
-                        selected = selected,
-                        role = Role.RadioButton,
-                        onClick = { onSelect(option.key) },
-                    )
-                    .padding(bottom = FolioSpacing.x2),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(option.pageArgb),
-                    border = BorderStroke(
-                        width = if (selected) 2.dp else 1.dp,
+    // Intentional horizontal scroller: on narrow phones all five swatches do
+    // not fit, so soft edge fades (only when more can be scrolled) signal that
+    // the row continues off-screen instead of leaving a clipped "System".
+    val listState = rememberLazyListState()
+    Box {
+        LazyRow(
+            state = listState,
+            horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+            contentPadding = PaddingValues(
+                start = FolioSpacing.x4,
+                end = FolioSpacing.x6,
+                top = FolioSpacing.x3,
+            ),
+            modifier = Modifier.selectableGroup(),
+        ) {
+            items(THEME_OPTIONS, key = { it.key }) { option ->
+                val selected = prefs.theme == option.key
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .selectable(
+                            selected = selected,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(option.key) },
+                        )
+                        .padding(bottom = FolioSpacing.x2),
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(option.pageArgb),
+                        border = BorderStroke(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outline
+                            },
+                        ),
+                        modifier = Modifier
+                            .size(width = 56.dp, height = 44.dp),
+                    ) {
+                        if (option.isSystem) {
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .background(Color(0xFFFAFAF7)),
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .background(Color(0xFF121214)),
+                                )
+                            }
+                        } else {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    "Aa",
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        color = Color(option.inkArgb),
+                                    ),
+                                )
+                            }
+                        }
+                        if (selected) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(4.dp),
+                                contentAlignment = Alignment.TopEnd,
+                            ) {
+                                Text(
+                                    "✓",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        option.label,
+                        style = MaterialTheme.typography.labelMedium,
                         color = if (selected) {
                             MaterialTheme.colorScheme.primary
                         } else {
-                            MaterialTheme.colorScheme.outline
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         },
-                    ),
-                    modifier = Modifier
-                        .size(width = 56.dp, height = 44.dp),
-                ) {
-                    if (option.isSystem) {
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .background(Color(0xFFFAFAF7)),
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .background(Color(0xFF121214)),
-                            )
-                        }
-                    } else {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                "Aa",
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    color = Color(option.inkArgb),
-                                ),
-                            )
-                        }
-                    }
-                    if (selected) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(4.dp),
-                            contentAlignment = Alignment.TopEnd,
-                        ) {
-                            Text(
-                                "✓",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                    }
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = FolioSpacing.x1),
+                    )
                 }
-                Text(
-                    option.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = FolioSpacing.x1),
-                )
             }
+        }
+        EdgeFade(
+            atStart = listState.canScrollBackward,
+            atEnd = listState.canScrollForward,
+        )
+    }
+}
+
+/**
+ * 12dp soft fades at the ends of a horizontally scrollable strip, drawn only
+ * while content still overflows in that direction. Purely decorative for the
+ * eye — pointer input passes through to the row underneath.
+ */
+@Composable
+private fun EdgeFade(atStart: Boolean, atEnd: Boolean) {
+    if (!atStart && !atEnd) return
+    val surface = MaterialTheme.colorScheme.surface
+    Row(modifier = Modifier.fillMaxWidth()) {
+        if (atStart) {
+            Box(
+                modifier = Modifier
+                    .size(width = 12.dp, height = 44.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(surface.copy(alpha = 0f), surface.copy(alpha = 1f)),
+                        ),
+                    ),
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        if (atEnd) {
+            Box(
+                modifier = Modifier
+                    .size(width = 12.dp, height = 44.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(surface.copy(alpha = 1f), surface.copy(alpha = 0f)),
+                        ),
+                    ),
+            )
         }
     }
 }
@@ -468,15 +518,38 @@ private fun computeStorage(context: Context): StorageInfo {
 
 /**
  * Streams a verified, PWA-compatible backup ZIP (entries added one file at a
- * time — the whole library never sits in memory). Caller is on Dispatchers.IO.
+ * time — the whole library never sits in memory). The archive is written to a
+ * temporary ".part" file first and renamed only after the stream completes, so
+ * an interrupted export never leaves a file that looks like a finished backup.
+ * Caller is on Dispatchers.IO.
  */
 private suspend fun exportBackup(context: Context): String {
     val store = AppFileStore(context.filesDir)
     val outDir = File(context.getExternalFilesDir(null), "backups").apply { mkdirs() }
-    val out = File(outDir, generateBackupFilename())
-    FileOutputStream(out).use { fos ->
-        exportBackupZip(store, fos)
-        fos.flush()
+    // PWA contract name (folio-backup-YYYYMMDD-HHMM.zip); never truncate an
+    // earlier backup from the same minute — add a serial suffix instead.
+    val base = generateBackupFilename()
+    var out = File(outDir, base)
+    var attempt = 1
+    while (out.exists()) {
+        out = File(outDir, base.removeSuffix(".zip") + "-$attempt.zip")
+        attempt++
+    }
+    val temp = File.createTempFile("folio-export-", ".part", outDir)
+    try {
+        FileOutputStream(temp).use { fos ->
+            exportBackupZip(store, fos)
+            fos.flush()
+            fos.fd.sync()
+        }
+        if (out.exists() && !out.delete()) {
+            throw java.io.IOException("Could not replace the existing backup file")
+        }
+        if (!temp.renameTo(out)) {
+            temp.copyTo(out, overwrite = true)
+        }
+    } finally {
+        if (temp.exists()) temp.delete()
     }
     return "Backup saved: ${out.name}"
 }
