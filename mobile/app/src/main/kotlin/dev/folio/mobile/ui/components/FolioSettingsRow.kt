@@ -93,13 +93,14 @@ fun FolioSettingsRow(
 /** Section container: rounded quiet group for related rows (used sparingly, §7.10). */
 @Composable
 fun FolioSettingsGroup(
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     androidx.compose.material3.Surface(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(FolioRadii.card),
         color = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(vertical = FolioSpacing.x2)) { content() }
     }

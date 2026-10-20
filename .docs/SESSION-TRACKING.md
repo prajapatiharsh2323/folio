@@ -11,6 +11,23 @@
 
 ## Session log
 
+- **Session 3 (Oct 20, 2026)** — Android UX/cloud/notes/settings pass
+  (branch `ux/cloud-notes-settings`, base `4a96a0e`).
+  - Scope: native `mobile/` only; PWA/EPUB engine/schemas/backup format/sync
+    contracts unchanged.
+  - P0: system Google account chooser, typed saved-account validation, separate
+    Drive consent, sync failure classification, worker cancellation/attention,
+    shared sync mutex.
+  - P1: one-shot highlight save, annotation sheets keep text on failure, Notes
+    loading/error/mutation states and documented filter semantics, scrollable
+    Settings with ordered preference writes and honest storage metrics.
+  - P2: reusable `FolioSlider`, live text-size value, accessible theme/color
+    swatches.
+  - Docs: `FOLIO_UX_FEATURE_FLOW_FIX_REPORT.md`; `docs/mobile-cloud-sync.md`
+    corrected for per-client `drive.file`; mobile tracking M-24.
+  - Validation: 253/253 unit tests, `assembleDebug`, `lintDebug` green. No
+    device/emulator available, so runtime OAuth/WorkManager/visual verification
+    is still pending.
 - **Session 2 (Oct 16, 2026)** — hooks-order crash fix (commit 29fec2e, pushed).
   - Bug: `timeLeftLabel` useMemo was after the error/`!doc` early returns in ReaderScreen →
     hook count changed between null and loaded renders → "Rendered more hooks" crash.

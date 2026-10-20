@@ -15,6 +15,8 @@ import dev.folio.mobile.core.model.ManifestDoc
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.store.FileStore
 import dev.folio.mobile.core.util.sha256Hex
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
@@ -64,6 +66,15 @@ class SyncManager(
             prettyPrintIndent = "  "
             explicitNulls = false
         }
+
+        /**
+         * Foreground sync and the periodic WorkManager worker run in the same
+         * process. A process-wide lock keeps them from mutating the same local
+         * library/sync state at the same time. (LibraryManager's file locks
+         * still protect individual writes; this protects the multi-file sync
+         * transaction around them.)
+         */
+        private val runLock = Mutex()
     }
 
     /** Reads the local sync state; a missing or broken file means "nothing yet". */
@@ -79,8 +90,10 @@ class SyncManager(
         store.write(SYNC_STATE_PATH, syncJson.encodeToString(SyncState.serializer(), state))
     }
 
-    /** Runs one full sync cycle. */
-    suspend fun sync(): SyncResult {
+    /** Runs one full sync cycle, serialised against other syncs in-process. */
+    suspend fun sync(): SyncResult = runLock.withLock { syncLocked() }
+
+    private suspend fun syncLocked(): SyncResult {
         val result = SyncResult()
         report("connecting", 0, 100, message = "Connecting to Google Drive")
 

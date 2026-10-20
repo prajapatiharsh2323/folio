@@ -75,6 +75,7 @@ import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.DocPrefsStore
 import dev.folio.mobile.core.store.PrefsStore
 import dev.folio.mobile.ui.components.DefaultCoverArt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -253,6 +254,14 @@ class ReaderActivity : FragmentActivity() {
     /** Annotation context menu target (R3) — null when closed. */
     private val annotationMenu = mutableStateOf<Annotation?>(null)
 
+    /** True while the existing-annotation edit save/delete is in flight. */
+    private val annotationMutation = mutableStateOf(false)
+    private val annotationError = mutableStateOf<String?>(null)
+
+    /** True while a selected-text highlight/note save is in flight. */
+    private val selectionMutation = mutableStateOf(false)
+    private val selectionError = mutableStateOf<String?>(null)
+
     /** Reader splash: the document cover shown while the navigator mounts. */
     private val splashCover = mutableStateOf<ImageBitmap?>(null)
 
@@ -390,14 +399,17 @@ class ReaderActivity : FragmentActivity() {
                 if (selectionToolbarVisible.value) {
                     SelectionToolbarSheet(
                         annotation = selectionAnnotation.value,
-                        onColor = { color -> saveSelectionHighlight(color) },
-                        onNote = { note -> saveSelectionHighlight(HighlightColor.Yellow, note, openMenuAfter = true) },
+                        saving = selectionMutation.value,
+                        error = selectionError.value,
+                        onSave = { color, note -> saveSelectionHighlight(color, note) },
                         onCopy = { copySelectionToClipboard() },
                         onDismiss = {
                             navigatorRef?.clearSelection()
                             selectionToolbarVisible.value = false
                             selectionAnnotation.value = null
                             selectionLocator.value = null
+                            selectionError.value = null
+                            selectionMutation.value = false
                         }
                     )
                 }
@@ -421,11 +433,16 @@ class ReaderActivity : FragmentActivity() {
                 annotationMenu.value?.let { annotation ->
                     AnnotationMenuSheet(
                         annotation = annotation,
-                        onColor = { color -> onAnnotationColor(color) },
-                        onSaveNote = { note -> onAnnotationNote(note) },
+                        saving = annotationMutation.value,
+                        error = annotationError.value,
+                        onSave = { color, note -> onAnnotationSave(color, note) },
                         onDelete = { onAnnotationDelete() },
                         onShare = { onAnnotationShare() },
-                        onDismiss = { annotationMenu.value = null }
+                        onDismiss = {
+                            annotationMenu.value = null
+                            annotationError.value = null
+                            annotationMutation.value = false
+                        }
                     )
                 }
             }
@@ -761,25 +778,77 @@ class ReaderActivity : FragmentActivity() {
 
     // ---- Annotation context-menu actions (R3) ----
 
-    private fun onAnnotationColor(color: HighlightColor) {
-        applyAnnotationEdit { it.copy(color = color) }
-    }
-
-    private fun onAnnotationNote(note: String) {
-        applyAnnotationEdit { it.copy(note = note.ifBlank { null }) }
+    /**
+     * Persists an existing annotation's colour/note. The sheet stays open with
+     * the user's text until storage succeeds; on failure the text is kept and
+     * an inline error offers a retry (the Save button is simply pressed again).
+     */
+    private fun onAnnotationSave(color: HighlightColor, note: String?) {
+        val annotation = annotationMenu.value ?: return
+        if (annotationMutation.value) return
+        val manager = highlightManager ?: return
+        val updated = annotation.copy(
+            color = color,
+            note = note?.ifBlank { null },
+            updatedAt = java.time.Instant.now().toString(),
+        )
+        annotationMutation.value = true
+        annotationError.value = null
+        loadScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
+                }
+                // Decoration routing drives the WebView — main only.
+                withContext(Dispatchers.Main) {
+                    manager.update(updated)
+                    annotationMenu.value = updated
+                    annotationMutation.value = false
+                    if (updated.note != null) {
+                        android.widget.Toast.makeText(
+                            this@ReaderActivity,
+                            "Note saved",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    annotationMutation.value = false
+                    annotationError.value =
+                        "Couldn't save your changes. Check free space and try again."
+                }
+            }
+        }
     }
 
     private fun onAnnotationDelete() {
         val annotation = annotationMenu.value ?: return
-        annotationMenu.value = null
-        highlightManager ?: return
+        if (annotationMutation.value) return
+        val manager = highlightManager ?: return
+        annotationMutation.value = true
+        annotationError.value = null
         loadScope.launch {
-            withContext(Dispatchers.IO) {
-                LibraryManager(AppFileStore(filesDir)).removeAnnotation(annotation.id)
-            }
-            // Decoration routing drives the WebView — main only.
-            withContext(Dispatchers.Main) {
-                highlightManager?.remove(annotation.id)
+            try {
+                withContext(Dispatchers.IO) {
+                    LibraryManager(AppFileStore(filesDir)).removeAnnotation(annotation.id)
+                }
+                // Decoration routing drives the WebView — main only.
+                withContext(Dispatchers.Main) {
+                    manager.remove(annotation.id)
+                    annotationMenu.value = null
+                    annotationMutation.value = false
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    annotationMutation.value = false
+                    annotationError.value =
+                        "Couldn't delete this annotation. Check free space and try again."
+                }
             }
         }
     }
@@ -788,26 +857,6 @@ class ReaderActivity : FragmentActivity() {
     private fun onAnnotationShare() {
         val annotation = annotationMenu.value ?: return
         shareQuoteCard(annotation)
-    }
-
-    /** Menu → updatedAt bump → persist → re-apply decorations. */
-    private fun applyAnnotationEdit(
-        transform: (Annotation) -> Annotation
-    ) {
-        val annotation = annotationMenu.value ?: return
-        val updated = transform(annotation).copy(
-            updatedAt = java.time.Instant.now().toString()
-        )
-        annotationMenu.value = updated
-        loadScope.launch {
-            withContext(Dispatchers.IO) {
-                LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
-            }
-            // Decoration routing drives the WebView — main only.
-            withContext(Dispatchers.Main) {
-                highlightManager?.update(updated)
-            }
-        }
     }
 
     private fun applySystemBarAppearance(prefs: ReadingPrefs) {
@@ -888,28 +937,51 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
-    /** Saves the captured selection as a highlight with the chosen color and optional note. */
+    /**
+     * Saves the captured selection as a highlight with the chosen colour and
+     * optional note. Persistence happens exactly once; the selection is only
+     * cleared and the sheet only closed after storage succeeds. There is no
+     * second annotation sheet: the reader returns to the book.
+     */
     private fun saveSelectionHighlight(
         color: HighlightColor,
         note: String? = null,
-        openMenuAfter: Boolean = false
     ) {
         val annotation = selectionAnnotation.value ?: return
         val locator = selectionLocator.value ?: return
         val manager = highlightManager ?: return
+        if (selectionMutation.value) return
         if (manager.annotationById(annotation.id) != null) return
-        val updated = annotation.copy(color = color, note = note?.ifBlank { null })
+        val trimmedNote = note?.trim()?.ifBlank { null }
+        val updated = annotation.copy(color = color, note = trimmedNote)
+        selectionMutation.value = true
+        selectionError.value = null
         loadScope.launch {
-            withContext(Dispatchers.IO) {
-                LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
-            }
-            withContext(Dispatchers.Main) {
-                manager.add(updated, locator)
-                navigatorRef?.clearSelection()
-                selectionToolbarVisible.value = false
-                selectionAnnotation.value = null
-                selectionLocator.value = null
-                if (openMenuAfter) annotationMenu.value = updated
+            try {
+                withContext(Dispatchers.IO) {
+                    LibraryManager(AppFileStore(filesDir)).saveAnnotation(updated)
+                }
+                withContext(Dispatchers.Main) {
+                    manager.add(updated, locator)
+                    navigatorRef?.clearSelection()
+                    selectionToolbarVisible.value = false
+                    selectionAnnotation.value = null
+                    selectionLocator.value = null
+                    selectionMutation.value = false
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity,
+                        if (trimmedNote != null) "Note saved" else "Highlight saved",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    selectionMutation.value = false
+                    selectionError.value =
+                        "Couldn't save this. Your text is still selected—try again."
+                }
             }
         }
     }
@@ -1354,79 +1426,6 @@ private fun AppearanceBottomSheet(
     }
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable
-private fun SelectionToolbarSheet(
-    annotation: Annotation?,
-    onColor: (HighlightColor) -> Unit,
-    onNote: (String) -> Unit,
-    onCopy: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    var noteEditing by remember { mutableStateOf(false) }
-    var noteText by remember { mutableStateOf("") }
-
-    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
-        androidx.compose.foundation.layout.Column(
-            modifier = androidx.compose.ui.Modifier
-                .padding(top = 16.dp, bottom = 16.dp)
-                .fillMaxWidth()
-        ) {
-            dev.folio.mobile.ui.components.FolioSheetHeader(
-                title = "Highlight",
-                subtitle = annotation?.quote?.takeIf { it.isNotBlank() }
-                    ?.let { "\u201C${it.take(60)}\u201D" }
-                    ?: "Select text on the page first",
-                onClose = onDismiss,
-            )
-            dev.folio.mobile.ui.components.FolioSheetBody {
-                Column {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ANNOTATION_CHIP_ARGBS.forEach { (color, argb) ->
-                            Box(
-                                modifier = androidx.compose.ui.Modifier
-                                    .size(40.dp)
-                                    .background(androidx.compose.ui.graphics.Color(argb), CircleShape)
-                                    .clickable { onColor(color) }
-                            )
-                        }
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        TextButton(onClick = { noteEditing = true }) { Text("Add note") }
-                        TextButton(onClick = onCopy) { Text("Copy") }
-                    }
-                    if (noteEditing) {
-                        androidx.compose.material3.OutlinedTextField(
-                            value = noteText,
-                            onValueChange = { noteText = it },
-                            placeholder = { Text("Note\u2026") },
-                            singleLine = false,
-                            minLines = 2,
-                            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
-                        )
-                        androidx.compose.foundation.layout.Row(
-                            modifier = androidx.compose.ui.Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            TextButton(onClick = { noteEditing = false }) { Text("Cancel") }
-                            TextButton(
-                                onClick = {
-                                    val note = noteText.trim()
-                                    if (note.isNotEmpty()) onNote(note)
-                                }
-                            ) { Text("Save") }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 /**
  * Table of contents sheet (R1). Lists flattened TOC entries; tapping jumps.

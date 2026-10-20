@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes exact-text jump (EPUB-010 partial, EPUB-018) + bottom-pillar auto-hide + collections Details row-tap fix + folio-collections logcat trace (M-22) + bundled fallback covers + icon tint root-cause fix (M-23) - **239/239 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes exact-text jump (EPUB-010 partial, EPUB-018) + bottom-pillar auto-hide + collections Details row-tap fix + folio-collections logcat trace (M-22) + bundled fallback covers + icon tint root-cause fix (M-23) + UX/cloud/notes/settings fix pass (M-24) - **253/253 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
@@ -254,7 +254,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 
 ## Session log
 
-- **Session M-23 (Oct 20, 2026)** — USER ROUND: bundled cover art + icon tint.
+- **Session M-23 (Oct 20, 2026)** - USER ROUND: bundled cover art + icon tint.
   - **Bundled cover art (option A, user-chosen).** The five `cover-imgs`
     illustrations are now app assets: `drawable-nodpi/folio_cover_art_{1..5}`
     (600×840 5:7 WebP, ~107 KB total, centre-cropped from the sources).
@@ -276,6 +276,33 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     `onSurfaceVariant` for both quiet actions (§6.1).
   - Tests +4 → **239/239 green**; assembleDebug + lintDebug green.
 
+- **Session M-24 (Oct 20, 2026)** - UX / cloud / notes / settings fix pass
+  (branch `ux/cloud-notes-settings`, base `4a96a0e`). Full report:
+  `FOLIO_UX_FEATURE_FLOW_FIX_REPORT.md`.
+  - **P0 account + sync:** system `newChooseAccountIntent` chooser; typed
+    `SavedAccountState` (`Connected` / `Missing` / `Unverified`); no fake empty
+    account list; stale account disabled + reconnect copy; separate first-sync
+    consent; `UserRecoverableAuthIOException` handling; account change deletes
+    local Drive-state mapping. Added `SyncFailureMapper` (auth/permission/
+    offline/rate/server/storage, safe copy, retryability), worker attention +
+    cancellation handling, and a process-wide `Mutex` around `SyncManager.sync`.
+  - **Annotation flow:** one save, then close (`openMenuAfter` removed); sheets
+    stay open and preserve text on failure; edit/delete persist before
+    decorating. Shared accessible `AnnotationMenuSheet` + `SelectionToolbarSheet`
+    with 48 dp radio swatches and multiline note field.
+  - **Notes:** loading/error/retry, guarded mutations, inline dialog errors,
+    snackbars only after persistence, overflow menu row, raw-kind labels gone.
+    New `AnnotationFilter` helper documents that a highlight-with-note appears in
+    both Highlights and Notes (unit-tested).
+  - **Settings:** `LazyColumn`, ordered `Channel` preference writes with revert,
+    system theme split preview + radio semantics, separate library/app/free
+    storage, `formatBytes`, friendly backup errors.
+  - **Appearance:** new reusable `FolioSlider` (M3 slots, 48 dp target, live
+    value); all reading sliders migrated; theme swatches selectable.
+  - **Validation:** 253/253 unit tests, `assembleDebug` and `lintDebug` green.
+    No device/emulator: runtime OAuth/WorkManager/TalkBack/visual checks remain.
+  - **Scope note:** kept `drive.file`; docs now state Android ↔ PWA mirroring is
+    unsupported under per-client access (backup ZIP is the bridge).
 - **Session M-22 (Oct 19, 2026)** — USER TESTING FIX ROUND (three bugs from
   the manual-testing round of the `folio-mobile-debug-2026-10-19.apk`). Tests
   + assembleDebug green; fresh APK replaced at the repo root.

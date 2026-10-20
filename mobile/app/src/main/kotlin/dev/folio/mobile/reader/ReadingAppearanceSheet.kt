@@ -7,19 +7,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,10 +32,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.ui.components.FolioIconButton
 import dev.folio.mobile.ui.components.FolioSheetHeader
+import dev.folio.mobile.ui.components.FolioSlider
 import dev.folio.mobile.ui.icons.FolioIcons
 import dev.folio.mobile.ui.theme.FolioSpacing
 
@@ -102,7 +105,7 @@ fun ReadingAppearanceSheet(
             LabeledSlider(
                 label = "Space between lines",
                 value = prefs.lineHeight,
-                onValueChange = {
+                onCommit = {
                     onPrefsChange(prefs.copy(lineHeight = it))
                 },
                 valueRange = 1.3f..2.4f,
@@ -115,7 +118,7 @@ fun ReadingAppearanceSheet(
             LabeledSlider(
                 label = "Side margins",
                 value = prefs.margin,
-                onValueChange = {
+                onCommit = {
                     onPrefsChange(prefs.copy(margin = it))
                 },
                 valueRange = 12f..64f,
@@ -147,7 +150,7 @@ fun ReadingAppearanceSheet(
             LabeledSlider(
                 label = "Screen brightness while reading",
                 value = prefs.brightness,
-                onValueChange = {
+                onCommit = {
                     onPrefsChange(prefs.copy(brightness = it))
                 },
                 valueRange = 30f..100f,
@@ -225,12 +228,21 @@ private val THEME_SWATCHES = mapOf(
 
 @Composable
 private fun ThemePicker(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2)) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+        modifier = Modifier.selectableGroup(),
+    ) {
         THEME_SWATCHES.forEach { (key, swatch) ->
             val selected = prefs.theme == key
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { onPrefsChange(prefs.copy(theme = key)) },
+                    ),
             ) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -242,14 +254,30 @@ private fun ThemePicker(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Un
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
-                        .clickable { onPrefsChange(prefs.copy(theme = key)) },
+                        .height(48.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            "Aa",
-                            style = MaterialTheme.typography.titleMedium.copy(color = swatch.ink),
-                        )
+                        if (key == "system") {
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .background(LightPage),
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .background(DarkPage),
+                                )
+                            }
+                        } else {
+                            Text(
+                                "Aa",
+                                style = MaterialTheme.typography.titleMedium.copy(color = swatch.ink),
+                            )
+                        }
                         if (selected) {
                             Icon(
                                 FolioIcons.Check,
@@ -290,36 +318,33 @@ private fun TextSizeRow(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Un
             icon = FolioIcons.Minus,
             contentDescription = "Smaller text",
             onClick = {
-                val next = (prefs.fontSize - 2.0).coerceIn(14.0, 32.0)
-                onPrefsChange(prefs.copy(fontSize = next))
+                val next = (value - 2f).coerceIn(14f, 32f)
+                value = next
+                onPrefsChange(prefs.copy(fontSize = next.toDouble()))
             },
         )
-        Slider(
+        FolioSlider(
             value = value,
             onValueChange = { value = it },
             onValueChangeFinished = {
                 onPrefsChange(prefs.copy(fontSize = value.toDouble()))
             },
             valueRange = 14f..32f,
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
-            modifier = Modifier
-                .weight(1f)
-                .height(28.dp),
+            steps = 8,
+            contentDescription = "Text size",
+            modifier = Modifier.weight(1f),
         )
         FolioIconButton(
             icon = FolioIcons.Plus,
             contentDescription = "Larger text",
             onClick = {
-                val next = (prefs.fontSize + 2.0).coerceIn(14.0, 32.0)
-                onPrefsChange(prefs.copy(fontSize = next))
+                val next = (value + 2f).coerceIn(14f, 32f)
+                value = next
+                onPrefsChange(prefs.copy(fontSize = next.toDouble()))
             },
         )
         Text(
-            "${prefs.fontSize.toInt()}",
+            "${value.toInt()}",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
@@ -333,7 +358,7 @@ private fun TextSizeRow(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Un
 private fun LabeledSlider(
     label: String,
     value: Double,
-    onValueChange: (Double) -> Unit,
+    onCommit: (Double) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int,
     format: (Float) -> String,
@@ -347,18 +372,13 @@ private fun LabeledSlider(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Slider(
+            FolioSlider(
                 value = local,
                 onValueChange = { local = it },
-                onValueChangeFinished = { onValueChange(local.toDouble()) },
+                onValueChangeFinished = { onCommit(local.toDouble()) },
                 valueRange = valueRange,
                 steps = steps,
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-                modifier = Modifier.height(28.dp),
+                contentDescription = label,
             )
         }
         Text(

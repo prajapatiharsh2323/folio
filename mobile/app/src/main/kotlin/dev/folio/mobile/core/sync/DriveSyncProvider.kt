@@ -16,8 +16,11 @@ import java.io.File
  * "Folio Library", so the books are visible in the Drive app and browser and
  * can be opened from anywhere — not hidden in an app-private corner.
  *
- * Scope: `drive.file` — the same scope the PWA uses. The app can only touch
- * the files it created, never the user's other Drive content.
+ * Scope: `drive.file` — per-file access to the files this app creates (or the
+ * user explicitly opens for it). The app can never touch the user's other
+ * Drive content. Access is scoped to this OAuth client; a different Folio
+ * client (for example the PWA) cannot see these files without an explicit
+ * user-mediated grant such as Google Picker.
  *
  * Uploads follow Drive's two paths: a plain multipart upload for small files
  * and a resumable, chunked upload for anything above 5 MB (a single EPUB

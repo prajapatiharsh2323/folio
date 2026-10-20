@@ -2,13 +2,17 @@
 
 The Android app mirrors the library to the user's own Google Drive, using the
 same protocol as the web app (spec §8, `packages/core/src/sync`). The device
-library stays the source of truth; Drive holds a mirror you can also open from
-the Drive app, a browser, or any other device with Folio signed in.
+library stays the source of truth; Drive holds a visible `Folio Library` folder.
+Another **Android** install signed into the same Google account can read that
+folder. The **PWA** uses a separate OAuth grant and cannot see it; use a backup
+ZIP to move a library between web and Android.
 
 ## What it does
 
-- **Settings → Cloud sync → Connect Google Drive** picks a Google account from
-  the ones on the device (no password ever reaches Folio).
+- **Settings → Cloud sync → Connect Google Drive** opens Android's system
+  Google account chooser (no password ever reaches Folio). Choosing an account
+  and granting Drive access are two separate steps: consent is requested on the
+  first sync, and the UI only shows "Synced" after a real sync succeeds.
 - **Sync now** is bidirectional: it uploads what is new on this device and
   downloads what the other devices have, then merges notes, reading progress
   and collections (newer timestamp wins).
@@ -49,8 +53,8 @@ need to create the client once:
    *Testing*, app name `Folio`, your own Google account under *Test users*.
 4. **Scopes** — add `https://www.googleapis.com/auth/drive.file`
    (*See, edit, create and delete only the specific Google Drive files you
-   use with this app*). This is the same scope the web app uses, so one
-   consent screen covers both.
+   use with this app*). The PWA uses the same scope name but is a different
+   OAuth client, so each client only sees the files it created.
 5. **Android OAuth client** — *Credentials → Create Credentials → OAuth client
    ID → Android*:
    - package name: `dev.folio.mobile`
