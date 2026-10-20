@@ -7,7 +7,7 @@
 > (which covers the PWA side). Result summaries for major changes go in
 > `.docs/results/` with `M*` prefixes.
 
-## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes exact-text jump (EPUB-010 partial, EPUB-018) + bottom-pillar auto-hide + collections Details row-tap fix + folio-collections logcat trace (M-22) - **225/225 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
+## Status: M3 + L1 + M4 COMPLETE + R1 + R2 DONE + R2b PARTIAL + R3 DONE + Settings screen + Notes screen + sort control + duplicate prompt + Batch 1 fixes + pace/time-left + PERCENT-SCALE compat fix (Progress.percent is 0-100) + Batch 3 backup core (verified zip + merge/replace restore in Settings) + per-book typography overrides + custom selection bar [Highlight]/[Copy] replacing the system menu + WebView main-thread crash fixes + **AUDIT P1/P2/P3 REMEDIATION (2026-10-19, see EPUB_READER_AUDIT_REPORT.md + sessions M-20/M-21)** + in-book search (EPUB-015) + refined chapter resume + notes exact-text jump (EPUB-010 partial, EPUB-018) + bottom-pillar auto-hide + collections Details row-tap fix + folio-collections logcat trace (M-22) + bundled fallback covers + icon tint root-cause fix (M-23) - **239/239 tests green, assembleDebug+lintDebug green, pipeline (mobile-ci) live**. TTS + PDF + audio dropped from v1 scope.
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
@@ -253,6 +253,28 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session M-23 (Oct 20, 2026)** — USER ROUND: bundled cover art + icon tint.
+  - **Bundled cover art (option A, user-chosen).** The five `cover-imgs`
+    illustrations are now app assets: `drawable-nodpi/folio_cover_art_{1..5}`
+    (600×840 5:7 WebP, ~107 KB total, centre-cropped from the sources).
+    `core/library/CoverFallback` is the pure mapping (`LibraryUi.titleSeed` →
+    slot, negative-safe); `ui/components/DefaultCoverArt` owns the ids;
+    `CoverLoader.decodeResource` shares the 8 MB LRU and samples like `decode`
+    (132×174 thumbs, 660×990 splash). `BookCover` now falls back to the art
+    when the doc has no cover or the file is missing; the collection fan gets a
+    distinct art slot per member (missing slots stay quiet placeholders) and
+    the reader splash is never blank. Display-only — nothing is written to
+    `meta.files.cover`, so PWA/Drive stay byte-identical. Real covers win.
+    Design-system §7.5 records the exception.
+  - **Collections "+"/"×" color bug (root cause fixed).**
+    `FolioIconButton` defaulted to `tint = Color.Unspecified`; M3 `Icon` treats
+    Unspecified as "no tint" and draws the vector's baked-in pure black. That
+    made the collections header buttons hard black (harsh in light, near-
+    invisible in dark) and silently affected other untinted buttons. Default is
+    now `LocalContentColor.current`; the collections header explicitly uses
+    `onSurfaceVariant` for both quiet actions (§6.1).
+  - Tests +4 → **239/239 green**; assembleDebug + lintDebug green.
 
 - **Session M-22 (Oct 19, 2026)** — USER TESTING FIX ROUND (three bugs from
   the manual-testing round of the `folio-mobile-debug-2026-10-19.apk`). Tests
