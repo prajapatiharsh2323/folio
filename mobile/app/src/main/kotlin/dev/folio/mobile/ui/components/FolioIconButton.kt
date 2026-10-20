@@ -5,6 +5,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -29,7 +30,11 @@ fun FolioIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    tint: Color = Color.Unspecified,
+    // LocalContentColor, not Color.Unspecified: M3 Icon treats Unspecified as
+    // "no tint" and falls back to the vector's baked-in black (design-system
+    // §2.4 forbids pure black, and it vanishes in dark theme). Call sites can
+    // still pass Unspecified for a genuinely multi-colour vector.
+    tint: Color = LocalContentColor.current,
     artwork: Dp = 22.dp,
 ) {
     val interactionSource = remember { MutableInteractionSource() }

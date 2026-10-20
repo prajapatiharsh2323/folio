@@ -509,7 +509,17 @@ private fun CollectionsHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        FolioIconButton(icon = FolioIcons.Plus, contentDescription = "New collection", onClick = onCreate)
-        FolioIconButton(icon = FolioIcons.Close, contentDescription = "Back to library", onClick = onClose)
+        FolioIconButton(
+            icon = FolioIcons.Plus,
+            contentDescription = "New collection",
+            onClick = onCreate,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FolioIconButton(
+            icon = FolioIcons.Close,
+            contentDescription = "Back to library",
+            onClick = onClose,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
