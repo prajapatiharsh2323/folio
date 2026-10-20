@@ -254,6 +254,33 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 
 ## Session log
 
+- **Session M-23 (Oct 20, 2026)** — UX / cloud / notes / settings fix pass
+  (branch `ux/cloud-notes-settings`, base `4a96a0e`). Full report:
+  `FOLIO_UX_FEATURE_FLOW_FIX_REPORT.md`.
+  - **P0 account + sync:** system `newChooseAccountIntent` chooser; typed
+    `SavedAccountState` (`Connected` / `Missing` / `Unverified`); no fake empty
+    account list; stale account disabled + reconnect copy; separate first-sync
+    consent; `UserRecoverableAuthIOException` handling; account change deletes
+    local Drive-state mapping. Added `SyncFailureMapper` (auth/permission/
+    offline/rate/server/storage, safe copy, retryability), worker attention +
+    cancellation handling, and a process-wide `Mutex` around `SyncManager.sync`.
+  - **Annotation flow:** one save, then close (`openMenuAfter` removed); sheets
+    stay open and preserve text on failure; edit/delete persist before
+    decorating. Shared accessible `AnnotationMenuSheet` + `SelectionToolbarSheet`
+    with 48 dp radio swatches and multiline note field.
+  - **Notes:** loading/error/retry, guarded mutations, inline dialog errors,
+    snackbars only after persistence, overflow menu row, raw-kind labels gone.
+    New `AnnotationFilter` helper documents that a highlight-with-note appears in
+    both Highlights and Notes (unit-tested).
+  - **Settings:** `LazyColumn`, ordered `Channel` preference writes with revert,
+    system theme split preview + radio semantics, separate library/app/free
+    storage, `formatBytes`, friendly backup errors.
+  - **Appearance:** new reusable `FolioSlider` (M3 slots, 48 dp target, live
+    value); all reading sliders migrated; theme swatches selectable.
+  - **Validation:** 249/249 unit tests, `assembleDebug` and `lintDebug` green.
+    No device/emulator: runtime OAuth/WorkManager/TalkBack/visual checks remain.
+  - **Scope note:** kept `drive.file`; docs now state Android ↔ PWA mirroring is
+    unsupported under per-client access (backup ZIP is the bridge).
 - **Session M-22 (Oct 19, 2026)** — USER TESTING FIX ROUND (three bugs from
   the manual-testing round of the `folio-mobile-debug-2026-10-19.apk`). Tests
   + assembleDebug green; fresh APK replaced at the repo root.

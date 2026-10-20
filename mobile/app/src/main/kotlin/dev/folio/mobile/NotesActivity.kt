@@ -19,11 +19,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -33,14 +39,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.folio.mobile.core.annotation.AnnotationFilter
+import dev.folio.mobile.core.annotation.filtered
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.AnnotationKind
@@ -57,6 +67,7 @@ import dev.folio.mobile.ui.theme.HighlightBlue
 import dev.folio.mobile.ui.theme.HighlightGreen
 import dev.folio.mobile.ui.theme.HighlightPink
 import dev.folio.mobile.ui.theme.HighlightYellow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,23 +90,20 @@ class NotesActivity : ComponentActivity() {
     }
 }
 
-/** Notes list filters (design §B Notes): All / Highlights / Notes / Bookmarks. */
-private enum class NotesFilter(val label: String) {
-    All("All"),
-    Highlights("Highlights"),
-    Notes("Notes"),
-    Bookmarks("Bookmarks"),
-}
-
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun NotesScreen() {
     val context = LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     var annotations by remember { mutableStateOf<List<Annotation>>(emptyList()) }
     var docs by remember { mutableStateOf<Map<String, String>>(emptyMap()) } // id -> title
     var reloadKey by remember { mutableStateOf(0) }
-    var filter by remember { mutableStateOf(NotesFilter.All) }
+    var filter by remember { mutableStateOf(AnnotationFilter.All) }
+    var loading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var mutating by remember { mutableStateOf(false) }
+    var mutationError by remember { mutableStateOf<String?>(null) }
 
     /** Delete confirm target (null = closed). */
     var deleteTarget by remember { mutableStateOf<Annotation?>(null) }
@@ -107,29 +115,35 @@ fun NotesScreen() {
         reloadKey++
     }
 
+    fun showSnack(message: String) {
+        scope.launch { snackbar.showSnackbar(message) }
+    }
+
     LaunchedEffect(reloadKey) {
-        withContext(Dispatchers.IO) {
-            val library = LibraryManager(AppFileStore(context.filesDir))
-            val all = library.getAnnotations()
-            val titles = library.listDocuments().associate { it.id to it.title }
-            // Newest first (updatedAt, falling back to createdAt).
-            annotations = all.sortedByDescending { a -> (a.updatedAt.ifBlank { null } ?: a.createdAt) }
-            docs = titles
+        if (annotations.isEmpty()) loading = true
+        loadError = null
+        try {
+            withContext(Dispatchers.IO) {
+                val library = LibraryManager(AppFileStore(context.filesDir))
+                val all = library.getAnnotations()
+                val titles = library.listDocuments().associate { it.id to it.title }
+                // Newest first (updatedAt, falling back to createdAt).
+                annotations = all.sortedByDescending { a -> (a.updatedAt.ifBlank { null } ?: a.createdAt) }
+                docs = titles
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            loadError = "Couldn't load your notes. Check free space and try again."
+        } finally {
+            loading = false
         }
     }
 
-    val shown = remember(annotations, filter) {
-        when (filter) {
-            NotesFilter.All -> annotations
-            NotesFilter.Highlights -> annotations.filter {
-                it.kind == AnnotationKind.Highlight || it.kind == AnnotationKind.Note
-            }
-            NotesFilter.Notes -> annotations.filter { !it.note.isNullOrBlank() }
-            NotesFilter.Bookmarks -> annotations.filter { it.kind == AnnotationKind.Bookmark }
-        }
-    }
+    val shown = remember(annotations, filter) { annotations.filtered(filter) }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
@@ -160,8 +174,29 @@ fun NotesScreen() {
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (annotations.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            when {
+                loading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+
+                loadError != null -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            loadError.orEmpty(),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(onClick = { reload() }) { Text("Try again") }
+                    }
+                }
+
+                annotations.isEmpty() -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
                     FolioEmptyState(
                         icon = FolioIcons.NotebookPen,
                         title = "Nothing saved yet",
@@ -170,45 +205,45 @@ fun NotesScreen() {
                         onCta = { context.startActivity(Intent(context, MainActivity::class.java)) },
                     )
                 }
-            } else {
-                FilterRow(filter) { picked ->
-                    filter = picked
-                }
-                if (shown.isEmpty()) {
-                    Text(
-                        "No ${filter.label.lowercase()} yet. Everything you save while reading will show up here.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x8),
-                    )
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(0.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        items(shown, key = { it.id }) { a ->
-                            AnnotationRow(
-                                annotation = a,
-                                bookTitle = docs[a.docId] ?: a.docId,
-                                onOpen = {
-                                    // EPUB-018 tie-in: jump back to the
-                                    // annotation's saved location — chapter-
-                                    // accurate for the href/CFI plus, when a
-                                    // quote+context exists (highlights/notes),
-                                    // a second text-quote anchored go() that
-                                    // lands on the exact highlighted text.
-                                    context.startActivity(
-                                        ReaderActivity.createIntent(
-                                            context, a.docId, a.location ?: "",
-                                            a.prefix, a.quote, a.suffix
+
+                else -> {
+                    FilterRow(filter) { picked -> filter = picked }
+                    if (shown.isEmpty()) {
+                        Text(
+                            "No ${filter.label.lowercase()} yet. Everything you save while reading will show up here.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x8),
+                        )
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(0.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            items(shown, key = { it.id }) { a ->
+                                AnnotationRow(
+                                    annotation = a,
+                                    bookTitle = docs[a.docId] ?: a.docId,
+                                    onOpen = {
+                                        // EPUB-018 tie-in: jump back to the
+                                        // annotation's saved location — chapter-
+                                        // accurate for the href/CFI plus, when a
+                                        // quote+context exists (highlights/notes),
+                                        // a second text-quote anchored go() that
+                                        // lands on the exact highlighted text.
+                                        context.startActivity(
+                                            ReaderActivity.createIntent(
+                                                context, a.docId, a.location ?: "",
+                                                a.prefix, a.quote, a.suffix
+                                            )
                                         )
-                                    )
-                                },
-                                onEdit = { editTarget = a },
-                                onDelete = { deleteTarget = a },
-                            )
+                                    },
+                                    onEdit = { mutationError = null; editTarget = a },
+                                    onDelete = { mutationError = null; deleteTarget = a },
+                                )
+                            }
                         }
                     }
                 }
@@ -218,29 +253,53 @@ fun NotesScreen() {
 
     deleteTarget?.let { target ->
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
+            onDismissRequest = { if (!mutating) deleteTarget = null },
             title = { Text("Delete?") },
             text = {
-                Text(
-                    if (target.kind == AnnotationKind.Bookmark) "Remove this bookmark?"
-                    else "Remove this " + target.kind.name.lowercase() +
-                        (if (target.note.isNullOrBlank()) "?" else " and its note?")
-                )
+                Column {
+                    Text(
+                        if (target.kind == AnnotationKind.Bookmark) "Remove this bookmark?"
+                        else "Remove this highlight" +
+                            (if (target.note.isNullOrBlank()) "?" else " and its note?")
+                    )
+                    mutationError?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = FolioSpacing.x2),
+                        )
+                    }
+                }
             },
             confirmButton = {
                 FolioDestructiveTextButton(
-                    text = "Delete",
+                    text = if (mutating) "Deleting…" else "Delete",
+                    enabled = !mutating,
                     onClick = {
-                        deleteTarget = null
-                        scope.launch(Dispatchers.IO) {
-                            LibraryManager(AppFileStore(context.filesDir)).removeAnnotation(target.id)
-                            withContext(Dispatchers.Main) { reload() }
+                        if (mutating) return@FolioDestructiveTextButton
+                        mutating = true
+                        mutationError = null
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    LibraryManager(AppFileStore(context.filesDir)).removeAnnotation(target.id)
+                                }
+                                deleteTarget = null
+                                reload()
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                mutationError = "Couldn't delete this. Check free space and try again."
+                            } finally {
+                                mutating = false
+                            }
                         }
                     }
                 )
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
+                TextButton(enabled = !mutating, onClick = { deleteTarget = null }) { Text("Cancel") }
             }
         )
     }
@@ -248,37 +307,56 @@ fun NotesScreen() {
     editTarget?.let { target ->
         EditNoteDialog(
             initial = target.note.orEmpty(),
-            hasNote = target.kind == AnnotationKind.Note || !target.note.isNullOrBlank(),
+            hasNote = !target.note.isNullOrBlank(),
+            saving = mutating,
+            error = mutationError,
             onSave = { note ->
-                editTarget = null
+                if (mutating) return@EditNoteDialog
+                mutating = true
+                mutationError = null
                 val updated = target.copy(
                     note = note.ifBlank { null },
                     updatedAt = Instant.now().toString()
                 )
-                scope.launch(Dispatchers.IO) {
-                    LibraryManager(AppFileStore(context.filesDir)).saveAnnotation(updated)
-                    withContext(Dispatchers.Main) { reload() }
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            LibraryManager(AppFileStore(context.filesDir)).saveAnnotation(updated)
+                        }
+                        editTarget = null
+                        reload()
+                        showSnack(if (updated.note != null) "Note saved" else "Note removed")
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        mutationError = "Couldn't save your note. Check free space and try again."
+                    } finally {
+                        mutating = false
+                    }
                 }
             },
             onDelete = {
-                editTarget = null
-                deleteTarget = target
+                if (!mutating) {
+                    editTarget = null
+                    mutationError = null
+                    deleteTarget = target
+                }
             },
-            onDismiss = { editTarget = null }
+            onDismiss = { if (!mutating) editTarget = null }
         )
     }
 }
 
 /** One line of pill filters; selection = filled accent pill (§7.9). */
 @Composable
-private fun FilterRow(selected: NotesFilter, onSelect: (NotesFilter) -> Unit) {
+private fun FilterRow(selected: AnnotationFilter, onSelect: (AnnotationFilter) -> Unit) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x2),
     ) {
-        NotesFilter.entries.forEach { f ->
+        AnnotationFilter.entries.forEach { f ->
             val isOn = f == selected
             Box(
                 modifier = Modifier
@@ -287,7 +365,7 @@ private fun FilterRow(selected: NotesFilter, onSelect: (NotesFilter) -> Unit) {
                         if (isOn) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.surfaceVariant
                     )
-                    .clickable { onSelect(f) }
+                    .selectable(selected = isOn, role = Role.Tab, onClick = { onSelect(f) })
                     .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
             ) {
                 Text(
@@ -303,9 +381,9 @@ private fun FilterRow(selected: NotesFilter, onSelect: (NotesFilter) -> Unit) {
 
 /**
  * Editorial quote row: a highlight-color rail, the book it came from, the
- * quoted passage as the primary text, the attached note underneath, then the
- * kind. Whole row opens the book at the saved location; edit/delete sit at the
- * end with full-size touch targets.
+ * quoted passage as the primary text, then the attached note. Whole row opens
+ * the book at the saved location; secondary actions live behind overflow so the
+ * calm reading surface is not crowded with icon buttons.
  */
 @Composable
 private fun AnnotationRow(
@@ -318,7 +396,6 @@ private fun AnnotationRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onOpen() }
             .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x5),
         verticalAlignment = Alignment.Top,
     ) {
@@ -333,7 +410,11 @@ private fun AnnotationRow(
                     shape = RoundedCornerShape(2.dp),
                 )
         )
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onOpen),
+        ) {
             Text(
                 bookTitle,
                 style = MaterialTheme.typography.labelMedium,
@@ -346,6 +427,8 @@ private fun AnnotationRow(
                     "\u201C${annotation.quote}\u201D",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = FolioSpacing.x1),
                 )
             }
@@ -354,28 +437,44 @@ private fun AnnotationRow(
                     n,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = FolioSpacing.x1),
                 )
             }
-            Text(
-                annotation.kind.name.lowercase(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                modifier = Modifier.padding(top = FolioSpacing.x2),
-            )
+            val meta = when {
+                annotation.kind == AnnotationKind.Bookmark -> "Bookmark"
+                !annotation.note.isNullOrBlank() -> "Has note"
+                else -> null
+            }
+            meta?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = FolioSpacing.x2),
+                )
+            }
         }
-        FolioIconButton(
-            icon = FolioIcons.PenLine,
-            contentDescription = "Edit note",
-            onClick = onEdit,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        FolioIconButton(
-            icon = FolioIcons.Trash,
-            contentDescription = "Delete",
-            onClick = onDelete,
-            tint = MaterialTheme.colorScheme.error,
-        )
+        var menuOpen by remember(annotation.id) { mutableStateOf(false) }
+        Box {
+            FolioIconButton(
+                icon = FolioIcons.MoreVertical,
+                contentDescription = "More actions",
+                onClick = { menuOpen = true },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Edit note") },
+                    onClick = { menuOpen = false; onEdit() },
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    onClick = { menuOpen = false; onDelete() },
+                )
+            }
+        }
     }
 }
 
@@ -393,14 +492,15 @@ private fun railColor(annotation: Annotation) = when {
 private val HighlightColorRailNeutral = Color(0xFFD8D5CC)
 
 /**
- * Edit dialog for an annotation's note. For a plain highlight (no note + not a
- * Note-kind record), Save with an empty field would be a no-op, so Delete is
- * offered inline; bookmarks just get Save/Cancel.
+ * Edit dialog for an annotation's note. Saving keeps the dialog open until the
+ * storage call succeeds; failures show an inline message and keep the text.
  */
 @Composable
 private fun EditNoteDialog(
     initial: String,
     hasNote: Boolean,
+    saving: Boolean,
+    error: String?,
     onSave: (String) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
@@ -408,23 +508,43 @@ private fun EditNoteDialog(
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Note") },
+        title = { Text(if (hasNote) "Edit note" else "Add note") },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = { Text("Your note\u2026") },
-                minLines = 3,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("Your note\u2026") },
+                    minLines = 3,
+                    enabled = !saving,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                error?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = FolioSpacing.x2),
+                    )
+                }
+            }
         },
-        confirmButton = { TextButton(onClick = { onSave(text) }) { Text("Save") } },
+        confirmButton = {
+            TextButton(
+                enabled = !saving && text.isNotBlank(),
+                onClick = { onSave(text) },
+            ) { Text(if (saving) "Saving…" else "Save") }
+        },
         dismissButton = {
             Row {
                 if (hasNote) {
-                    FolioDestructiveTextButton(text = "Delete", onClick = onDelete)
+                    FolioDestructiveTextButton(
+                        text = "Remove note",
+                        enabled = !saving,
+                        onClick = { onSave("") },
+                    )
                 }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") }
             }
         }
     )
