@@ -1,8 +1,0 @@
-packages:
-  - "packages/*"
-  - "apps/*"
-allowBuilds:
-  core-js: true
-  es5-ext: true
-  esbuild: true
-  spawn-sync: true
