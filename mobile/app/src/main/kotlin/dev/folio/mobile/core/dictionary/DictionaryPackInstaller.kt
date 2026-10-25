@@ -25,7 +25,7 @@ interface DictionaryPackSource {
     fun expectedSha256(): String?
 }
 
-interface DictionaryPackLocator {
+fun interface DictionaryPackLocator {
     /** Directory the promoted pack lives in (app filesDir/dictionary). */
     fun packDir(): File
 }

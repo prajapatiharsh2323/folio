@@ -13,20 +13,19 @@ import org.junit.Test
  */
 class DictionaryRepositoryTest {
 
-    private val meta = DictionaryMeta(
-        schemaVersion = 1,
-        dataset = "FreeDict eng-hin",
-        datasetVersion = "1.6",
-        sha256 = "abc",
-        attribution = "FreeDict eng-hin; data: Anusaaraka",
-        licence = "GPL-2.0",
-    )
-
-    /** Fake data source that records which keys were asked for. */
     private class FakeSource(
         private val byKey: Map<String, Pair<DictionaryRow?, Boolean>>,
     ) : OfflineDictionaryDataSource {
         val asked = mutableListOf<DictionaryQuery>()
+
+        private val meta = DictionaryMeta(
+            schemaVersion = 1,
+            dataset = "FreeDict eng-hin",
+            datasetVersion = "1.6",
+            sha256 = "abc",
+            attribution = "FreeDict eng-hin; data: Anusaaraka",
+            licence = "GPL-2.0",
+        )
 
         override suspend fun lookup(query: DictionaryQuery): DictionaryOutcome {
             asked.add(query)

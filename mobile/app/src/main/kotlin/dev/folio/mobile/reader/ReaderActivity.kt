@@ -866,6 +866,9 @@ class ReaderActivity : FragmentActivity() {
         dictionaryVisible.value = false
         dictionaryState.value = DictionaryUiState.Loading
         dictionaryRawSelection = ""
+        // Both entry points have cleared the selection by now; this is the
+        // idempotent tail so the page never keeps a stale highlight.
+        navigatorRef?.clearSelection()
     }
 
     // ---- Annotation context-menu actions (R3) ----

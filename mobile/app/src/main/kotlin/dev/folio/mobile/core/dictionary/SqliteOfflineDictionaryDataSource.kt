@@ -6,27 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-
-/** One source row (headword + POS + raw senses JSON). */
-data class DictionaryRow(
-    val headword: String,
-    val pos: String?,
-    val sensesJson: String,
-) {
-    fun toEntry(): DictionaryEntry = DictionaryEntry(
-        headword = headword,
-        partOfSpeech = pos,
-        senses = parseSenses(),
-    )
-
-    /** Defensive parse: corrupt rows degrade to "no senses". */
-    private fun parseSenses(): List<DictSense> = try {
-        Json.decodeFromString<List<DictSense>>(sensesJson)
-    } catch (t: Throwable) {
-        emptyList()
-    }
-}
 
 /**
  * Local indexed lookup over the pre-built dictionary pack (D1). Plain
@@ -78,7 +57,6 @@ class SqliteOfflineDictionaryDataSource(
                 )
             }
         }
-    }
 
     /** Single read-only connection, opened lazily; any failure returns null. */
     private suspend fun open(): SQLiteDatabase? = mutex.withLock {
@@ -150,13 +128,4 @@ class SqliteOfflineDictionaryDataSource(
         const val COL_RELAXED = "headword_relaxed"
         const val LIMIT = 32
     }
-}
-
-/**
- * Data-source seam for the repository. Local only in this build; a future
- * online provider implements the same contract (Phase-5 decision deferred —
- * see .docs/plans/dictionary-plan.md).
- */
-interface OfflineDictionaryDataSource {
-    suspend fun lookup(query: DictionaryQuery): DictionaryOutcome
 }

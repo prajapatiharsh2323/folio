@@ -1,6 +1,7 @@
 package dev.folio.mobile.core.dictionary
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 /**
  * Dictionary layer contracts (D1). Pure Kotlin — no Android imports — so the
@@ -87,4 +88,29 @@ sealed interface DictionaryUiState {
 
     /** Selection unusable for lookup (blank / punctuation / paragraph-length). */
     data class Invalid(val reason: String) : DictionaryUiState
+}
+
+/** Data-source seam for the repository (local now; online postponed — never mixed). */
+interface OfflineDictionaryDataSource {
+    suspend fun lookup(query: DictionaryQuery): DictionaryOutcome
+}
+
+/** One source row (headword + POS + raw senses JSON). */
+data class DictionaryRow(
+    val headword: String,
+    val pos: String?,
+    val sensesJson: String,
+) {
+    fun toEntry(): DictionaryEntry = DictionaryEntry(
+        headword = headword,
+        partOfSpeech = pos,
+        senses = parseSenses(),
+    )
+
+    /** Defensive parse: corrupt rows degrade to "no senses". */
+    private fun parseSenses(): List<DictSense> = try {
+        Json.decodeFromString<List<DictSense>>(sensesJson)
+    } catch (t: Throwable) {
+        emptyList()
+    }
 }
