@@ -11,15 +11,21 @@
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
-0. **D1 dictionary IN PROGRESS (2026-10-25, session D-1).** Offline English→Hindi
-   lookups from the reader selection bar. User locked: FreeDict eng-hin v1.6
-   bundle (GPL, quality "low" upstream — no coverage overselling), NO online
-   fallback, English-definitions gap deferred to a possible WordNet session.
-   Read `.docs/plans/dictionary-plan.md` (locked schema + work checklist) and
-   `.docs/results/D1-dictionary.md` before touching anything. SelectionCapture:
-   add `SEL_ITEM_MEANING=3` beside `SEL_ITEM_HIGHLIGHT/SEL_ITEM_COPY` in
-   ReaderActivity's ActionMode callback; NO annotation writes from lookup;
-   Dictionary DB = framework SQLiteDatabase in `assets/dictionary/`, no Room.
+0. **D1 dictionary — implementation COMPLETE + repaired & verified (2026-10-25,
+   session D-1b).** Offline English→Hindi lookups from the reader selection
+   bar. User locked: FreeDict eng-hin v1.6 bundle (GPL, quality "low" upstream
+   — no coverage overselling), NO online fallback, English-definitions gap
+   deferred to a possible WordNet session. Session D-1 built the feature but
+   left HEAD non-compiling + a fatal pack-digest bug (installer would reject
+   the pack forever); D-1b fixed compile, rebuilt the digest contract
+   (`meta.content_sha256` + `.sha256` sidecar → `PACK_SHA256`
+   `9c477e11…`), fixed the List serializer and normalizer bugs tests exposed,
+   and wrapped the dictionary sheet in the resolved reading theme. Verified:
+   **297/297 unit tests green, assembleDebug green** (SDK 35 installed at
+   /tmp/opencode/android-sdk; mobile/local.properties git-ignored). Dictionary
+   DB = framework SQLiteDatabase in `assets/dictionary/`, no Room. Device
+   manual round still pending (no emulator here). Details:
+   `.docs/results/D1-dictionary.md`, root `FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`.
 0. **User manual-testing round (in flight as of M-21 close):** a debug APK with
    all M-21 features is at the repo root — `folio-mobile-debug-2026-10-19.apk`
    (~39 MB, supersedes the removed stale `app-release*.apk`). Test points:
