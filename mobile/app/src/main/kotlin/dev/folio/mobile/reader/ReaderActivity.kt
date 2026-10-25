@@ -56,6 +56,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import dev.folio.mobile.R
 import dev.folio.mobile.core.annotation.SelectionBridge
 import dev.folio.mobile.core.annotation.AnnotationLocators
+import dev.folio.mobile.core.dictionary.DictionaryRepository
+import dev.folio.mobile.core.dictionary.DictionaryUiState
 import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryUi
@@ -152,9 +154,10 @@ class ReaderActivity : FragmentActivity() {
         const val EXTRA_TEXT_SUFFIX = "dev.folio.mobile.READER_TEXT_SUFFIX"
         private const val NAV_TAG = "EpubNavigatorFragment"
 
-        /** Custom floating selection-bar item ids (PWA parity). */
+        /** Custom floating selection-bar item ids (PWA parity + D1 dictionary). */
         private const val SEL_ITEM_HIGHLIGHT = 1
         private const val SEL_ITEM_COPY = 2
+        private const val SEL_ITEM_MEANING = 3
 
         /** Reader splash cover decode size (~200dp box at ~3x). */
         private const val SPLASH_COVER_W = 660
@@ -276,6 +279,20 @@ class ReaderActivity : FragmentActivity() {
     private val selectionToolbarVisible = mutableStateOf(false)
     private val selectionAnnotation = mutableStateOf<Annotation?>(null)
     private val selectionLocator = mutableStateOf<Locator?>(null)
+
+    /**
+     * Dictionary sheet (D1): the query is captured immutably BEFORE the sheet
+     * opens, so later selection changes can never alter the open result; the
+     * lookup runs as its own job (rapid repeated Meaning taps replace, never
+     * stack). No annotation is created by a lookup — ever.
+     */
+    private val dictionaryVisible = mutableStateOf(false)
+    private val dictionaryState = mutableStateOf<DictionaryUiState>(DictionaryUiState.Loading)
+    private var dictionaryRepo: DictionaryRepository? = null
+    private var dictionaryJob: Job? = null
+
+    /** The raw selection that produced the open sheet's query (retry anchor). */
+    private var dictionaryRawSelection: String = ""
 
     // ---- In-book search state (EPUB-015) ----
 
@@ -403,6 +420,17 @@ class ReaderActivity : FragmentActivity() {
                         error = selectionError.value,
                         onSave = { color, note -> saveSelectionHighlight(color, note) },
                         onCopy = { copySelectionToClipboard() },
+                        onMeaning = {
+                            // D1: look up the selection captured for this sheet.
+                            val quote = selectionAnnotation.value?.quote
+                            navigatorRef?.clearSelection()
+                            selectionToolbarVisible.value = false
+                            selectionAnnotation.value = null
+                            selectionLocator.value = null
+                            selectionError.value = null
+                            selectionMutation.value = false
+                            openDictionaryFor(quote.orEmpty())
+                        },
                         onDismiss = {
                             navigatorRef?.clearSelection()
                             selectionToolbarVisible.value = false
@@ -411,6 +439,17 @@ class ReaderActivity : FragmentActivity() {
                             selectionError.value = null
                             selectionMutation.value = false
                         }
+                    )
+                }
+                if (dictionaryVisible.value) {
+                    DictionarySheet(
+                        state = dictionaryState.value,
+                        onRetry = {
+                            // Retry repeats the exact captured query — the
+                            // open result never picks up new selections.
+                            openDictionaryFor(dictionaryRawSelection.orEmpty())
+                        },
+                        onDismiss = { closeDictionarySheet() },
                     )
                 }
                 if (appearanceVisible.value) {
@@ -685,6 +724,8 @@ class ReaderActivity : FragmentActivity() {
                             ?.setShowAsActionFlags(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
                         menu.add(0, SEL_ITEM_COPY, 1, "Copy")
                             ?.setShowAsActionFlags(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
+                        menu.add(0, SEL_ITEM_MEANING, 2, "Meaning")
+                            ?.setShowAsActionFlags(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
                         return true
                     }
 
@@ -732,6 +773,17 @@ class ReaderActivity : FragmentActivity() {
                                 cm.setPrimaryClip(android.content.ClipData.newPlainText("Folio", quote))
                                 android.widget.Toast.makeText(this@ReaderActivity, "Copied", android.widget.Toast.LENGTH_SHORT).show()
                             }
+                            // D1: dictionary lookup. The selection is read and
+                            // the immutable query captured while the selection
+                            // still exists; only then is it cleared (no
+                            // annotation is written by a lookup).
+                            SEL_ITEM_MEANING -> lifecycleScope.launch(Dispatchers.Main) {
+                                val selection = navigator.currentSelection()
+                                mode.finish()
+                                openDictionaryFor(
+                                    selection?.locator?.text?.highlight.orEmpty(),
+                                )
+                            }
                         }
                         return true
                     }
@@ -774,6 +826,46 @@ class ReaderActivity : FragmentActivity() {
             snapshotFlow { readerReady.value }.first { it }
             manager.boot(annotations)
         }
+    }
+
+    // ---- Dictionary lookup (D1) ----
+
+    /**
+     * Opens the dictionary for the reader's current selection. The lookup
+     * keeps its own immutable query (captured here), replaces any in-flight
+     * job (rapid taps never stack sheets or duplicate requests), and runs
+     * local-first — this build has no network fallback at all.
+     */
+    private fun openDictionaryFor(rawSelection: String) {
+        val repo = dictionaryRepo
+            ?: DictionaryRuntime.repository(this).also { dictionaryRepo = it }
+        val query = repo.normalize(rawSelection)
+        if (query == null) {
+            android.widget.Toast.makeText(
+                this,
+                "Select a single word or short phrase",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        dictionaryRawSelection = query.raw
+        dictionaryJob?.cancel()
+        dictionaryState.value = DictionaryUiState.Loading
+        dictionaryVisible.value = true
+        dictionaryJob = lifecycleScope.launch(Dispatchers.IO) {
+            val fresh = repo.lookup(query.raw)
+            withContext(Dispatchers.Main) {
+                // Ignore a result that arrives after the reader dismissed.
+                if (dictionaryVisible.value) dictionaryState.value = fresh
+            }
+        }
+    }
+
+    private fun closeDictionarySheet() {
+        dictionaryJob?.cancel()
+        dictionaryVisible.value = false
+        dictionaryState.value = DictionaryUiState.Loading
+        dictionaryRawSelection = ""
     }
 
     // ---- Annotation context-menu actions (R3) ----

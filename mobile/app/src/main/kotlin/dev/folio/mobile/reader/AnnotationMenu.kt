@@ -174,6 +174,7 @@ fun SelectionToolbarSheet(
     error: String?,
     onSave: (HighlightColor, String?) -> Unit,
     onCopy: () -> Unit,
+    onMeaning: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -261,6 +262,11 @@ fun SelectionToolbarSheet(
                             Text("Add note")
                         }
                         TextButton(enabled = !saving, onClick = onCopy) { Text("Copy") }
+                        // D1: quiet dictionary lookup entry point beside Copy;
+                        // wraps into the same handlers as the selection bar.
+                        onMeaning?.let { meaning ->
+                            TextButton(enabled = !saving, onClick = meaning) { Text("Meaning") }
+                        }
                         Spacer(Modifier.weight(1f))
                         FolioFilledButton(
                             text = "Highlight",
