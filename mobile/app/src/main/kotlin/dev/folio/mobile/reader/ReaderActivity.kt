@@ -76,6 +76,7 @@ import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.DocPrefsStore
 import dev.folio.mobile.core.store.PrefsStore
+import dev.folio.mobile.ui.theme.FolioMobileTheme
 import dev.folio.mobile.ui.components.DefaultCoverArt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -442,15 +443,27 @@ class ReaderActivity : FragmentActivity() {
                     )
                 }
                 if (dictionaryVisible.value) {
-                    DictionarySheet(
-                        state = dictionaryState.value,
-                        onRetry = {
-                            // Retry repeats the exact captured query — the
-                            // open result never picks up new selections.
-                            openDictionaryFor(dictionaryRawSelection.orEmpty())
-                        },
-                        onDismiss = { closeDictionarySheet() },
-                    )
+                    // D1 UX contract: the sheet reads the app material theme
+                    // resolved to the ACTIVE READING APPEARANCE (dark/true-black
+                    // → dark palette, warm → warm paper, light/system as
+                    // resolved) — never a bright baseline panel over a dark
+                    // reading page.
+                    FolioMobileTheme(
+                        darkTheme = ReaderPrefsMapper.resolvedThemeIsDark(
+                            prefsState.value.theme,
+                            isSystemDark(),
+                        ),
+                    ) {
+                        DictionarySheet(
+                            state = dictionaryState.value,
+                            onRetry = {
+                                // Retry repeats the exact captured query — the
+                                // open result never picks up new selections.
+                                openDictionaryFor(dictionaryRawSelection.orEmpty())
+                            },
+                            onDismiss = { closeDictionarySheet() },
+                        )
+                    }
                 }
                 if (appearanceVisible.value) {
                     AppearanceBottomSheet(
@@ -955,11 +968,7 @@ class ReaderActivity : FragmentActivity() {
     }
 
     private fun applySystemBarAppearance(prefs: ReadingPrefs) {
-        val dark = when (prefs.theme) {
-            "dark", "true-black" -> true
-            "system" -> isSystemDark()
-            else -> false
-        }
+        val dark = ReaderPrefsMapper.resolvedThemeIsDark(prefs.theme, isSystemDark())
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = !dark
             isAppearanceLightNavigationBars = !dark

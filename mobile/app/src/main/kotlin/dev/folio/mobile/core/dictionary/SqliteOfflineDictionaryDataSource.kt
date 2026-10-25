@@ -89,7 +89,9 @@ class SqliteOfflineDictionaryDataSource(
                 schemaVersion = kv["schema_version"]?.toIntOrNull() ?: 0,
                 dataset = kv["dataset"].orEmpty(),
                 datasetVersion = kv["dataset_version"].orEmpty(),
-                sha256 = kv["sha256"].orEmpty(),
+                // Row-integrity digest (meta.content_sha256; legacy packs
+                // carried a non-recomputable file digest under 'sha256').
+                sha256 = kv["content_sha256"] ?: kv["sha256"].orEmpty(),
                 attribution = kv["attribution"].orEmpty(),
                 licence = kv["licence"].orEmpty(),
             )

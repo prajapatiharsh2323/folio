@@ -126,6 +126,13 @@ object ReaderPrefsMapper {
         else -> "light"
     }
 
+    /**
+     * True when the resolved reading theme paints the app chrome dark — also
+     * the flag the dictionary sheet understands via [dev.folio.mobile.ui.theme.FolioMobileTheme].
+     */
+    fun resolvedThemeIsDark(raw: String, systemDark: Boolean = false): Boolean =
+        resolveThemeKey(raw, systemDark).let { it == "dark" || it == "true-black" }
+
     private fun argbOf(hex: String): Int =
         java.lang.Long.decode(hex.replaceFirst("#", "0xFF")).toInt()
 }

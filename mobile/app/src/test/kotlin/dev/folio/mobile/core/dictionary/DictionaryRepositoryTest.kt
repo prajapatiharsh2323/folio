@@ -70,7 +70,7 @@ class DictionaryRepositoryTest {
                     row(
                         "run",
                         "VI",
-                        """{"hindi":["दौड़ना"],"example":"She cannot run fast."}""",
+                        """[{"hindi":["दौड़ना"],"example":"She cannot run fast."}]""",
                     ) to false
                     ),
             ),

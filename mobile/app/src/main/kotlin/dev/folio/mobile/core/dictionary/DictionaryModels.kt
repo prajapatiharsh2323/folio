@@ -1,5 +1,6 @@
 package dev.folio.mobile.core.dictionary
 
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -109,8 +110,14 @@ data class DictionaryRow(
 
     /** Defensive parse: corrupt rows degrade to "no senses". */
     private fun parseSenses(): List<DictSense> = try {
-        Json.decodeFromString<List<DictSense>>(sensesJson)
+        Json.decodeFromString(SENS_LIST, sensesJson)
     } catch (t: Throwable) {
         emptyList()
+    }
+
+    private companion object {
+        /** Explicit element-list binding: no per-call reified serializer lookup. */
+        val SENS_LIST: kotlinx.serialization.KSerializer<List<DictSense>> =
+            ListSerializer(DictSense.serializer())
     }
 }

@@ -19,11 +19,19 @@ Notation handling (documented, honest):
 - Pronunciations: this dataset has none — column stays empty.
 
 Usage:
-  python3 build_dict.py --tei /path/eng-hin.tei --out /path/eng-hin.db \
-      --name "FreeDict eng-hin" --version "1.6" \
-      --licence "GPL-2.0" \
-      --attribution "FreeDict eng-hin; data: Anusaaraka English-Hindi Dictionary V2.0 (IIIT Hyderabad); maintainer: Michael Bunk"
-Then print the resulting sha256 → record it in the app's installer contract.
+  build (needs the TEI; kept out of the repo for licence hygiene):
+    python3 build_dict.py --tei /path/eng-hin.tei --out /path/eng-hin.db \
+        --name "FreeDict eng-hin" --version "1.6" \
+        --licence "GPL-2.0" \
+        --attribution "FreeDict eng-hin; data: Anusaaraka English-Hindi Dictionary V2.0 (IIIT Hyderabad); maintainer: Michael Bunk"
+    The script prints the pack's FILE sha256 next to a
+    DictionaryRuntime.PACK_SHA256 reminder — that constant is the digest of
+    the shipped asset bytes (also written to <out>.sha256), and the pack
+    self-describes its row integrity through meta.content_sha256 (a file
+    cannot contain its own byte digest).
+
+  repair an already-built pack's meta (no TEI needed):
+    python3 build_dict.py --upgrade /path/eng-hin.db
 """
 
 import argparse
@@ -120,14 +128,24 @@ def parse_senses(entry):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tei", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--name", required=True)
-    ap.add_argument("--version", required=True)
-    ap.add_argument("--licence", required=True)
-    ap.add_argument("--attribution", required=True)
+    ap.add_argument("--tei", help="FreeDict TEI XML source (for a fresh build)")
+    ap.add_argument(
+        "--upgrade",
+        metavar="PACK",
+        help="repair an existing pack's meta (no TEI needed): drop the "
+             "circular legacy `sha256` key, add `content_sha256` over rows, "
+             "write the file-digest sidecar",
+    )
+    ap.add_argument("--out", help="output pack path (requires --tei)")
+    ap.add_argument("--name", help="dataset name")
+    ap.add_argument("--version", help="dataset version")
+    ap.add_argument("--licence", help="licence id (e.g. GPL-2.0)")
+    ap.add_argument("--attribution", help="attribution line")
     ap.add_argument("--schema-version", default="1")
     args = ap.parse_args()
+
+    if args.upgrade:
+        return upgrade(args.upgrade)
 
     raw = open(args.tei, encoding="utf-8").read()
     raw = DOTD_RE.sub("", raw, count=1)
@@ -187,12 +205,12 @@ def main():
         )
         n_rows += 1
 
-    sha = hashlib.sha256(open(args.out, "rb").read()).hexdigest()
+    sha = hashlib.sha256(content_digest_out(args.out).encode("utf-8")).hexdigest()
     meta = {
         "schema_version": args.schema_version,
         "dataset": args.name,
         "dataset_version": args.version,
-        "sha256": sha,
+        "content_sha256": sha,
         "attribution": args.attribution,
         "licence": args.licence,
         "source_entries": str(n_src),
@@ -202,12 +220,92 @@ def main():
         cur.execute("INSERT INTO meta(key, value) VALUES (?,?)", (k, v))
     conn.commit()
     conn.close()
-    conn2 = sqlite3.connect(args.out)
-    conn2.execute("VACUUM")
-    conn2.close()
-    print(f"rows={n_rows} skipped={n_skipped} sha256={sha}")
+    finalize(args.out, meta, n_rows, n_skipped)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Pack finalization (shared by --tei build and --upgrade repair).
+#
+# Digest contract (v2, non-circular):
+# - a completed SQLite file cannot contain its own byte digest, so `meta`
+#   stores `content_sha256`: a deterministic digest over the dict rows
+#   (`headword \t pos \t senses_json \n`, id order). Anyone holding the pack
+#   can recompute and verify it.
+# - the FILE digest (bytes on disk) is printed and written to a `.sha256`
+#   sidecar next to the pack. The app's installer contract
+#   (`DictionaryRuntime.PACK_SHA256`) must copy the sidecar value: it is the
+#   digest of the shipped asset bytes, which the installer verifies at
+#   first-use copy time.
+# ---------------------------------------------------------------------------
+def finalize(out_path, meta, n_rows, n_skipped):
+    conn = sqlite3.connect(out_path)
+    conn.execute("VACUUM")
+    conn.close()
+    file_sha = file_digest(out_path)
+    sidecar = f"{out_path}.sha256"
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        fh.write(file_sha + "\n")
+    print(f"rows={n_rows} skipped={n_skipped}")
     for k, v in meta.items():
         print(f"{k}: {v}")
+    print(f"file_sha256={file_sha} (sidecar: {sidecar})")
+    print(
+        "-> copy file_sha256 into DictionaryRuntime.PACK_SHA256 "
+        "(mobile/app/src/main/kotlin/dev/folio/mobile/reader/DictionaryRuntime.kt)"
+    )
+
+
+def content_digest_out(out_path):
+    """meta.content_sha256: sha256 over dict rows in id order."""
+    conn = sqlite3.connect(out_path)
+    try:
+        rows = conn.execute(
+            "SELECT headword, pos, senses_json FROM dict ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    buf = ""
+    for headword, pos, senses_json in rows:
+        buf += f"{headword}\t{pos or ''}\t{senses_json}\n"
+    return hashlib.sha256(buf.encode("utf-8")).hexdigest()
+
+
+def file_digest(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def upgrade(out_path):
+    """Rewrite meta on an already-built pack (TEI not needed):
+    - drop the v1 legacy `sha256` key (a circular, unreachable value);
+    - add `content_sha256` recomputed over the actual rows;
+    - keep every other key as recorded at build time;
+    - VACUUM + sidecar + print the final file digest (installer target).
+    """
+    conn = sqlite3.connect(out_path)
+    conn.execute("DELETE FROM meta WHERE key = 'sha256'")
+    conn.commit()
+    conn.close()
+    existing = {}
+    conn = sqlite3.connect(out_path)
+    for k, v in conn.execute("SELECT key, value FROM meta").fetchall():
+        existing[k] = v
+    conn.close()
+    if not existing:
+        print("error: pack has no meta table content", file=sys.stderr)
+        return 1
+    meta = dict(existing)
+    meta["content_sha256"] = content_digest_out(out_path)
+    conn = sqlite3.connect(out_path)
+    conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('content_sha256', ?)",
+                 (meta["content_sha256"],))
+    conn.commit()
+    conn.close()
+    finalize(out_path, meta, n_rows=int(existing.get("stored_rows", 0)), n_skipped=0)
     return 0
 
 

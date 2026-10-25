@@ -35,8 +35,10 @@ object DictionaryNormalizer {
         s = Normalizer.normalize(s, Normalizer.Form.NFKC)
         if (s.length > MAX_INPUT_CHARS) return null
         s = s.trim { it in QUOTES || Character.isWhitespace(it) }
-        // Strip trailing/leading punctuation but keep word-internal marks.
-        s = s.trim { !it.isLetterOrDigit() && it !in "'-" }
+        // Strip trailing/leading punctuation but keep word-internal marks AND
+        // trailing combining marks — Devanagari matras/nuktas (दौड़) are Mn
+        // category, never edge punctuation.
+        s = s.trim { !it.isLetterOrDigit() && !it.isWordMark() }
         if (s.isEmpty()) return null
         s = s.replace(Regex("\\s+"), " ")
         val words = s.split(' ')
@@ -48,15 +50,23 @@ object DictionaryNormalizer {
     }
 
     fun relaxedKey(query: DictionaryQuery): String =
-        query.displayKey.replace("\'", "").replace("-", "").replace(" ", "")
+        query.displayKey.replace("'", "").replace("-", "").replace(" ", "")
 
     /**
      * Short display form for the sheet header: the selection as captured,
-     * with surrounding punctuation removed, original casing preserved.
+     * with surrounding quote characters and punctuation removed, original
+     * casing preserved; internal apostrophes/hyphens/marks survive.
      */
     fun cleanDisplay(raw: String?): String {
         var s = raw?.trim().orEmpty()
-        s = s.trim { !it.isLetterOrDigit() && it !in "'-" }
+        s = s.trim { it in QUOTES || Character.isWhitespace(it) }
+        s = s.trim { !it.isLetterOrDigit() && !it.isWordMark() }
         return s.ifEmpty { raw?.trim().orEmpty() }
+    }
+
+    /** Combining marks never count as strippable edge punctuation. */
+    private fun Char.isWordMark(): Boolean {
+        val t = Character.getType(this).toByte()
+        return t == Character.COMBINING_SPACING_MARK || t == Character.NON_SPACING_MARK
     }
 }

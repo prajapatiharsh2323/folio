@@ -2,7 +2,9 @@ package dev.folio.mobile.core.reader
 
 import dev.folio.mobile.core.model.ReadingPrefs
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderPrefsMapperTest {
@@ -66,6 +68,20 @@ class ReaderPrefsMapperTest {
         assertEquals("warm", ReaderPrefsMapper.resolveThemeKey("warm", systemDark = true))
         // arbitrary keys are guarded, too
         assertEquals("light", ReaderPrefsMapper.resolveThemeKey("banana", systemDark = true))
+    }
+
+    @Test
+    fun `resolvedThemeIsDark matches the app-chrome dark palette contract`() {
+        // D1: FolioMobileTheme(darkTheme=…) for the dictionary sheet and the
+        // system-bar appearance must agree with the resolved reading theme.
+        assertTrue(ReaderPrefsMapper.resolvedThemeIsDark("dark", systemDark = false))
+        assertTrue(ReaderPrefsMapper.resolvedThemeIsDark("true-black", systemDark = false))
+        assertTrue(ReaderPrefsMapper.resolvedThemeIsDark("system", systemDark = true))
+        assertFalse(ReaderPrefsMapper.resolvedThemeIsDark("system", systemDark = false))
+        // warm/sepia reads as a LIGHT paper theme for app surfaces.
+        assertFalse(ReaderPrefsMapper.resolvedThemeIsDark("warm", systemDark = false))
+        assertFalse(ReaderPrefsMapper.resolvedThemeIsDark("light", systemDark = true))
+        assertFalse(ReaderPrefsMapper.resolvedThemeIsDark("banana", systemDark = false))
     }
 
     @Test
