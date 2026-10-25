@@ -11,6 +11,15 @@
 
 ## NEXT SESSION — what to build (pick one, verify green build first)
 
+0. **D1 dictionary IN PROGRESS (2026-10-25, session D-1).** Offline English→Hindi
+   lookups from the reader selection bar. User locked: FreeDict eng-hin v1.6
+   bundle (GPL, quality "low" upstream — no coverage overselling), NO online
+   fallback, English-definitions gap deferred to a possible WordNet session.
+   Read `.docs/plans/dictionary-plan.md` (locked schema + work checklist) and
+   `.docs/results/D1-dictionary.md` before touching anything. SelectionCapture:
+   add `SEL_ITEM_MEANING=3` beside `SEL_ITEM_HIGHLIGHT/SEL_ITEM_COPY` in
+   ReaderActivity's ActionMode callback; NO annotation writes from lookup;
+   Dictionary DB = framework SQLiteDatabase in `assets/dictionary/`, no Room.
 0. **User manual-testing round (in flight as of M-21 close):** a debug APK with
    all M-21 features is at the repo root — `folio-mobile-debug-2026-10-19.apk`
    (~39 MB, supersedes the removed stale `app-release*.apk`). Test points:
@@ -253,6 +262,9 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
    `testImplementation`, if main-source models use it.
 
 ## Session log
+
+- **Session D-1 (Oct 25, 2026)** — Dictionary feature (IN PROGRESS). Plan:
+  `.docs/plans/dictionary-plan.md`; live results: `.docs/results/D1-dictionary.md`.
 
 - **Session M-23 (Oct 20, 2026)** - USER ROUND: bundled cover art + icon tint.
   - **Bundled cover art (option A, user-chosen).** The five `cover-imgs`
