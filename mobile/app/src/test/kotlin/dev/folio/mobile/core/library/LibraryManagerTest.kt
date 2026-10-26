@@ -387,6 +387,25 @@ class LibraryManagerTest {
     }
 
     @Test
+    fun `deleteCollection clears doc metadata but keeps the books`() = runBlocking {
+        val meta = manager.addDocument(importResult())
+        val collection = manager.createCollection("Fiction")
+        manager.setDocCollections(meta.id, listOf(collection.id))
+
+        val result = manager.deleteCollection(collection.id)
+
+        assertEquals(1, result.cleanedDocuments)
+        assertTrue(result.failedSlugs.isEmpty())
+        assertTrue(manager.getCollections().isEmpty())
+        // The book stays in the library manifest and its metadata has no stale id.
+        assertEquals(listOf(meta.id), manager.listDocuments().map { it.id })
+        val onDisk = jsonCodec.decodeFromString<DocMeta>(
+            store.read("library/docs/${meta.slug}/meta.json").toString(Charsets.UTF_8)
+        )
+        assertTrue(onDisk.collectionIds.isEmpty())
+    }
+
+    @Test
     fun `setDocCollections syncs collection docIds and doc meta`() = runBlocking {
         val meta = manager.addDocument(importResult())
         val a = manager.createCollection("A")

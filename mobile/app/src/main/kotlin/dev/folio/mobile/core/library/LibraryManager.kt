@@ -439,6 +439,17 @@ class LibraryManager(
     )
 
     /**
+     * Result of [deleteCollection]: the collection itself is always removed
+     * atomically with the collections write; [failedSlugs] lists documents
+     * whose metadata cleanup could not be completed (they keep a stale id until
+     * the next reconciliation/retry).
+     */
+    data class CollectionDeleteResult(
+        val cleanedDocuments: Int,
+        val failedSlugs: List<String>
+    )
+
+    /**
      * Deletes a document and every trace of it, then rewrites the manifest last
      * (spec §4 Rule 5). Holds the union of the manifest + user-file locks so a
      * concurrent saveProgress/saveAnnotation/saveCollections cannot resurrect
@@ -816,14 +827,51 @@ class LibraryManager(
             renamed
         }
 
-    /** Deletes a collection; document meta keeps its ids until reassigned (PWA parity). */
-    suspend fun deleteCollection(id: String): Unit = mutexFor(K_COLLECTIONS).withLock {
-        val collections = readCollectionsStrictLocked() ?: emptyList()
-        store.write(
-            COLLECTIONS_PATH,
-            json.encodeToString(collections.filter { it.id != id })
-        )
-    }
+    /**
+     * Deletes a collection and clears its ID from every affected document's
+     * metadata (audit P1-15), so `collections.json` stays the single source of
+     * truth and no book keeps a dangling collection reference.
+     *
+     * Holds the collections + manifest locks together; `readOrCreateManifest`
+     * and `updateDocMetaLocked` are the lock-free variants (Kotlin Mutex is not
+     * re-entrant). A corrupt manifest/collections file blocks the delete like
+     * every other mutation. Per-document failures are reported through
+     * [CollectionDeleteResult] instead of silently leaving stale ids.
+     */
+    suspend fun deleteCollection(id: String): CollectionDeleteResult =
+        withLocks(K_COLLECTIONS, K_MANIFEST) {
+            val collections = readCollectionsStrictLocked() ?: emptyList()
+            if (collections.none { it.id == id }) {
+                throw IllegalArgumentException("Collection not found: $id")
+            }
+            val manifest = readOrCreateManifest()
+            store.write(COLLECTIONS_PATH, json.encodeToString(collections.filter { it.id != id }))
+
+            var cleaned = 0
+            val failed = mutableListOf<String>()
+            for (doc in manifest.docs) {
+                val metaPath = "library/docs/${doc.slug}/meta.json"
+                val current = runCatching {
+                    json.decodeFromString<DocMeta>(store.readText(metaPath))
+                }.getOrNull() ?: continue
+                if (id !in current.collectionIds) continue
+                try {
+                    updateDocMetaLocked(
+                        doc.id,
+                        collectionIds = current.collectionIds.filter { it != id }
+                    )
+                    cleaned++
+                } catch (e: Exception) {
+                    failed += doc.slug
+                    android.util.Log.w(
+                        "folio-collections",
+                        "collection id cleanup skipped for ${doc.slug}",
+                        e
+                    )
+                }
+            }
+            CollectionDeleteResult(cleanedDocuments = cleaned, failedSlugs = failed)
+        }
 
     /**
      * Bulk-membership writes (collections screen): change one collection's

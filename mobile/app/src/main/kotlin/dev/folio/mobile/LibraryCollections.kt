@@ -117,9 +117,16 @@ fun CollectionsPanel(
     fun deleteCollectionConfirm(target: Collection) {
         scope.launch {
             try {
-                withIo { appLibrary(context).deleteCollection(target.id) }
+                val result = withIo { appLibrary(context).deleteCollection(target.id) }
                 onLibraryChanged()
-                snackbar.showSnackbar("Deleted \"${target.name}\"")
+                snackbar.showSnackbar(
+                    if (result.failedSlugs.isEmpty()) {
+                        "Deleted \"${target.name}\""
+                    } else {
+                        "Deleted \"${target.name}\" — ${result.failedSlugs.size} book(s) " +
+                            "still need their tags cleaned up"
+                    }
+                )
             } catch (t: Throwable) {
                 snackbar.showSnackbar(t.message ?: "Delete failed")
             }
