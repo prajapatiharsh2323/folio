@@ -37,6 +37,17 @@ interface FileStore {
     suspend fun remove(path: String, recursive: Boolean = false)
 
     /**
+     * Renames a file or a whole directory tree within the same library root,
+     * atomically where the backing filesystem allows it. Backs failure-atomic
+     * backup restores (staging tree → live swap, audit P0-03). Stores that
+     * cannot rename throw [UnsupportedOperationException]; [restore] falls
+     * back to plain copy writes only in write paths that tolerate it.
+     */
+    suspend fun rename(from: String, to: String) {
+        throw UnsupportedOperationException("rename not supported by this FileStore")
+    }
+
+    /**
      * Direct file access for a library path, when the backing store can hand
      * out a real file (the app-private filesystem). Null for stores that
      * cannot — callers fall back to [read].

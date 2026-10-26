@@ -51,7 +51,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.annotation.AnnotationFilter
 import dev.folio.mobile.core.annotation.filtered
+import dev.folio.mobile.core.library.LibraryFileCorruptException
 import dev.folio.mobile.core.library.LibraryManager
+import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.AnnotationKind
 import dev.folio.mobile.core.model.HighlightColor
@@ -125,16 +127,29 @@ fun NotesScreen() {
         try {
             withContext(Dispatchers.IO) {
                 val library = LibraryManager(AppFileStore(context.filesDir))
-                val all = library.getAnnotations()
+                // Audit P0-02: a corrupt annotations file is NOT an empty notes
+                // list — it is an unreadable-file state with its own recovery copy.
+                when (val state = library.readAnnotationsState()) {
+                    is ReadResult.Loaded -> annotations =
+                        state.value.sortedByDescending { a -> (a.updatedAt.ifBlank { null } ?: a.createdAt) }
+                    is ReadResult.Missing -> annotations = emptyList()
+                    is ReadResult.Corrupt -> throw LibraryFileCorruptException(state.path, state.message)
+                }
                 val titles = library.listDocuments().associate { it.id to it.title }
-                // Newest first (updatedAt, falling back to createdAt).
-                annotations = all.sortedByDescending { a -> (a.updatedAt.ifBlank { null } ?: a.createdAt) }
                 docs = titles
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (corrupt: LibraryFileCorruptException) {
+            loadError = when {
+                corrupt.path == dev.folio.mobile.core.library.ANNOTATIONS_PATH ->
+                    "Saved notes can't be read. The notes file was left untouched — " +
+                        "try again, or restore your data from a backup."
+                else ->
+                    "The library index needs repair. Notes open again after it's fixed — nothing was changed."
+            }
         } catch (error: Exception) {
-            loadError = "Couldn't load your notes. Check free space and try again."
+            loadError = "Couldn't load your notes. Please try again."
         } finally {
             loading = false
         }
@@ -289,8 +304,14 @@ fun NotesScreen() {
                                 reload()
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
+                            } catch (corrupt: LibraryFileCorruptException) {
+                                // Audit P0-02: an unreadable notes file refuses
+                                // the edit honestly instead of a free-space hint.
+                                mutationError =
+                                    "Saved notes can't be read, so nothing was deleted. " +
+                                        "The notes file was left untouched — restore from a backup to recover it."
                             } catch (error: Exception) {
-                                mutationError = "Couldn't delete this. Check free space and try again."
+                                mutationError = "Couldn't delete this. Please try again."
                             } finally {
                                 mutating = false
                             }
@@ -328,8 +349,14 @@ fun NotesScreen() {
                         showSnack(if (updated.note != null) "Note saved" else "Note removed")
                     } catch (cancelled: CancellationException) {
                         throw cancelled
+                    } catch (corrupt: LibraryFileCorruptException) {
+                        // Audit P0-02: nothing was written and the unreadable
+                        // file is preserved; the typed text stays in the dialog.
+                        mutationError =
+                            "Saved notes can't be read, so this edit wasn't saved. " +
+                                "Your note text is kept here — restore from a backup to recover it."
                     } catch (error: Exception) {
-                        mutationError = "Couldn't save your note. Check free space and try again."
+                        mutationError = "Couldn't save your note. Please try again."
                     } finally {
                         mutating = false
                     }

@@ -59,6 +59,7 @@ import dev.folio.mobile.core.annotation.AnnotationLocators
 import dev.folio.mobile.core.dictionary.DictionaryRepository
 import dev.folio.mobile.core.dictionary.DictionaryUiState
 import dev.folio.mobile.core.library.CoverLoader
+import dev.folio.mobile.core.library.LibraryFileCorruptException
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryUi
 import dev.folio.mobile.core.model.Annotation
@@ -79,6 +80,7 @@ import dev.folio.mobile.core.store.PrefsStore
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import dev.folio.mobile.ui.components.DefaultCoverArt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -202,7 +204,22 @@ class ReaderActivity : FragmentActivity() {
                 .putExtra(EXTRA_TEXT_SUFFIX, textSuffix)
     }
 
-    private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * Supervisor bookkeeping scope for load/save coroutines. The handler keeps
+     * any corruption/IO surprise in a single launch from crashing the whole
+     * process (audit P0 — a denied write must never kill the reader); the
+     * mutation sites below still surface their own honest error states.
+     */
+    private val loadScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+            CoroutineExceptionHandler { _, error ->
+                android.util.Log.e(
+                    "ReaderActivity",
+                    "Background reader task failed: ${error.javaClass.simpleName}",
+                    error
+                )
+            }
+    )
     private var progressJob: Job? = null
     private var saveJob: Job? = null
     private var navigatorRef: EpubNavigatorFragment? = null
@@ -587,7 +604,13 @@ class ReaderActivity : FragmentActivity() {
         val store = AppFileStore(filesDir)
         val library = LibraryManager(store)
 
-        val meta = library.listDocuments().firstOrNull { it.id == docId }
+        // Audit P0-01: an unreadable manifest behaves like the missing-doc path
+        // (close politely) instead of crashing the reader coroutine.
+        val meta = try {
+            library.listDocuments().firstOrNull { it.id == docId }
+        } catch (corrupt: LibraryFileCorruptException) {
+            null
+        }
         val readingRel = meta?.files?.reading
         if (meta == null || readingRel == null) {
             withContext(Dispatchers.Main) { finish() }
@@ -946,6 +969,12 @@ class ReaderActivity : FragmentActivity() {
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (corrupt: LibraryFileCorruptException) {
+                withContext(Dispatchers.Main) {
+                    annotationMutation.value = false
+                    annotationError.value =
+                        "Saved notes couldn't be read, so nothing was changed. Your device's saved data needs repair."
+                }
             } catch (error: Exception) {
                 withContext(Dispatchers.Main) {
                     annotationMutation.value = false
@@ -975,6 +1004,12 @@ class ReaderActivity : FragmentActivity() {
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (corrupt: LibraryFileCorruptException) {
+                withContext(Dispatchers.Main) {
+                    annotationMutation.value = false
+                    annotationError.value =
+                        "Saved notes couldn't be read, so nothing was deleted. Your device's saved data needs repair."
+                }
             } catch (error: Exception) {
                 withContext(Dispatchers.Main) {
                     annotationMutation.value = false
@@ -1104,6 +1139,12 @@ class ReaderActivity : FragmentActivity() {
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (corrupt: LibraryFileCorruptException) {
+                withContext(Dispatchers.Main) {
+                    selectionMutation.value = false
+                    selectionError.value =
+                        "Saved notes couldn't be read, so nothing was saved. Your device's saved data needs repair."
+                }
             } catch (error: Exception) {
                 withContext(Dispatchers.Main) {
                     selectionMutation.value = false
@@ -1298,26 +1339,40 @@ class ReaderActivity : FragmentActivity() {
         val navigator = navigatorRef ?: return
         val docId = currentDocId
         loadScope.launch {
-            val locator = navigator.currentLocator.first { it.href.toString().isNotBlank() }
-            val now = java.time.Instant.now().toString()
-            val annotation = Annotation(
-                id = java.util.UUID.randomUUID().toString(),
-                docId = docId,
-                quote = "",
-                prefix = "",
-                suffix = "",
-                location = ProgressBridge.buildProgress(docId, locator, now).location,
-                kind = AnnotationKind.Bookmark,
-                createdAt = now,
-                updatedAt = now
-            )
-            withContext(Dispatchers.IO) {
-                LibraryManager(AppFileStore(filesDir)).saveAnnotation(annotation)
-            }
-            withContext(Dispatchers.Main) {
-                android.widget.Toast.makeText(
-                    this@ReaderActivity, "Bookmark added", android.widget.Toast.LENGTH_SHORT
-                ).show()
+            try {
+                val locator = navigator.currentLocator.first { it.href.toString().isNotBlank() }
+                val now = java.time.Instant.now().toString()
+                val annotation = Annotation(
+                    id = java.util.UUID.randomUUID().toString(),
+                    docId = docId,
+                    quote = "",
+                    prefix = "",
+                    suffix = "",
+                    location = ProgressBridge.buildProgress(docId, locator, now).location,
+                    kind = AnnotationKind.Bookmark,
+                    createdAt = now,
+                    updatedAt = now
+                )
+                withContext(Dispatchers.IO) {
+                    LibraryManager(AppFileStore(filesDir)).saveAnnotation(annotation)
+                }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity, "Bookmark added", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (corrupt: LibraryFileCorruptException) {
+                // Audit P0-02: the saved-marks file exists but can't be read;
+                // nothing was written, so say so instead of "Bookmark added".
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity,
+                        "Saved marks file can't be read — bookmark not saved",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }
@@ -1478,7 +1533,20 @@ class ReaderActivity : FragmentActivity() {
                         saveJob?.cancel()
                         saveJob = loadScope.launch {
                             delay(500)
-                            withContext(Dispatchers.IO) { library.saveProgress(p) }
+                            try {
+                                withContext(Dispatchers.IO) { library.saveProgress(p) }
+                            } catch (corrupt: LibraryFileCorruptException) {
+                                // Audit P0-02: never crash, never wipe; warn once.
+                                if (!warnedProgressSaveFailure.getAndSet(true)) {
+                                    withContext(Dispatchers.Main) {
+                                        android.widget.Toast.makeText(
+                                            this@ReaderActivity,
+                                            "Reading position couldn't be saved — the saved-progress file needs repair",
+                                            android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1488,6 +1556,13 @@ class ReaderActivity : FragmentActivity() {
 
     /** Last persisted progress — guards the write throttling above. */
     private var lastSavedProgress: Progress? = null
+
+    /**
+     * One-time flag: when the saved-progress file is unreadable, saving is
+     * refused with a preserved file (audit P0-02). We toast once per reader
+     * session instead of spamming a toast at every debounced write.
+     */
+    private val warnedProgressSaveFailure = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * R2b hardware page-turner: volume keys, Bluetooth media buttons, hardware

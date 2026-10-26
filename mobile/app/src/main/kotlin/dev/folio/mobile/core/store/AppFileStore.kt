@@ -129,6 +129,22 @@ class AppFileStore(private val root: File) : FileStore {
     /** Direct access to a library file (used to stream large files to the network). */
     override fun localFile(path: String): File? = resolve(path).takeIf { it.isFile }
 
+    /**
+     * Atomic rename of a file or directory tree (files/dirs, never across
+     * stores — both paths resolve under the same root). Used by the backup
+     * restore swap (audit P0-03): a POSIX rename makes the staging→live swap
+     * a sequence of single-atomic-operation steps.
+     */
+    override suspend fun rename(from: String, to: String) {
+        val source = resolve(from)
+        val target = resolve(to)
+        if (!source.exists()) {
+            throw java.io.FileNotFoundException("Rename source does not exist: $from")
+        }
+        target.parentFile?.let { it.mkdirs() }
+        moveWithRetry(source.toPath(), target.toPath())
+    }
+
     override suspend fun remove(path: String, recursive: Boolean) {
         val file = resolve(path)
         if (!file.exists()) return

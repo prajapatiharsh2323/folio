@@ -20,6 +20,11 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 const val MANIFEST_PATH = "library/manifest.json"
+const val PROGRESS_PATH = "library/user/progress.json"
+const val ANNOTATIONS_PATH = "library/user/annotations.json"
+const val COLLECTIONS_PATH = "library/user/collections.json"
+/** Recovery copies of unreadable files land here (never over the originals). */
+const val RECOVERY_DIR = "library/recovery"
 
 /**
  * One orphan doc folder from startup recovery (spec §4 Rule 2). [finishable]
@@ -108,37 +113,129 @@ class LibraryManager(
 
     // --- Manifest ---
 
-    /** Reads the current manifest or initializes a new one (corruption-safe). */
+    /**
+     * Reads the current manifest or initializes a new one.
+     *
+     * Data-safety contract (audit P0-01): when the manifest exists but cannot
+     * be decoded this THROWS [LibraryFileCorruptException] — a corrupt index is
+     * never handed to callers as a valid empty library, because mutating
+     * callers (import, delete, finish recovery, backup merge) would then
+     * persist that empty view over the only copy of the index.
+     */
     suspend fun getManifest(): Manifest = mutexFor(K_MANIFEST).withLock { readOrCreateManifest() }
+
+    /** Typed manifest read for UIs: Missing (fresh library) vs Corrupt vs Loaded. */
+    suspend fun readManifestState(): ReadResult<Manifest> =
+        mutexFor(K_MANIFEST).withLock { readManifestStateLocked() }
+
+    private suspend fun readManifestStateLocked(): ReadResult<Manifest> {
+        if (!store.exists(MANIFEST_PATH)) return ReadResult.Missing
+        return try {
+            ReadResult.Loaded(json.decodeFromString<Manifest>(store.readText(MANIFEST_PATH)))
+        } catch (e: Exception) {
+            ReadResult.Corrupt(MANIFEST_PATH, e.message ?: e.toString())
+        }
+    }
 
     /**
      * Manifest read/init WITHOUT locking — only for writers that already hold
      * the K_MANIFEST mutex (Kotlin Mutex is not re-entrant).
      */
     private suspend fun readOrCreateManifest(): Manifest {
-        if (store.exists(MANIFEST_PATH)) {
-            try {
-                return json.decodeFromString<Manifest>(store.readText(MANIFEST_PATH))
-            } catch (e: Exception) {
-                // Corrupted/unreadable manifest: do NOT overwrite it (that would
-                // silently drop every document). Preserve the file for recovery and
-                // surface an empty in-memory view; the caller's recovery scan will
-                // re-register orphan folders.
-                android.util.Log.e("LibraryManager", "Manifest unreadable; preserving file", e)
-                return Manifest(
+        when (val state = readManifestStateLocked()) {
+            is ReadResult.Loaded -> return state.value
+            is ReadResult.Corrupt -> {
+                // Corrupted manifest: do NOT overwrite it (that would silently
+                // drop every document) and do NOT hand writers an empty view.
+                // Preserve the file byte-for-byte for recovery; mutations stay
+                // blocked until repairManifest() or a backup restore succeeds.
+                android.util.Log.e(
+                    "LibraryManager",
+                    "Manifest unreadable; mutations blocked — ${state.message}"
+                )
+                throw LibraryFileCorruptException(state.path, state.message)
+            }
+            is ReadResult.Missing -> {
+                val initial = Manifest(
                     libraryId = uuidProvider(),
                     updatedAt = nowIso(),
                     docs = emptyList()
                 )
+                store.write(MANIFEST_PATH, json.encodeToString(initial))
+                return initial
             }
         }
-        val initial = Manifest(
+    }
+
+    /** Summary of [repairManifest]. */
+    data class ManifestRepairResult(
+        /** Preserved copy of the original corrupt manifest (library-relative path). */
+        val preservedBackupPath: String,
+        /** Number of documents rebuilt from library/docs folders. */
+        val registered: Int,
+        /** Orphan folders whose meta.json was missing or unusable. */
+        val skipped: List<String>
+    )
+
+    /**
+     * Repairs a corrupt manifest (audit P0-01): preserves the original bytes
+     * byte-for-byte under [RECOVERY_DIR], then rebuilds the index from
+     * library/docs folders — every folder whose meta.json parses is
+     * re-registered with a fresh file list (path/size/sha256 re-read from
+     * disk). The rebuilt manifest is committed atomically only after the scan
+     * completes; on any failure the original corrupt file is still in place.
+     */
+    suspend fun repairManifest(): ManifestRepairResult = mutexFor(K_MANIFEST).withLock {
+        val state = readManifestStateLocked()
+        check(state is ReadResult.Corrupt) {
+            "Library manifest is ${state}; nothing to repair"
+        }
+        val preservedPath = preserveCorruptCopy(state.path)
+
+        val rebuilt = mutableListOf<ManifestDoc>()
+        val skipped = mutableListOf<String>()
+        for (slug in store.list("library/docs").sorted()) {
+            val meta = readOrphanMeta(slug)
+            if (meta == null) {
+                skipped += slug
+                continue
+            }
+            val files = walkFiles("library/docs/$slug").map { path ->
+                val bytes = store.read(path)
+                ManifestFile(path, bytes.size.toLong(), sha256Hex(bytes))
+            }
+            rebuilt += ManifestDoc(
+                id = meta.id,
+                slug = slug,
+                title = meta.title,
+                contentHash = meta.contentHash,
+                updatedAt = nowIso(),
+                files = files
+            )
+        }
+
+        // The corrupt file's libraryId is unrecoverable; a fresh one keeps the
+        // schema valid (cloud sync treats it as a new library identity).
+        val manifest = Manifest(
             libraryId = uuidProvider(),
             updatedAt = nowIso(),
-            docs = emptyList()
+            docs = rebuilt
         )
-        store.write(MANIFEST_PATH, json.encodeToString(initial))
-        return initial
+        store.write(MANIFEST_PATH, json.encodeToString(manifest))
+        ManifestRepairResult(preservedPath, rebuilt.size, skipped)
+    }
+
+    /**
+     * Copies an unreadable file byte-for-byte into [RECOVERY_DIR] before any
+     * repair touches it. Caller must hold a mutex covering [path] (recovery
+     * writes are rare; we reuse the underlying atomic store write).
+     */
+    private suspend fun preserveCorruptCopy(path: String): String {
+        val bytes = store.read(path)
+        val stamp = nowIso().replace(":", "-").replace(".", "-")
+        val dest = "$RECOVERY_DIR/${path.substringAfterLast('/')}-corrupt-$stamp"
+        store.write(dest, bytes)
+        return dest
     }
 
     suspend fun findDuplicate(contentHash: String): ManifestDoc? =
@@ -331,74 +428,111 @@ class LibraryManager(
     }
 
     /**
+     * Result of [deleteDocument]. [manifestRemoved] is the commit point; any
+     * non-fatal cleanup step that had to be skipped is reported in
+     * [cleanupWarnings] with the affected data preserved, so the caller can
+     * show an honest result instead of an unconditional "deleted".
+     */
+    data class DeleteResult(
+        val manifestRemoved: Boolean,
+        val cleanupWarnings: List<String>
+    )
+
+    /**
      * Deletes a document and every trace of it, then rewrites the manifest last
      * (spec §4 Rule 5). Holds the union of the manifest + user-file locks so a
      * concurrent saveProgress/saveAnnotation/saveCollections cannot resurrect
      * the deleted facts into a fresh JSON write (audit EPUB-005).
+     *
+     * Data-safety contract (audits P0-01/P1-01 — no more best-effort-silently-
+     * succeed): throws [LibraryFileCorruptException] on an undecodable manifest
+     * (deletion must never run against a bogus empty view) and
+     * [IllegalArgumentException] for unknown ids. User-state cleanup runs
+     * BEFORE the folder removal and the manifest commit:
+     *  - unreadable user-state files are left byte-for-byte preserved and the
+     *    skip is reported in [cleanupWarnings];
+     *  - a folder-removal failure aborts BEFORE the manifest rewrite, so the
+     *    library entry always keeps its normal UI route; retries are idempotent.
      */
-    suspend fun deleteDocument(id: String) = withLocks(K_MANIFEST, K_PROGRESS, K_ANNOTATIONS, K_COLLECTIONS) {
-        val manifest = readOrCreateManifest()
-        val mDoc = manifest.docs.firstOrNull { it.id == id } ?: return@withLocks
-        val docDir = "library/docs/${mDoc.slug}"
+    suspend fun deleteDocument(id: String): DeleteResult =
+        withLocks(K_MANIFEST, K_PROGRESS, K_ANNOTATIONS, K_COLLECTIONS) {
+            val manifest = readOrCreateManifest()
+            val mDoc = manifest.docs.firstOrNull { it.id == id }
+                ?: throw IllegalArgumentException("Document not found in manifest: $id")
+            val docDir = "library/docs/${mDoc.slug}"
+            val warnings = mutableListOf<String>()
 
-        // 1. Remove folder
-        try {
-            store.remove(docDir, recursive = true)
-        } catch (_: Exception) {
-            // removal failure is non-fatal; manifest will still drop the entry
-        }
-
-        // 2. Search text
-        try {
-            if (store.exists("library/index/text/$id.json")) {
-                store.remove("library/index/text/$id.json")
-            }
-        } catch (_: Exception) {
-        }
-
-        // 3. Progress
-        try {
-            val progressPath = "library/user/progress.json"
-            if (store.exists(progressPath)) {
-                val map = json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))
-                if (map.containsKey(id)) {
-                    store.write(progressPath, json.encodeToString(map - id))
+            // 1. Search text
+            try {
+                if (store.exists("library/index/text/$id.json")) {
+                    store.remove("library/index/text/$id.json")
                 }
+            } catch (_: Exception) {
+                warnings += "search index"
             }
-        } catch (_: Exception) {
-        }
 
-        // 4. Annotations
-        try {
-            val annotPath = "library/user/annotations.json"
-            if (store.exists(annotPath)) {
-                val all = json.decodeFromString<List<Annotation>>(store.readText(annotPath))
-                store.write(annotPath, json.encodeToString(all.filter { it.docId != id }))
-            }
-        } catch (_: Exception) {
-        }
-
-        // 5. Collections membership
-        try {
-            val collPath = "library/user/collections.json"
-            if (store.exists(collPath)) {
-                val all = json.decodeFromString<List<Collection>>(store.readText(collPath))
-                var changed = false
-                val updated = all.map { c ->
-                    if (id in c.docIds) {
-                        changed = true
-                        c.copy(docIds = c.docIds - id)
-                    } else c
+            // 2. Progress — an unreadable progress.json is preserved unchanged.
+            try {
+                val map = readProgressStrictLocked()
+                if (map != null && map.containsKey(id)) {
+                    store.write(PROGRESS_PATH, json.encodeToString(map - id))
                 }
-                if (changed) store.write(collPath, json.encodeToString(updated))
+            } catch (corrupt: LibraryFileCorruptException) {
+                warnings += "reading progress (unreadable file preserved)"
+            } catch (_: Exception) {
+                warnings += "reading progress"
             }
-        } catch (_: Exception) {
-        }
 
-        // 6. Manifest last
-        val now = nowIso()
-        store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = manifest.docs - mDoc, updatedAt = now)))
-    }
+            // 3. Annotations
+            try {
+                val all = readAnnotationsStrictLocked()
+                if (all != null) {
+                    val without = all.filter { it.docId != id }
+                    if (without.size != all.size) {
+                        store.write(ANNOTATIONS_PATH, json.encodeToString(without))
+                    }
+                }
+            } catch (corrupt: LibraryFileCorruptException) {
+                warnings += "notes and highlights (unreadable file preserved)"
+            } catch (_: Exception) {
+                warnings += "notes and highlights"
+            }
+
+            // 4. Collections membership
+            try {
+                val all = readCollectionsStrictLocked()
+                if (all != null) {
+                    var changed = false
+                    val updated = all.map { c ->
+                        if (id in c.docIds) {
+                            changed = true
+                            c.copy(docIds = c.docIds - id)
+                        } else c
+                    }
+                    if (changed) store.write(COLLECTIONS_PATH, json.encodeToString(updated))
+                }
+            } catch (corrupt: LibraryFileCorruptException) {
+                warnings += "collection membership (unreadable file preserved)"
+            } catch (_: Exception) {
+                warnings += "collection membership"
+            }
+
+            // 5. Remove folder — a failure aborts BEFORE the manifest rewrite
+            //    (route to the entry stays intact for a retry), not after.
+            try {
+                store.remove(docDir, recursive = true)
+            } catch (e: Exception) {
+                return@withLocks DeleteResult(
+                    false,
+                    warnings + "book files (folder removal failed; the entry was kept)"
+                )
+            }
+
+            // 6. Manifest last
+            val now = nowIso()
+            store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = manifest.docs - mDoc, updatedAt = now)))
+            DeleteResult(true, warnings)
+        }
     /**
      * Startup recovery per spec §4 Rule 2: docs/ folders not listed in the
      * manifest are interrupted imports (caller offers finish or delete).
@@ -495,84 +629,164 @@ class LibraryManager(
 
     // --- Progress ---
 
+    /**
+     * Writes reading progress. Data-safety (audit P0-02): an unreadable
+     * existing progress.json throws [LibraryFileCorruptException] instead of
+     * silently replacing the unreadable map with a one-entry file.
+     */
     suspend fun saveProgress(progress: Progress) = mutexFor(K_PROGRESS).withLock {
-        val progressPath = "library/user/progress.json"
-        val map: Map<String, Progress> = runCatching {
-            if (store.exists(progressPath)) {
-                json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))
-            } else emptyMap()
-        }.getOrElse { emptyMap() }
-        store.write(progressPath, json.encodeToString(map + (progress.docId to progress)))
+        val map = readProgressStrictLocked() ?: emptyMap()
+        store.write(PROGRESS_PATH, json.encodeToString(map + (progress.docId to progress)))
     }
 
-    suspend fun getProgress(docId: String): Progress? {
-        val progressPath = "library/user/progress.json"
-        if (!store.exists(progressPath)) return null
-        return runCatching {
-            json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))[docId]
-        }.getOrNull()
+    private suspend fun readProgressStrictLocked(): Map<String, Progress>? {
+        if (!store.exists(PROGRESS_PATH)) return null // absent = valid empty
+        return try {
+            json.decodeFromString<Map<String, Progress>>(store.readText(PROGRESS_PATH))
+        } catch (e: Exception) {
+            throw LibraryFileCorruptException(PROGRESS_PATH, e.message ?: e.toString(), e)
+        }
     }
 
-    suspend fun getAllProgress(): Map<String, Progress> {
-        val progressPath = "library/user/progress.json"
-        if (!store.exists(progressPath)) return emptyMap()
-        return runCatching {
-            json.decodeFromString<Map<String, Progress>>(store.readText(progressPath))
-        }.getOrElse { emptyMap() }
+    /**
+     * Typed read of progress.json: Missing (no positions yet) vs Corrupt
+     * (file exists but cannot be decoded) vs Loaded (audit P0-02).
+     */
+    suspend fun readAllProgressState(): ReadResult<Map<String, Progress>> {
+        if (!store.exists(PROGRESS_PATH)) return ReadResult.Missing
+        return try {
+            ReadResult.Loaded(json.decodeFromString<Map<String, Progress>>(store.readText(PROGRESS_PATH)))
+        } catch (e: Exception) {
+            ReadResult.Corrupt(PROGRESS_PATH, e.message ?: e.toString())
+        }
+    }
+
+    /** Tolerant map read for merge/backup flows; corrupt collapses to empty (logged). */
+    suspend fun getAllProgress(): Map<String, Progress> = when (val r = readAllProgressState()) {
+        is ReadResult.Loaded -> r.value
+        is ReadResult.Missing -> emptyMap()
+        is ReadResult.Corrupt -> {
+            android.util.Log.w("folio-userstate", "${r.path} unreadable: ${r.message}")
+            emptyMap()
+        }
+    }
+
+    /** Tolerant single-doc read (reader resume); corrupt collapses to null (logged). */
+    suspend fun getProgress(docId: String): Progress? = when (val r = readAllProgressState()) {
+        is ReadResult.Loaded -> r.value[docId]
+        is ReadResult.Missing -> null
+        is ReadResult.Corrupt -> {
+            android.util.Log.w("folio-userstate", "${r.path} unreadable: ${r.message}")
+            null
+        }
     }
 
     // --- Annotations ---
 
-    suspend fun getAnnotations(docId: String? = null): List<Annotation> {
-        val annotPath = "library/user/annotations.json"
-        if (!store.exists(annotPath)) return emptyList()
-        return runCatching {
-            val all = json.decodeFromString<List<Annotation>>(store.readText(annotPath))
-            docId?.let { filter -> all.filter { it.docId == filter } } ?: all
-        }.getOrElse { emptyList() }
-    }
-
+    /**
+     * Writes an annotation. Data-safety (audit P0-02): an unreadable
+     * annotations.json throws [LibraryFileCorruptException] instead of
+     * silently replacing the unreadable list with a one-item list.
+     */
     suspend fun saveAnnotation(annotation: Annotation) = mutexFor(K_ANNOTATIONS).withLock {
-        val annotPath = "library/user/annotations.json"
-        val all = runCatching {
-            if (store.exists(annotPath)) {
-                json.decodeFromString<List<Annotation>>(store.readText(annotPath))
-            } else emptyList()
-        }.getOrElse { emptyList() }
+        val all = readAnnotationsStrictLocked() ?: emptyList()
         val without = all.filter { it.id != annotation.id }
-        store.write(annotPath, json.encodeToString(without + annotation))
+        store.write(ANNOTATIONS_PATH, json.encodeToString(without + annotation))
     }
 
+    /**
+     * Removes an annotation. A corrupt annotations.json throws instead of
+     * (previously) silently doing nothing.
+     */
     suspend fun removeAnnotation(id: String): Unit = mutexFor(K_ANNOTATIONS).withLock {
-        val annotPath = "library/user/annotations.json"
-        if (!store.exists(annotPath)) return@withLock
-        val all = runCatching {
-            json.decodeFromString<List<Annotation>>(store.readText(annotPath))
-        }.getOrElse { return@withLock }
-        store.write(annotPath, json.encodeToString(all.filter { it.id != id }))
+        val all = readAnnotationsStrictLocked() ?: return@withLock
+        val without = all.filter { it.id != id }
+        if (without.size != all.size) {
+            store.write(ANNOTATIONS_PATH, json.encodeToString(without))
+        }
     }
+
+    private suspend fun readAnnotationsStrictLocked(): List<Annotation>? {
+        if (!store.exists(ANNOTATIONS_PATH)) return null
+        return try {
+            json.decodeFromString<List<Annotation>>(store.readText(ANNOTATIONS_PATH))
+        } catch (e: Exception) {
+            throw LibraryFileCorruptException(ANNOTATIONS_PATH, e.message ?: e.toString(), e)
+        }
+    }
+
+    /**
+     * Typed read of the annotations file so UIs can distinguish "nothing saved
+     * yet" from "saved notes cannot be read" (audit P0-02) — a corrupt file
+     * must never surface as the empty state.
+     */
+    suspend fun readAnnotationsState(docId: String? = null): ReadResult<List<Annotation>> {
+        if (!store.exists(ANNOTATIONS_PATH)) return ReadResult.Missing
+        return try {
+            val all = json.decodeFromString<List<Annotation>>(store.readText(ANNOTATIONS_PATH))
+            ReadResult.Loaded(docId?.let { filter -> all.filter { it.docId == filter } } ?: all)
+        } catch (e: Exception) {
+            ReadResult.Corrupt(ANNOTATIONS_PATH, e.message ?: e.toString())
+        }
+    }
+
+    /** Tolerant list read for merge/backup flows; corrupt collapses to empty (logged). */
+    suspend fun getAnnotations(docId: String? = null): List<Annotation> =
+        when (val r = readAnnotationsState(docId)) {
+            is ReadResult.Loaded -> r.value
+            is ReadResult.Missing -> emptyList()
+            is ReadResult.Corrupt -> {
+                android.util.Log.w("folio-userstate", "${r.path} unreadable: ${r.message}")
+                emptyList()
+            }
+        }
 
     // --- Collections ---
 
-    suspend fun getCollections(): List<Collection> {
-        val collPath = "library/user/collections.json"
-        if (!store.exists(collPath)) return emptyList()
-        return runCatching {
-            json.decodeFromString<List<Collection>>(store.readText(collPath))
-        }.getOrElse {
-            // Never silent: a corrupt/unreadable collections.json must not
-            // masquerade as "no collections" in the details dialog.
-            android.util.Log.w("folio-collections", "collections.json unreadable", it)
+    /**
+     * Typed read of collections.json: Missing (no collections yet) vs Corrupt
+     * (file exists but cannot be decoded) vs Loaded (audit P0-02).
+     */
+    suspend fun readCollectionsState(): ReadResult<List<Collection>> {
+        if (!store.exists(COLLECTIONS_PATH)) return ReadResult.Missing
+        return try {
+            ReadResult.Loaded(json.decodeFromString<List<Collection>>(store.readText(COLLECTIONS_PATH)))
+        } catch (e: Exception) {
+            ReadResult.Corrupt(COLLECTIONS_PATH, e.message ?: e.toString())
+        }
+    }
+
+    /** Tolerant list read for merge/backup flows; corrupt collapses to empty (logged). */
+    suspend fun getCollections(): List<Collection> = when (val r = readCollectionsState()) {
+        is ReadResult.Loaded -> r.value
+        is ReadResult.Missing -> emptyList()
+        is ReadResult.Corrupt -> {
+            // Never silent: a corrupt collections.json must not masquerade as
+            // "no collections" in the details dialog (audit P0-02).
+            android.util.Log.w("folio-collections", "${r.path} unreadable: ${r.message}")
             emptyList()
+        }
+    }
+
+    private suspend fun readCollectionsStrictLocked(): List<Collection>? {
+        if (!store.exists(COLLECTIONS_PATH)) return null
+        return try {
+            json.decodeFromString<List<Collection>>(store.readText(COLLECTIONS_PATH))
+        } catch (e: Exception) {
+            throw LibraryFileCorruptException(COLLECTIONS_PATH, e.message ?: e.toString(), e)
         }
     }
 
     suspend fun saveCollections(collections: List<Collection>): Unit =
         mutexFor(K_COLLECTIONS).withLock {
-            store.write("library/user/collections.json", json.encodeToString(collections))
+            store.write(COLLECTIONS_PATH, json.encodeToString(collections))
         }
 
-    /** Creates a collection (PWA parity: fresh id, empty docIds, now). */
+    /**
+     * Creates a collection (PWA parity: fresh id, empty docIds, now).
+     * Data-safety: a corrupt collections.json blocks the write instead of
+     * collapsing the unreadable list to one collection (audit P0-02).
+     */
     suspend fun createCollection(name: String): Collection = mutexFor(K_COLLECTIONS).withLock {
         val clean = name.trim()
         require(clean.isNotEmpty()) { "Collection name cannot be blank" }
@@ -583,22 +797,20 @@ class LibraryManager(
             createdAt = nowIso(),
             updatedAt = nowIso()
         )
-        store.write(
-            "library/user/collections.json",
-            json.encodeToString(getCollections() + coll)
-        )
+        val all = readCollectionsStrictLocked() ?: emptyList()
+        store.write(COLLECTIONS_PATH, json.encodeToString(all + coll))
         coll
     }
 
     /** Renames a collection; throws when the id is unknown (PWA parity). */
     suspend fun renameCollection(id: String, name: String): Collection =
         mutexFor(K_COLLECTIONS).withLock {
-            val collections = getCollections()
+            val collections = readCollectionsStrictLocked() ?: emptyList()
             val coll = collections.firstOrNull { it.id == id }
                 ?: throw IllegalArgumentException("Collection not found: $id")
             val renamed = coll.copy(name = name.trim(), updatedAt = nowIso())
             store.write(
-                "library/user/collections.json",
+                COLLECTIONS_PATH,
                 json.encodeToString(collections.map { if (it.id == id) renamed else it })
             )
             renamed
@@ -606,9 +818,9 @@ class LibraryManager(
 
     /** Deletes a collection; document meta keeps its ids until reassigned (PWA parity). */
     suspend fun deleteCollection(id: String): Unit = mutexFor(K_COLLECTIONS).withLock {
-        val collections = getCollections()
+        val collections = readCollectionsStrictLocked() ?: emptyList()
         store.write(
-            "library/user/collections.json",
+            COLLECTIONS_PATH,
             json.encodeToString(collections.filter { it.id != id })
         )
     }
@@ -630,7 +842,7 @@ class LibraryManager(
         collectionId: String,
         transform: (List<String>) -> List<String>
     ): Collection = withLocks(K_COLLECTIONS, K_MANIFEST) {
-        val collections = getCollections()
+        val collections = readCollectionsStrictLocked() ?: emptyList()
         val coll = collections.firstOrNull { it.id == collectionId }
             ?: throw IllegalArgumentException("Collection not found: $collectionId")
         val newDocIds = transform(coll.docIds)
@@ -638,7 +850,7 @@ class LibraryManager(
 
         val updated = coll.copy(docIds = newDocIds, updatedAt = nowIso())
         store.write(
-            "library/user/collections.json",
+            COLLECTIONS_PATH,
             json.encodeToString(collections.map { if (it.id == collectionId) updated else it })
         )
         // Only docs whose membership actually changed: added or dropped.
@@ -681,7 +893,7 @@ class LibraryManager(
      */
     suspend fun setDocCollections(docId: String, collectionIds: List<String>): Unit =
         withLocks(K_COLLECTIONS, K_MANIFEST) {
-            val collections = getCollections()
+            val collections = readCollectionsStrictLocked() ?: emptyList()
             val updates = collections.map { coll ->
                 val has = docId in coll.docIds
                 val shouldHave = coll.id in collectionIds
@@ -691,7 +903,49 @@ class LibraryManager(
                     else -> coll
                 }
             }
-            store.write("library/user/collections.json", json.encodeToString(updates))
+            store.write(COLLECTIONS_PATH, json.encodeToString(updates))
             updateDocMetaLocked(docId, collectionIds = collectionIds)
         }
+
+    /**
+     * Recovery action for an unreadable user-state file (audit P0-02): the
+     * original bytes are preserved byte-for-byte under [RECOVERY_DIR], then the
+     * file is removed so ordinary saves can rebuild it from scratch. Readable
+     * files are refused — this never discards healthy data, and it is the only
+     * sanctioned way to clear a corrupt user file (plain saves throw instead).
+     */
+    suspend fun discardCorruptUserState(path: String): String {
+        val lockKey = when (path) {
+            PROGRESS_PATH -> FileLock.PROGRESS
+            ANNOTATIONS_PATH -> FileLock.ANNOTATIONS
+            COLLECTIONS_PATH -> FileLock.COLLECTIONS
+            else -> throw IllegalArgumentException("Not a user-state file: $path")
+        }
+        return mutexFor(lockKey.key).withLock {
+            if (!store.exists(path)) {
+                throw IllegalStateException("No file to discard: $path")
+            }
+            // Refuse readable files: recovery only ever clears unreadable bytes.
+            val decodable = when (path) {
+                PROGRESS_PATH ->
+                    runCatching {
+                        json.decodeFromString<Map<String, Progress>>(store.readText(path))
+                    }.isSuccess
+                ANNOTATIONS_PATH ->
+                    runCatching {
+                        json.decodeFromString<List<Annotation>>(store.readText(path))
+                    }.isSuccess
+                else ->
+                    runCatching {
+                        json.decodeFromString<List<Collection>>(store.readText(path))
+                    }.isSuccess
+            }
+            if (decodable) {
+                throw IllegalStateException("File is readable — nothing to discard: $path")
+            }
+            val preserved = preserveCorruptCopy(path)
+            store.remove(path)
+            preserved
+        }
+    }
 }

@@ -34,7 +34,13 @@ data class VerificationResult(
     val totalFiles: Int,
     val totalSize: Long,
     /** Decompressed archive bytes keyed by entry path (empty when the archive failed to unzip). */
-    val unzipped: Map<String, ByteArray> = emptyMap()
+    val unzipped: Map<String, ByteArray> = emptyMap(),
+    /**
+     * Human-readable, user-visible notes for non-fatal findings (audit P0-04):
+     * skipped entries, checksum mismatches, or sections that carried no warnings
+     * after merge. Empty when the archive verified clean.
+     */
+    val warnings: List<String> = emptyList()
 )
 
 data class RestoreSummary(
@@ -45,7 +51,14 @@ data class RestoreSummary(
     val metadataUpdated: Int,
     val annotationsMerged: Int,
     val progressUpdated: Int,
-    val collectionsMerged: Int
+    val collectionsMerged: Int,
+    /**
+     * Non-fatal, user-visible recovery notes (audit P0-04): sections that
+     * could not be merged honestly, unreadable local state, repaired
+     * corrections. UIs must distinguish "restore completed" from
+     * "restore completed with warnings" using this list.
+     */
+    val warnings: List<String> = emptyList()
 )
 
 /** Restore mode matching the PWA's RestoreOptions.mode. */

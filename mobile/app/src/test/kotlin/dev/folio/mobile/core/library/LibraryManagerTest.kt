@@ -23,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -98,13 +99,17 @@ class LibraryManagerTest {
     }
 
     @Test
-    fun `corrupted manifest is preserved, not overwritten`() = runBlocking {
+    fun `corrupted manifest is preserved, not overwritten or shown as a valid empty library`() = runBlocking {
         manager.getManifest()
         store.write(MANIFEST_PATH, "{corrupted json!!")
-        val manifest = manager.getManifest()
-        assertEquals(1, manifest.schema)
-        assertTrue(manifest.docs.isEmpty())
-        // The corrupt file must survive so recovery/inspection can see it.
+        // The corrupt file must survive so recovery/inspection can see it — and
+        // the manager must never hand callers a bogus empty manifest (P0-01).
+        try {
+            manager.getManifest()
+            fail("getManifest must throw on an undecodable manifest")
+        } catch (expected: LibraryFileCorruptException) {
+            assertEquals(MANIFEST_PATH, expected.path)
+        }
         assertEquals("{corrupted json!!", store.readText(MANIFEST_PATH))
     }
 
@@ -215,8 +220,12 @@ class LibraryManagerTest {
         val coll = manager.getCollections().first()
         assertTrue(coll.docIds.isEmpty())
         assertTrue(manager.getManifest().docs.isEmpty())
-        // second delete of same id is a no-op
-        manager.deleteDocument(meta.id)
+        // second delete of the same id is refused (unknown id), never silent
+        try {
+            manager.deleteDocument(meta.id)
+            fail("deleteDocument must throw for an id that is not in the manifest")
+        } catch (expected: IllegalArgumentException) {
+        }
     }
 
     @Test

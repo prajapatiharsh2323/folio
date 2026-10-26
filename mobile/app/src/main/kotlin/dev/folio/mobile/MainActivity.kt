@@ -79,6 +79,7 @@ import dev.folio.mobile.core.importer.ImportDispatch
 import dev.folio.mobile.core.importer.ImportResult
 import dev.folio.mobile.core.importer.UnsupportedFormatException
 import dev.folio.mobile.core.library.CoverLoader
+import dev.folio.mobile.core.library.LibraryFileCorruptException
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryUi
 import dev.folio.mobile.core.model.Collection
@@ -148,6 +149,10 @@ class MainActivity : ComponentActivity() {
 internal fun appLibrary(context: android.content.Context): LibraryManager =
     LibraryManager(AppFileStore(context.filesDir))
 
+/** Honest copy for actions LibraryManager blocks while the index is corrupt (audit P0-01). */
+internal fun corruptionMessage(purpose: String): String =
+    "Library index needs repair — $purpose paused to keep your library safe"
+
 /** Sample import kept for the blocked device-smoke flow (no files needed). */
 private suspend fun runSample(context: android.content.Context) {
     withContext(Dispatchers.IO) {
@@ -203,24 +208,68 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var duplicateResult by remember { mutableStateOf<ImportResult?>(null) }
     var duplicateDialogOpen by remember { mutableStateOf(false) }
 
+    // Audit P0-01: a corrupt manifest must never render as a normal empty
+    // library. Mutations are blocked in LibraryManager until repair/restore.
+    var indexCorrupt by remember { mutableStateOf(false) }
+    var repairing by remember { mutableStateOf(false) }
+
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
 
     suspend fun refresh() {
         val library = appLibrary(context)
-        val docs = withContext(Dispatchers.IO) { library.listDocuments() }
-        val progress = withContext(Dispatchers.IO) { library.getAllProgress() }
-        entries = sortLibrary(docs.map { LibraryUi.item(it, progress[it.id]) }, sortBy, progress)
-        // Recovery state (spec §4 Rule 2): damaged entries + interrupted imports.
-        withContext(Dispatchers.IO) {
-            damagedNotice = LibraryUi.damagedNotice(library.damagedDocuments())
-            orphanNotice = LibraryUi.orphanNotice(library.scanInterruptedImports())
+        try {
+            val docs = withContext(Dispatchers.IO) { library.listDocuments() }
+            val progress = withContext(Dispatchers.IO) { library.getAllProgress() }
+            entries = sortLibrary(docs.map { LibraryUi.item(it, progress[it.id]) }, sortBy, progress)
+            // Recovery state (spec §4 Rule 2): damaged entries + interrupted imports.
+            withContext(Dispatchers.IO) {
+                damagedNotice = LibraryUi.damagedNotice(library.damagedDocuments())
+                orphanNotice = LibraryUi.orphanNotice(library.scanInterruptedImports())
+            }
+            collections = withContext(Dispatchers.IO) { library.getCollections() }
+            indexCorrupt = false
+        } catch (corrupt: LibraryFileCorruptException) {
+            // Audit P0-01: never present index corruption as an empty library —
+            // import/delete/recovery stay blocked by LibraryManager meanwhile.
+            entries = emptyList()
+            collections = emptyList()
+            damagedNotice = null
+            orphanNotice = null
+            indexCorrupt = true
         }
-        collections = withContext(Dispatchers.IO) { library.getCollections() }
         // Re-bind the active filter: renames keep it, deleted targets drop it.
         activeFilter = LibraryUi.rebind(activeFilter, LibraryUi.filters(collections, entries))
         libraryVersion += 1
         loading = false
+    }
+
+    /** Rebuilds a corrupt manifest from library/docs folders (audit P0-01). */
+    fun repairIndex() {
+        if (repairing) return
+        scope.launch {
+            repairing = true
+            try {
+                val result = withContext(Dispatchers.IO) { appLibrary(context).repairManifest() }
+                refresh()
+                snackbar.showSnackbar(
+                    if (result.skipped.isEmpty()) {
+                        "Library index repaired — ${result.registered} book(s) recovered"
+                    } else {
+                        "Index repaired (${result.registered} book(s)); " +
+                            "${result.skipped.size} folder(s) still need attention"
+                    }
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                snackbar.showSnackbar(
+                    "Repair couldn't finish — the original index file is preserved unchanged"
+                )
+            } finally {
+                repairing = false
+            }
+        }
     }
 
     // Refresh on every resume (initial open + return from the reader) so progress
@@ -262,6 +311,10 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 }
             } catch (e: UnsupportedFormatException) {
                 snackbar.showSnackbar("Unsupported format — EPUB, HTML or TXT only")
+            } catch (corrupt: LibraryFileCorruptException) {
+                snackbar.showSnackbar(
+                    "Library index needs repair — import paused to keep your library safe"
+                )
             } catch (t: Throwable) {
                 snackbar.showSnackbar(t.message ?: "Import failed")
             } finally {
@@ -370,7 +423,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         }
                     }
                     IconButton(
-                        enabled = !importing,
+                        enabled = !importing && !indexCorrupt,
                         onClick = { importLauncher.launch(MainActivity.IMPORT_MIMES) }
                     ) {
                         Icon(FolioIcons.Plus, contentDescription = "Import file")
@@ -439,6 +492,16 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                     onDocDelete = { deleteTarget = it },
                 )
             } else {
+                if (indexCorrupt) {
+                    FolioStatusBanner(
+                        icon = FolioIcons.AlertTriangle,
+                        message = "The library index is unreadable — your books are untouched on disk. " +
+                            "Import, delete and recovery are paused until the index is repaired.",
+                        actionLabel = if (repairing) "Repairing…" else "Repair",
+                        onAction = ::repairIndex,
+                        modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+                    )
+                }
                 damagedNotice?.let { notice ->
                     FolioStatusBanner(
                         icon = FolioIcons.AlertTriangle,
@@ -487,6 +550,30 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator()
+                    }
+                } else if (indexCorrupt) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = FolioSpacing.x4),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        FolioEmptyState(
+                            icon = FolioIcons.AlertTriangle,
+                            title = "Library index needs repair",
+                            body = "The library's index file could not be read. Your books, notes and " +
+                                "progress are safe on disk — Folio pauses changes until the index is " +
+                                "rebuilt so nothing can be lost.",
+                            note = if (repairing) "Repairing…" else null,
+                        )
+                        TextButton(
+                            onClick = ::repairIndex,
+                            enabled = !repairing,
+                        ) {
+                            Text(if (repairing) "Repairing…" else "Repair index")
+                        }
                     }
                 } else if (entries.isEmpty()) {
                     Column(
@@ -633,6 +720,10 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                     appLibrary(context).deleteDocument(target.id)
                                 }
                                 refresh()
+                            } catch (corrupt: LibraryFileCorruptException) {
+                                snackbar.showSnackbar(
+                                    corruptionMessage("Deleting")
+                                )
                             } catch (t: Throwable) {
                                 snackbar.showSnackbar(t.message ?: "Delete failed")
                             }
@@ -659,6 +750,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         refresh()
                         if (damagedNotice == null) damagedDialogOpen = false
                         snackbar.showSnackbar("Removed “${item.label}”")
+                    } catch (corrupt: LibraryFileCorruptException) {
+                        snackbar.showSnackbar(corruptionMessage("Cleanup"))
                     } catch (t: Throwable) {
                         snackbar.showSnackbar(t.message ?: "Remove failed")
                     }
@@ -793,6 +886,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                 withContext(Dispatchers.IO) { library.addDocument(r) }
                                 refresh()
                                 snackbar.showSnackbar("Imported as new copy")
+                            } catch (corrupt: LibraryFileCorruptException) {
+                                snackbar.showSnackbar(corruptionMessage("Import"))
                             } catch (t: Throwable) {
                                 snackbar.showSnackbar(t.message ?: "Import failed")
                             }
@@ -821,6 +916,8 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                     }
                                     refresh()
                                     snackbar.showSnackbar("Replaced")
+                                } catch (corrupt: LibraryFileCorruptException) {
+                                    snackbar.showSnackbar(corruptionMessage("Replace"))
                                 } catch (t: Throwable) {
                                     snackbar.showSnackbar(t.message ?: "Import failed")
                                 }
@@ -1223,10 +1320,19 @@ private fun SearchPanel(
     var results by remember { mutableStateOf<List<SearchService.DocResult>>(emptyList()) }
 
     // Rebuild whenever the library changed (or on first open).
+    var buildError by remember { mutableStateOf(false) }
     LaunchedEffect(libraryVersion) {
         building = true
-        session = withContext(Dispatchers.IO) {
-            SearchService(appLibrary(context)).build()
+        buildError = false
+        // Audit P0-01: a corrupt manifest surfaces as an honest empty/error
+        // state here instead of crashing the search coroutine.
+        session = try {
+            withContext(Dispatchers.IO) {
+                SearchService(appLibrary(context)).build()
+            }
+        } catch (corrupt: LibraryFileCorruptException) {
+            buildError = true
+            null
         }
         building = false
     }
@@ -1277,6 +1383,20 @@ private fun SearchPanel(
                     contentAlignment = Alignment.Center
                 ) {
                     CircularProgressIndicator()
+                }
+            }
+            buildError -> {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Library index needs repair — search is unavailable.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    )
                 }
             }
             query.isBlank() -> {

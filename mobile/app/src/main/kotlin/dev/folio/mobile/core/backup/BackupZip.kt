@@ -205,7 +205,13 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
         }
     }
     if (issues.any { it.path == "<archive>" }) {
-        return VerificationResult(false, null, issues, totalFiles, totalSize)
+        return VerificationResult(
+            valid = false,
+            issues = issues,
+            totalFiles = totalFiles,
+            totalSize = totalSize,
+            warnings = issues.map { it.message }
+        )
     }
 
     var backupMeta: BackupMeta? = try {
@@ -231,7 +237,14 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
                 message = "library/manifest.json not found in backup archive"
             )
         )
-        return VerificationResult(false, backupMeta, issues, totalFiles, totalSize)
+        return VerificationResult(
+            valid = false,
+            backupMeta = backupMeta,
+            issues = issues,
+            totalFiles = totalFiles,
+            totalSize = totalSize,
+            warnings = issues.map { it.message }
+        )
     }
     if (manifest == null) {
         issues.add(
@@ -240,7 +253,14 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
                 message = "Failed to parse library/manifest.json"
             )
         )
-        return VerificationResult(false, backupMeta, issues, totalFiles, totalSize)
+        return VerificationResult(
+            valid = false,
+            backupMeta = backupMeta,
+            issues = issues,
+            totalFiles = totalFiles,
+            totalSize = totalSize,
+            warnings = issues.map { it.message }
+        )
     }
 
     // 3. Verify the manifest's sha256 against backup.json when present.
@@ -290,7 +310,8 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
         backupMeta = backupMeta,
         issues = issues,
         totalFiles = totalFiles,
-        totalSize = totalSize
+        totalSize = totalSize,
+        warnings = issues.map { it.message }
     )
 }
 
