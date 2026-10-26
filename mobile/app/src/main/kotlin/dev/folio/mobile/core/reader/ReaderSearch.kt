@@ -35,8 +35,16 @@ object ReaderSearch {
         /** One-line collapsed excerpt around the match (css-stripped). */
         val snippet: String,
         /** Chapter/page label under which the hit appeared (best effort). */
-        val sectionTitle: String?
-    )
+        val sectionTitle: String?,
+        /** Match span inside [snippet] — the UI emphasizes exactly this text. */
+        val matchStart: Int = -1,
+        val matchEnd: Int = -1
+    ) {
+        val hasMatch: Boolean get() = matchStart >= 0 && matchEnd > matchStart
+    }
+
+    /** Excerpt + highlight span, built so the match itself is never truncated away. */
+    data class Snippet(val text: String, val matchStart: Int, val matchEnd: Int)
 
     /** Only submit queries long enough to be useful. */
     fun isRunnableQuery(raw: String): Boolean = raw.trim().length >= MIN_QUERY_LENGTH
@@ -60,30 +68,89 @@ object ReaderSearch {
     }
 
     /**
-     * Best-effort hit label: Readium locators usually carry the chapter title;
-     * when absent, fall back to the resource file name (never a raw base path
-     * or fragment).
+     * Match-aware excerpt (audit P1-13). The old `snippet()` windowed from the
+     * start of `before`, which could cut the actual query out of long context.
+     * This centers the window on the match, keeping leading context when it
+     * fits and pointing the UI at the exact span to emphasize.
      */
-    fun sectionTitle(locatorTitle: String?, href: String): String? {
-        locatorTitle?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
-        val segment = href.substringBefore('#')
-            .trimEnd('/')
-            .substringAfterLast('/')
-            .trim()
-        return segment.takeIf { it.isNotEmpty() }
+    fun buildSnippet(before: String?, highlight: String?, after: String?): Snippet? {
+        fun clean(value: String?): String =
+            value?.replace(WHITESPACE, " ")?.trim().orEmpty()
+
+        val beforeText = clean(before)
+        val afterText = clean(after)
+        var matched = clean(highlight)
+        if (matched.isEmpty()) return null
+
+        // If the match itself is longer than the budget, truncate it (the span
+        // still points at the visible portion).
+        if (matched.length > SNIPPET_MAX - 8) {
+            matched = matched.take(SNIPPET_MAX - 8)
+        }
+
+        // Reserve room for the match itself, the two joining spaces and up to
+        // two ellipses so the finished excerpt never exceeds SNIPPET_MAX (+1 for
+        // the trailing ellipsis).
+        val budgetForContext = (SNIPPET_MAX - matched.length - 4).coerceAtLeast(0)
+        var beforePart = beforeText
+        if (beforePart.length > budgetForContext) {
+            beforePart = if (budgetForContext > 1) {
+                "…" + beforePart.takeLast(budgetForContext - 1)
+            } else {
+                ""
+            }
+        }
+        val remaining = (budgetForContext - beforePart.length - 1).coerceAtLeast(0)
+        var afterPart = afterText.take(remaining)
+        if (afterPart.length < afterText.length) {
+            afterPart += "…"
+        }
+
+        val text = listOf(beforePart, matched, afterPart)
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+        // Compute the span from the known layout (indexOf would find an earlier
+        // duplicate of the query inside the leading context).
+        val start = if (beforePart.isEmpty()) 0 else beforePart.length + 1
+        if (!text.regionMatches(start, matched, 0, matched.length)) return null
+        return Snippet(text, start, start + matched.length)
     }
+
+    /**
+     * Best-effort hit label: Readium locators usually carry the chapter title.
+     * When absent the UI shows no label (or its own "Section" fallback) — a raw
+     * resource file name is never surfaced (audit P1-13).
+     */
+    fun sectionTitle(locatorTitle: String?, href: String): String? =
+        locatorTitle?.trim()?.takeIf { it.isNotEmpty() }
 
     // ---- Locator-side conveniences (Android runtime only; keep thin) ----
 
     /** Builds the sheet row for a search-service locator. */
-    fun hitFromLocator(locator: Locator): Hit = Hit(
-        snippet = snippet(
+    fun hitFromLocator(locator: Locator): Hit {
+        val built = buildSnippet(
             before = locator.text.before,
             highlight = locator.text.highlight,
             after = locator.text.after
-        ),
-        sectionTitle = sectionTitle(locator.title, locator.href.toString())
-    )
+        )
+        return if (built != null) {
+            Hit(
+                snippet = built.text,
+                sectionTitle = sectionTitle(locator.title, locator.href.toString()),
+                matchStart = built.matchStart,
+                matchEnd = built.matchEnd
+            )
+        } else {
+            Hit(
+                snippet = snippet(
+                    before = locator.text.before,
+                    highlight = locator.text.highlight,
+                    after = locator.text.after
+                ),
+                sectionTitle = sectionTitle(locator.title, locator.href.toString())
+            )
+        }
+    }
 
     private val WHITESPACE = Regex("""\s+""")
 }

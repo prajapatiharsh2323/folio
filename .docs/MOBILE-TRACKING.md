@@ -269,6 +269,23 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 
 ## Session log
 
+- **Session FIX (Oct 26, 2026)** — UX/UI & Reading-Experience fix plan, in three
+  committed batches. Live per-item status: `.docs/FIX-PLAN-TRACKING.md`.
+  - **FIX-A (commit `9a63767`)** — P1-15: lock-safe `deleteCollection()` clears
+    its id from every `meta.json`, returns `CollectionDeleteResult`; regression
+    test proves books survive.
+  - **FIX-B (commit `2c36636`)** — P0-02/P0-04/P1-01/P1-04/P1-10/P2-06/P2-07/P2-08:
+    typed library reads + corrupt-data banners, `replaceDocument()` migrates
+    notes/progress/collections, delete/restore warnings surfaced, settings rows
+    disabled while busy with named operations, storage error/retry state.
+  - **FIX-C** — P1-06/P1-07/P1-08/P1-09/P1-13 + P2-01/P2-09/P2-10: 48dp progress
+    slider with semantics, live appearance preview, 3-column theme grid, bookmark
+    add/remove label + state, match-spanned search snippets, “Go back”, honest
+    dimming label, dead chrome params/handler removed.
+  - Verified at each batch: `:app:testDebugUnitTest` + `:app:assembleDebug` green.
+  - Remaining plan items and device-validation gates are listed in
+    `.docs/FIX-PLAN-TRACKING.md` (no device pass has been claimed).
+
 - **Session D-1 (Oct 25, 2026)** — Dictionary feature (IN PROGRESS). Plan:
   `.docs/plans/dictionary-plan.md`; live results: `.docs/results/D1-dictionary.md`.
 

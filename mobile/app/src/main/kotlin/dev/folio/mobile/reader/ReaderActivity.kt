@@ -44,6 +44,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -253,6 +257,10 @@ class ReaderActivity : FragmentActivity() {
     private val pillarTitle = mutableStateOf("")
     private val pillarPercent = mutableStateOf(0.0)
 
+    /** Current locator's saved location + the locations that already have bookmarks. */
+    private val currentLocation = mutableStateOf<String?>(null)
+    private val bookmarkLocations = mutableStateOf<Set<String>>(emptySet())
+
     /** Reading appearance sheet visibility. */
     private val appearanceVisible = mutableStateOf(false)
 
@@ -385,8 +393,6 @@ class ReaderActivity : FragmentActivity() {
                     prefs = prefsState.value,
                     bookTitle = docTitle,
                     onBack = { onBackPressedDispatcher.onBackPressed() },
-                    onPrefsChange = { updated -> onPrefsChanged(updated) },
-                    onHighlight = { onHighlightTapped() },
                     onBookmark = { onBookmarkTapped() },
                     onToc = { tocVisible.value = true },
                     onSearch = { searchVisible.value = true },
@@ -409,8 +415,7 @@ class ReaderActivity : FragmentActivity() {
                     pillarPercent = pillarPercent.value,
                     timeLeft = timeLeftText.value,
                     systemDark = isSystemDark(),
-                    perBookOverride = hasDocOverride.value,
-                    onResetPerBook = { onResetPerBookPrefs() }
+                    bookmarked = currentLocation.value?.let { it in bookmarkLocations.value } == true,
                 )
                 if (tocVisible.value) {                    TocSheet(
                         entries = tocEntries.value,
@@ -486,6 +491,7 @@ class ReaderActivity : FragmentActivity() {
                     AppearanceBottomSheet(
                         prefs = prefsState.value,
                         perBookOverride = hasDocOverride.value,
+                        onPreview = { preview -> previewPrefs(preview) },
                         onPrefsChange = { updated -> onPrefsChanged(updated) },
                         onResetPerBook = { onResetPerBookPrefs() },
                         onDismiss = { appearanceVisible.value = false },
@@ -573,6 +579,15 @@ class ReaderActivity : FragmentActivity() {
         loadScope.launch(Dispatchers.IO) {
             docPrefsStore.set(currentDocId, updated)
         }
+    }
+
+    /**
+     * Live appearance preview (audit P1-07): applies to the navigator during a
+     * drag without persisting, so the page visibly responds before the finger
+     * lifts. The final value is persisted once by [onPrefsChanged].
+     */
+    private fun previewPrefs(updated: ReadingPrefs) {
+        applyPrefs(updated)
     }
 
     /** Applies prefs to state/system bars/navigator without persisting. */
@@ -881,8 +896,15 @@ class ReaderActivity : FragmentActivity() {
         // schema-1 annotations and paint them right after the navigator mounts.
         lifecycleScope.launch {
             val annotations = withContext(Dispatchers.IO) {
-                LibraryManager(AppFileStore(filesDir)).getAnnotations(docId)
+                when (val state = LibraryManager(AppFileStore(filesDir)).readAnnotationsState(docId)) {
+                    is dev.folio.mobile.core.library.ReadResult.Loaded -> state.value
+                    else -> emptyList()
+                }
             }
+            bookmarkLocations.value = annotations
+                .filter { it.kind == AnnotationKind.Bookmark }
+                .mapNotNull { it.location }
+                .toSet()
             snapshotFlow { readerReady.value }.first { it }
             manager.boot(annotations)
         }
@@ -1061,41 +1083,6 @@ class ReaderActivity : FragmentActivity() {
                 startActivity(
                     android.content.Intent.createChooser(send, "Share quote")
                 )
-            }
-        }
-    }
-
-    /**
-     * R3 groundwork: capture the current selection as a schema-1 highlight.
-     * `currentSelection()` is a suspend read (no flow in 3.0.0), so the chrome
-     * button fetches it on tap; a null result means no active selection.
-     */
-    private fun onHighlightTapped() {
-        val navigator = navigatorRef ?: return
-        val docId = currentDocId
-        selectionAnnotation.value = null
-        selectionLocator.value = null
-        lifecycleScope.launch(Dispatchers.Main) {
-            val selection = navigator.currentSelection()
-            if (selection == null) {
-                withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(
-                        this@ReaderActivity, "Select text first", android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                }
-                return@launch
-            }
-            val now = java.time.Instant.now().toString()
-            val annotation = SelectionBridge.annotationFromSelection(
-                docId = docId,
-                locator = selection.locator,
-                id = java.util.UUID.randomUUID().toString(),
-                updatedAt = now
-            )
-            selectionAnnotation.value = annotation
-            selectionLocator.value = selection.locator
-            withContext(Dispatchers.Main) {
-                selectionToolbarVisible.value = true
             }
         }
     }
@@ -1334,32 +1321,55 @@ class ReaderActivity : FragmentActivity() {
         }
     }
 
-    /** Adds a bookmark at the current reading position. */
+    /** Toggles a bookmark at the current reading position (audit P1-09). */
     private fun onBookmarkTapped() {
         val navigator = navigatorRef ?: return
         val docId = currentDocId
         loadScope.launch {
-            try {
-                val locator = navigator.currentLocator.first { it.href.toString().isNotBlank() }
-                val now = java.time.Instant.now().toString()
-                val annotation = Annotation(
-                    id = java.util.UUID.randomUUID().toString(),
-                    docId = docId,
-                    quote = "",
-                    prefix = "",
-                    suffix = "",
-                    location = ProgressBridge.buildProgress(docId, locator, now).location,
-                    kind = AnnotationKind.Bookmark,
-                    createdAt = now,
-                    updatedAt = now
-                )
-                withContext(Dispatchers.IO) {
-                    LibraryManager(AppFileStore(filesDir)).saveAnnotation(annotation)
+            val locator = navigator.currentLocator.first { it.href.toString().isNotBlank() }
+            val now = java.time.Instant.now().toString()
+            val location = ProgressBridge.buildProgress(docId, locator, now).location
+            val library = LibraryManager(AppFileStore(filesDir))
+            val existing = withContext(Dispatchers.IO) {
+                when (val state = library.readAnnotationsState(docId)) {
+                    is dev.folio.mobile.core.library.ReadResult.Loaded -> state.value
+                    else -> emptyList()
                 }
-                withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(
-                        this@ReaderActivity, "Bookmark added", android.widget.Toast.LENGTH_SHORT
-                    ).show()
+            }.firstOrNull {
+                it.kind == AnnotationKind.Bookmark && it.location == location
+            }
+
+            try {
+                if (existing != null) {
+                    withContext(Dispatchers.IO) { library.removeAnnotation(existing.id) }
+                    withContext(Dispatchers.Main) {
+                        // Drop any painted decoration for the bookmark (no-op when
+                        // it was never rendered: bookmarks have an empty quote).
+                        runCatching { highlightManager?.remove(existing.id) }
+                        bookmarkLocations.value = bookmarkLocations.value - location
+                        android.widget.Toast.makeText(
+                            this@ReaderActivity, "Bookmark removed", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                } else {
+                    val annotation = Annotation(
+                        id = java.util.UUID.randomUUID().toString(),
+                        docId = docId,
+                        quote = "",
+                        prefix = "",
+                        suffix = "",
+                        location = location,
+                        kind = AnnotationKind.Bookmark,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                    withContext(Dispatchers.IO) { library.saveAnnotation(annotation) }
+                    withContext(Dispatchers.Main) {
+                        bookmarkLocations.value = bookmarkLocations.value + location
+                        android.widget.Toast.makeText(
+                            this@ReaderActivity, "Bookmark added", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -1504,6 +1514,7 @@ class ReaderActivity : FragmentActivity() {
                     val p0 = ProgressBridge.buildProgress(
                         docId, locator, java.time.Instant.now().toString()
                     )
+                    currentLocation.value = p0.location
                     val nowElapsed = android.os.SystemClock.elapsedRealtime()
                     val prevPct = prevRelocatePercent
                     val prevMs = prevRelocateElapsedMs
@@ -1614,6 +1625,7 @@ data class TocEntry(val title: String, val depth: Int, val link: Link)
 private fun AppearanceBottomSheet(
     prefs: ReadingPrefs,
     perBookOverride: Boolean,
+    onPreview: (ReadingPrefs) -> Unit,
     onPrefsChange: (ReadingPrefs) -> Unit,
     onResetPerBook: () -> Unit,
     onDismiss: () -> Unit
@@ -1625,6 +1637,7 @@ private fun AppearanceBottomSheet(
             onPrefsChange = onPrefsChange,
             onResetPerBook = onResetPerBook,
             onDismiss = onDismiss,
+            onPreview = onPreview,
         )
     }
 }
@@ -1765,19 +1778,27 @@ private fun SearchSheet(
                     ) {
                         androidx.compose.foundation.layout.Column {
                             Text(
-                                hit.snippet,
+                                buildAnnotatedString {
+                                    if (hit.hasMatch) {
+                                        append(hit.snippet.substring(0, hit.matchStart))
+                                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                                            append(hit.snippet.substring(hit.matchStart, hit.matchEnd))
+                                        }
+                                        append(hit.snippet.substring(hit.matchEnd))
+                                    } else {
+                                        append(hit.snippet)
+                                    }
+                                },
                                 maxLines = 2,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
-                            hit.sectionTitle?.let { title ->
-                                Text(
-                                    title,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                            }
+                            Text(
+                                hit.sectionTitle ?: "Section",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

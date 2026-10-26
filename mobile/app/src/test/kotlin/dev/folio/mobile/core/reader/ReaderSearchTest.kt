@@ -66,20 +66,40 @@ class ReaderSearchTest {
     }
 
     @Test
-    fun `falls back to the resource file name`() {
-        assertEquals(
-            "chapter2.xhtml",
-            ReaderSearch.sectionTitle(null, "OPS/chapter2.xhtml")
-        )
-        assertEquals(
-            "chapter3.xhtml",
-            ReaderSearch.sectionTitle("", "OPS/chapter3.xhtml#note-1")
-        )
+    fun `missing title never falls back to a raw file name`() {
+        assertNull(ReaderSearch.sectionTitle(null, "OPS/chapter2.xhtml"))
+        assertNull(ReaderSearch.sectionTitle("", "OPS/chapter3.xhtml#note-1"))
     }
 
     @Test
     fun `blank title and blank href give null`() {
         assertNull(ReaderSearch.sectionTitle(null, ""))
         assertNull(ReaderSearch.sectionTitle(null, "  /  "))
+    }
+
+    // ---- buildSnippet (P1-13) ----
+
+    @Test
+    fun `match-aware snippet keeps the query even after long leading context`() {
+        val before = "start ".repeat(40) // 240 chars > snippet budget
+        val built = ReaderSearch.buildSnippet(before, "needle", "tail")
+        assertTrue(built != null)
+        val text = built!!.text
+        assertEquals("needle", text.substring(built.matchStart, built.matchEnd))
+        assertTrue(text.length <= ReaderSearch.SNIPPET_MAX + 1)
+    }
+
+    @Test
+    fun `match-aware snippet reports the exact span`() {
+        val built = ReaderSearch.buildSnippet("the calm ", "river", " flowed")
+        assertEquals("the calm river flowed", built!!.text)
+        assertEquals(9, built.matchStart)
+        assertEquals(14, built.matchEnd)
+    }
+
+    @Test
+    fun `match-aware snippet is null without a match`() {
+        assertNull(ReaderSearch.buildSnippet("before", null, "after"))
+        assertNull(ReaderSearch.buildSnippet("before", "  ", "after"))
     }
 }

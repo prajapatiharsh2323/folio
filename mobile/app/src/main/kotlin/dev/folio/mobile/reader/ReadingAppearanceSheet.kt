@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.ui.components.FolioIconButton
 import dev.folio.mobile.ui.components.FolioSheetHeader
@@ -58,7 +59,9 @@ fun ReadingAppearanceSheet(
     perBookOverride: Boolean,
     onPrefsChange: (ReadingPrefs) -> Unit,
     onResetPerBook: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Live preview while dragging; persistence happens through [onPrefsChange]. */
+    onPreview: (ReadingPrefs) -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -77,7 +80,17 @@ fun ReadingAppearanceSheet(
         }
 
         Section("Text size") {
-            TextSizeRow(prefs, onPrefsChange)
+            TextSizeRow(prefs, onPrefsChange, onPreview)
+            Text(
+                "Aa — The lantern lit the page.",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = prefs.fontSize.sp,
+                    lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                modifier = Modifier.padding(top = FolioSpacing.x2),
+            )
         }
 
         Section("Typeface") {
@@ -105,6 +118,9 @@ fun ReadingAppearanceSheet(
             LabeledSlider(
                 label = "Space between lines",
                 value = prefs.lineHeight,
+                onPreview = {
+                    onPreview(prefs.copy(lineHeight = it))
+                },
                 onCommit = {
                     onPrefsChange(prefs.copy(lineHeight = it))
                 },
@@ -118,6 +134,9 @@ fun ReadingAppearanceSheet(
             LabeledSlider(
                 label = "Side margins",
                 value = prefs.margin,
+                onPreview = {
+                    onPreview(prefs.copy(margin = it))
+                },
                 onCommit = {
                     onPrefsChange(prefs.copy(margin = it))
                 },
@@ -146,10 +165,13 @@ fun ReadingAppearanceSheet(
             )
         }
 
-        Section("Reader brightness") {
+        Section("Page dimming") {
             LabeledSlider(
-                label = "Screen brightness while reading",
+                label = "Dim the reading page",
                 value = prefs.brightness,
+                onPreview = {
+                    onPreview(prefs.copy(brightness = it))
+                },
                 onCommit = {
                     onPrefsChange(prefs.copy(brightness = it))
                 },
@@ -157,6 +179,7 @@ fun ReadingAppearanceSheet(
                 steps = 6,
                 format = { v -> "${v.toInt()}%" },
             )
+            Note("Dims this reading screen only; it does not change your device brightness.")
         }
 
         if (perBookOverride) {
@@ -228,80 +251,97 @@ private val THEME_SWATCHES = mapOf(
 
 @Composable
 private fun ThemePicker(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Unit) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+    val options = THEME_SWATCHES.entries.toList()
+    // Two rows of at most three options: every label stays readable at 320dp
+    // and at 1.5× font scale without horizontal scrolling (audit P1-08).
+    Column(
+        verticalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
         modifier = Modifier.selectableGroup(),
     ) {
-        THEME_SWATCHES.forEach { (key, swatch) ->
-            val selected = prefs.theme == key
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .selectable(
-                        selected = selected,
-                        role = Role.RadioButton,
-                        onClick = { onPrefsChange(prefs.copy(theme = key)) },
-                    ),
+        options.chunked(3).forEach { row ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = swatch.page,
-                    border = if (selected) {
-                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                    } else {
-                        BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (key == "system") {
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .background(LightPage),
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .background(DarkPage),
-                                )
+                row.forEach { entry ->
+                    val key = entry.key
+                    val swatch = entry.value
+                    val selected = prefs.theme == key
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .selectable(
+                                selected = selected,
+                                role = Role.RadioButton,
+                                onClick = { onPrefsChange(prefs.copy(theme = key)) },
+                            ),
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = swatch.page,
+                            border = if (selected) {
+                                BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                            } else {
+                                BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (key == "system") {
+                                    Row(modifier = Modifier.fillMaxSize()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxHeight()
+                                                .background(LightPage),
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .fillMaxHeight()
+                                                .background(DarkPage),
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        "Aa",
+                                        style = MaterialTheme.typography.titleMedium.copy(color = swatch.ink),
+                                    )
+                                }
+                                if (selected) {
+                                    Icon(
+                                        FolioIcons.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(3.dp)
+                                            .size(14.dp),
+                                    )
+                                }
                             }
-                        } else {
-                            Text(
-                                "Aa",
-                                style = MaterialTheme.typography.titleMedium.copy(color = swatch.ink),
-                            )
                         }
-                        if (selected) {
-                            Icon(
-                                FolioIcons.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(3.dp)
-                                    .size(14.dp),
-                            )
-                        }
+                        Text(
+                            swatch.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(top = FolioSpacing.x1),
+                        )
                     }
                 }
-                Text(
-                    swatch.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = FolioSpacing.x1),
-                )
+                // Keep the last (shorter) row aligned with the first.
+                repeat(3 - row.size) {
+                    Box(modifier = Modifier.weight(1f))
+                }
             }
         }
     }
@@ -310,7 +350,11 @@ private fun ThemePicker(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Un
 // -------------------------------------------------------------------- rows ---
 
 @Composable
-private fun TextSizeRow(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Unit) {
+private fun TextSizeRow(
+    prefs: ReadingPrefs,
+    onPrefsChange: (ReadingPrefs) -> Unit,
+    onPreview: (ReadingPrefs) -> Unit
+) {
     var value by remember(prefs.fontSize) { mutableStateOf(prefs.fontSize.toFloat()) }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -325,7 +369,10 @@ private fun TextSizeRow(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Un
         )
         FolioSlider(
             value = value,
-            onValueChange = { value = it },
+            onValueChange = {
+                value = it
+                onPreview(prefs.copy(fontSize = it.toDouble()))
+            },
             onValueChangeFinished = {
                 onPrefsChange(prefs.copy(fontSize = value.toDouble()))
             },
@@ -358,6 +405,7 @@ private fun TextSizeRow(prefs: ReadingPrefs, onPrefsChange: (ReadingPrefs) -> Un
 private fun LabeledSlider(
     label: String,
     value: Double,
+    onPreview: (Double) -> Unit,
     onCommit: (Double) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int,
@@ -374,7 +422,10 @@ private fun LabeledSlider(
             )
             FolioSlider(
                 value = local,
-                onValueChange = { local = it },
+                onValueChange = {
+                    local = it
+                    onPreview(it.toDouble())
+                },
                 onValueChangeFinished = { onCommit(local.toDouble()) },
                 valueRange = valueRange,
                 steps = steps,

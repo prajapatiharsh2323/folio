@@ -40,6 +40,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,7 +54,8 @@ import dev.folio.mobile.ui.theme.FolioSpacing
 /**
  * Reader chrome (quiet editorial pass): the book text stays dominant.
  * - Compact, NON-scrolling top bar: back, book title, reading appearance (Aa),
- *   search, overflow (contents/bookmark/highlight).
+ *   search, overflow (contents/bookmark). Highlights go through the selection
+ *   action mode, never a global toolbar action.
  * - Bottom reading dock: one slim progress control + chapter/percent/time.
  * - Colors mirror the PWA reader tokens (THEME_COLORS in ReaderPrefsMapper) so
  *   chrome blends with the page, never flashing app-theme colors.
@@ -66,8 +70,6 @@ fun ReaderChrome(
     pillarTitle: String,
     pillarPercent: Double,
     onBack: () -> Unit,
-    onPrefsChange: (ReadingPrefs) -> Unit,
-    onHighlight: () -> Unit = {},
     onBookmark: () -> Unit = {},
     onToc: () -> Unit = {},
     onSearch: () -> Unit = {},
@@ -77,9 +79,8 @@ fun ReaderChrome(
     timeLeft: String? = null,
     /** "system" theme → the OS dark-mode state (canvas uses the same rule). */
     systemDark: Boolean = false,
-    /** Batch 2: this document has its own typography override. */
-    perBookOverride: Boolean = false,
-    onResetPerBook: () -> Unit = {},
+    /** True when the current reading location already has a bookmark (P1-09). */
+    bookmarked: Boolean = false,
     /** Pillar layer — false hides it so it stops covering the last page lines. */
     pillarVisible: Boolean = true,
     modifier: Modifier = Modifier
@@ -107,7 +108,7 @@ fun ReaderChrome(
                     onSearch = onSearch,
                     onBookmark = onBookmark,
                     onToc = onToc,
-                    onHighlight = onHighlight,
+                    bookmarked = bookmarked,
                 )
             }
         }
@@ -145,7 +146,7 @@ private fun TopBar(
     onSearch: () -> Unit,
     onBookmark: () -> Unit,
     onToc: () -> Unit,
-    onHighlight: () -> Unit
+    bookmarked: Boolean
 ) {
     var overflowOpen by remember { mutableStateOf(false) }
 
@@ -157,7 +158,7 @@ private fun TopBar(
     ) {
         FolioIconButton(
             icon = FolioIcons.ArrowLeft,
-            contentDescription = "Back to library",
+            contentDescription = "Go back",
             onClick = onBack,
             tint = text,
         )
@@ -199,8 +200,14 @@ private fun TopBar(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Add bookmark") },
-                    leadingIcon = { Icon(FolioIcons.Bookmark, contentDescription = null) },
+                    text = { Text(if (bookmarked) "Remove bookmark" else "Add bookmark") },
+                    leadingIcon = {
+                        Icon(
+                            FolioIcons.Bookmark,
+                            contentDescription = null,
+                            tint = if (bookmarked) MaterialTheme.colorScheme.primary else text,
+                        )
+                    },
                     onClick = {
                         overflowOpen = false
                         onBookmark()
@@ -285,7 +292,13 @@ private fun Pillar(
                 ),
                 modifier = Modifier
                     .widthIn(max = 320.dp)
-                    .height(28.dp),
+                    // Visual track stays slim, but the interactive region is a
+                    // full 48dp touch target (audit P1-06).
+                    .height(48.dp)
+                    .semantics {
+                        contentDescription = "Reading progress"
+                        stateDescription = "${shownPercent.toInt()}% read"
+                    },
             )
         }
     }
