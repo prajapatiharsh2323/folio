@@ -9,6 +9,7 @@ import dev.folio.mobile.core.model.Manifest
 import dev.folio.mobile.core.model.ManifestDoc
 import dev.folio.mobile.core.model.ManifestFile
 import dev.folio.mobile.core.model.Progress
+import dev.folio.mobile.core.model.SourceFormat
 import dev.folio.mobile.core.util.createDocSlug
 import dev.folio.mobile.core.util.sha256Hex
 import dev.folio.mobile.core.store.FileStore
@@ -28,13 +29,16 @@ const val RECOVERY_DIR = "library/recovery"
 
 /**
  * One orphan doc folder from startup recovery (spec §4 Rule 2). [finishable]
- * when its meta.json parses — the import died after the meta write and can be
- * re-registered; otherwise only deletion makes sense.
+ * when its meta.json parses AND the payload it references is present with a
+ * matching checksum — the import died after the meta write and can be
+ * re-registered; otherwise only deletion makes sense. [problem] explains a
+ * delete-only row in the recovery dialog.
  */
 data class InterruptedImport(
     val slug: String,
     val title: String?,
-    val finishable: Boolean
+    val finishable: Boolean,
+    val problem: String? = null
 )
 
 /**
@@ -660,27 +664,112 @@ class LibraryManager(
     }
 
     /**
-     * Inspects orphan folders: [InterruptedImport.finishable] when meta.json
-     * parses (the import reached the meta write, so it can be re-registered).
+     * Checks that an orphan's metadata points at real, intact payload before
+     * it is offered as "Finish" (audit P1-02). The manifest is the commit
+     * point, so anything written before it may be truncated by a process
+     * death; metadata alone is not proof that the book can be opened.
+     *
+     * Returns a short, user-facing reason when the orphan is delete-only, or
+     * null when the payload is complete and its checksum matches.
+     */
+    private suspend fun orphanPayloadProblem(slug: String, meta: DocMeta): String? {
+        fun safePath(rel: String): String? {
+            val clean = rel.trim()
+            if (clean.isEmpty() || clean.startsWith("/") || clean.split('/').any { it == ".." }) {
+                return null
+            }
+            return "library/docs/$slug/$clean"
+        }
+
+        val originalRel = meta.files.original
+            ?: return "its metadata doesn't name the original file"
+        val originalPath = safePath(originalRel)
+            ?: return "its original file path is invalid"
+        if (!store.exists(originalPath)) return "its original file is missing"
+        val originalBytes = runCatching { store.read(originalPath) }.getOrNull()
+            ?: return "its original file can't be read"
+        if (originalBytes.isEmpty()) return "its original file is empty"
+
+        // SourceFormat.Clip records the clean article hash (see DocMeta docs);
+        // every other importer records the original bytes.
+        val checksumRel = if (meta.sourceFormat == SourceFormat.Clip) meta.files.clean else originalRel
+        if (checksumRel != null) {
+            val checksumPath = safePath(checksumRel) ?: return "a referenced file path is invalid"
+            val checksumBytes = if (checksumPath == originalPath) {
+                originalBytes
+            } else {
+                runCatching { store.read(checksumPath) }.getOrNull()
+                    ?: return "its checksummed file is missing"
+            }
+            if (!sha256Hex(checksumBytes).equals(meta.contentHash, ignoreCase = true)) {
+                return "its files don't match the recorded checksum"
+            }
+        }
+
+        // PDFs have no reading edition; every other format is opened through
+        // reading/<file> by the reader, so a missing reading payload cannot be
+        // repaired by re-registering the manifest entry.
+        if (meta.sourceFormat != SourceFormat.Pdf) {
+            val readingRel = meta.files.reading
+                ?: return "its reading file is missing from the metadata"
+            val readingPath = safePath(readingRel)
+                ?: return "its reading file path is invalid"
+            if (!store.exists(readingPath)) return "its reading file is missing"
+            val readingBytes = runCatching { store.read(readingPath) }.getOrNull()
+                ?: return "its reading file can't be read"
+            if (readingBytes.isEmpty()) return "its reading file is empty"
+        }
+
+        for (extra in listOfNotNull(meta.files.clean, meta.files.cover)) {
+            if (extra == checksumRel) continue
+            val path = safePath(extra) ?: return "a referenced file path is invalid"
+            if (!store.exists(path)) return "a referenced file is missing"
+        }
+        return null
+    }
+
+    /**
+     * Inspects orphan folders: [InterruptedImport.finishable] only when
+     * meta.json parses AND the referenced payload exists with a matching
+     * checksum. Metadata-only folders stay delete-only (audit P1-02).
      */
     suspend fun scanInterruptedImports(): List<InterruptedImport> =
         recoverInterruptedImports().map { slug ->
             val meta = readOrphanMeta(slug)
-            InterruptedImport(slug = slug, title = meta?.title, finishable = meta != null)
+            val problem = if (meta == null) {
+                "its metadata can't be read"
+            } else {
+                orphanPayloadProblem(slug, meta)
+            }
+            InterruptedImport(
+                slug = slug,
+                title = meta?.title,
+                finishable = meta != null && problem == null,
+                problem = problem
+            )
         }
 
     /**
      * Finishes an interrupted import (spec §4 Rule 2 "finish"): re-registers
      * the orphan folder's meta.json into the manifest, rebuilding the entry's
      * file list (path/size/sha256) from disk. Manifest is written last.
+     *
+     * Refuses orphans whose payload is missing or fails the recorded checksum,
+     * so "Finish" can never produce a manifest entry that fails to open.
      */
     suspend fun finishInterruptedImport(slug: String): DocMeta =
         mutexFor("finish-$slug").withLock {
+            // Corrupt manifest wins over payload validation: every mutation
+            // must stay blocked until the index is repaired (P0-01).
+            val manifest = getManifest()
             val meta = readOrphanMeta(slug)
                 ?: throw IllegalArgumentException("No readable meta.json for interrupted import: $slug")
-            val manifest = getManifest()
             if (manifest.docs.any { it.slug == slug || it.id == meta.id }) {
                 throw IllegalArgumentException("Already registered: $slug")
+            }
+            val problem = orphanPayloadProblem(slug, meta)
+            if (problem != null) {
+                throw IllegalArgumentException("Cannot finish interrupted import ($problem): $slug")
             }
             val files = walkFiles("library/docs/$slug").map { path ->
                 val bytes = store.read(path)

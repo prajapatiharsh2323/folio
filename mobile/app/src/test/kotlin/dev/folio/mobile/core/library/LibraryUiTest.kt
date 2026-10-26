@@ -119,13 +119,14 @@ class LibraryUiTest {
     fun `orphan notice plural, label fallback and finishable flag`() {
         val notice = LibraryUi.orphanNotice(
             listOf(
-                InterruptedImport("slug-a", null, false),
+                InterruptedImport("slug-a", null, false, "its reading file is missing"),
                 InterruptedImport("slug-b", "Real", true)
             )
         )!!
         assertTrue(notice.bannerText.contains("2 interrupted imports"))
         assertEquals("slug-a", notice.items[0].label)
         assertFalse(notice.items[0].finishable)
+        assertEquals("its reading file is missing", notice.items[0].problem)
         assertEquals("Real", notice.items[1].label)
         assertTrue(notice.items[1].finishable)
     }

@@ -77,7 +77,13 @@ class LibraryManagerTest {
 
     private fun sha256Of(s: String) = dev.folio.mobile.core.util.sha256Hex(s.toByteArray())
 
-    private fun orphanMeta(slug: String, id: String, title: String) = DocMeta(
+    private fun orphanMeta(
+        slug: String,
+        id: String,
+        title: String,
+        files: DocFiles = DocFiles(),
+        contentHash: String = sha256Of(title)
+    ) = DocMeta(
         id = id,
         slug = slug,
         title = title,
@@ -85,7 +91,8 @@ class LibraryManagerTest {
         sourceFormat = SourceFormat.Epub,
         capturedAt = "2026-10-17T00:00:00.000Z",
         importedAt = "2026-10-17T00:00:00.000Z",
-        contentHash = sha256Of(title)
+        contentHash = contentHash,
+        files = files
     )
 
     @Test
@@ -297,9 +304,22 @@ class LibraryManagerTest {
 
     @Test
     fun `scanInterruptedImports classifies finishable vs delete-only`() = runBlocking {
+        val goodBytes = "Good Orphan".toByteArray()
+        store.write("library/docs/good-orphan/original/book.epub", goodBytes)
+        store.write("library/docs/good-orphan/reading/book.epub", goodBytes)
         store.write(
             "library/docs/good-orphan/meta.json",
-            jsonCodec.encodeToString(orphanMeta("good-orphan", "id-good", "Good Orphan"))
+            jsonCodec.encodeToString(
+                orphanMeta(
+                    "good-orphan",
+                    "id-good",
+                    "Good Orphan",
+                    files = DocFiles(
+                        original = "original/book.epub",
+                        reading = "reading/book.epub"
+                    )
+                )
+            )
         )
         store.write("library/docs/bad-orphan/junk.bin", "junk".toByteArray())
 
@@ -307,17 +327,88 @@ class LibraryManagerTest {
         assertEquals(2, scanned.size)
         assertTrue(scanned["good-orphan"]!!.finishable)
         assertEquals("Good Orphan", scanned["good-orphan"]!!.title)
+        assertNull(scanned["good-orphan"]!!.problem)
         assertFalse(scanned["bad-orphan"]!!.finishable)
         assertNull(scanned["bad-orphan"]!!.title)
+        assertEquals("its metadata can't be read", scanned["bad-orphan"]!!.problem)
+    }
+
+    @Test
+    fun `scanInterruptedImports requires a real reading payload and matching checksum`() = runBlocking {
+        val goodBytes = "PAYLOAD".toByteArray()
+        // Metadata exists, but the reading file it names was never written.
+        store.write("library/docs/no-reading/original/book.epub", goodBytes)
+        store.write(
+            "library/docs/no-reading/meta.json",
+            jsonCodec.encodeToString(
+                orphanMeta(
+                    "no-reading",
+                    "id-no-reading",
+                    "No Reading",
+                    files = DocFiles(
+                        original = "original/book.epub",
+                        reading = "reading/book.epub"
+                    ),
+                    contentHash = sha256Of("PAYLOAD")
+                )
+            )
+        )
+        // Payload exists, but its bytes no longer match the recorded checksum.
+        store.write("library/docs/tampered/original/book.epub", "TAMPERED".toByteArray())
+        store.write("library/docs/tampered/reading/book.epub", goodBytes)
+        store.write(
+            "library/docs/tampered/meta.json",
+            jsonCodec.encodeToString(
+                orphanMeta(
+                    "tampered",
+                    "id-tampered",
+                    "Tampered",
+                    files = DocFiles(
+                        original = "original/book.epub",
+                        reading = "reading/book.epub"
+                    ),
+                    contentHash = sha256Of("EXPECTED-OTHER-BYTES")
+                )
+            )
+        )
+
+        val scanned = manager.scanInterruptedImports().associateBy { it.slug }
+        assertFalse(scanned["no-reading"]!!.finishable)
+        assertEquals("its reading file is missing", scanned["no-reading"]!!.problem)
+        assertFalse(scanned["tampered"]!!.finishable)
+        assertTrue(scanned["tampered"]!!.problem!!.contains("checksum"))
+
+        // Finishing through the API must enforce the same contract.
+        var refused = false
+        try {
+            manager.finishInterruptedImport("no-reading")
+        } catch (_: IllegalArgumentException) {
+            refused = true
+        }
+        assertTrue(refused)
+        assertTrue(manager.getManifest().docs.isEmpty())
     }
 
     @Test
     fun `finishInterruptedImport re-registers the orphan with rebuilt files`() = runBlocking {
         val slug = "2026-10-17-orphan-aaaa"
-        store.write("library/docs/$slug/original/book.epub", "ORPHAN-EPUB".toByteArray())
+        val orphanBytes = "ORPHAN-EPUB".toByteArray()
+        store.write("library/docs/$slug/original/book.epub", orphanBytes)
+        store.write("library/docs/$slug/reading/book.epub", orphanBytes)
         store.write(
             "library/docs/$slug/meta.json",
-            jsonCodec.encodeToString(orphanMeta(slug, "orphan-id-1", "Orphan Book"))
+            jsonCodec.encodeToString(
+                orphanMeta(
+                    slug,
+                    "orphan-id-1",
+                    "Orphan Book",
+                    files = DocFiles(
+                        original = "original/book.epub",
+                        reading = "reading/book.epub"
+                    ),
+                    contentHash = sha256Of("ORPHAN-EPUB")
+                )
+            )
         )
 
         val meta = manager.finishInterruptedImport(slug)
@@ -329,7 +420,11 @@ class LibraryManagerTest {
         assertEquals("orphan-id-1", mDoc.id)
         val byPath = mDoc.files.associateBy { it.path }
         assertEquals(
-            setOf("library/docs/$slug/meta.json", "library/docs/$slug/original/book.epub"),
+            setOf(
+                "library/docs/$slug/meta.json",
+                "library/docs/$slug/original/book.epub",
+                "library/docs/$slug/reading/book.epub"
+            ),
             byPath.keys
         )
         assertEquals(11L, byPath["library/docs/$slug/original/book.epub"]!!.size)

@@ -99,7 +99,13 @@ object LibraryUi {
     }
 
     /** One interrupted-import row (spec §4 Rule 2): finishable or delete-only. */
-    data class OrphanItem(val slug: String, val label: String, val finishable: Boolean)
+    data class OrphanItem(
+        val slug: String,
+        val label: String,
+        val finishable: Boolean,
+        /** Why Finish is unavailable (missing/truncated/checksum-mismatched payload). */
+        val problem: String? = null
+    )
 
     /** Interrupted-import banner content; null when none. */
     data class OrphanNotice(val count: Int, val bannerText: String, val items: List<OrphanItem>)
@@ -114,7 +120,8 @@ object LibraryUi {
             OrphanItem(
                 slug = it.slug,
                 label = it.title?.takeIf { t -> t.isNotBlank() } ?: it.slug,
-                finishable = it.finishable
+                finishable = it.finishable,
+                problem = it.problem
             )
         }
         val text = if (items.size == 1) {

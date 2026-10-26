@@ -128,11 +128,18 @@ fun DictionarySheet(
 
 @Composable
 private fun LoadingBody() {
-    LinearProgressIndicator(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = FolioSpacing.x2),
-    )
+    Column(modifier = Modifier.padding(top = FolioSpacing.x2)) {
+        Text(
+            "Looking up…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        LinearProgressIndicator(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = FolioSpacing.x2),
+        )
+    }
 }
 
 @Composable
@@ -254,8 +261,9 @@ private fun NoMatchBody(query: String) {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            "The bundled dictionary covers about 25,000 common English words" +
-                " and short phrases. Try selecting a different word.",
+            "The bundled dictionary works offline and covers about 25,000 common" +
+                " English words and short phrases. Try the base form of the word" +
+                " (for example, \u201Crunning\u201D \u2192 \u201Crun\u201D) or a shorter phrase.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = FolioSpacing.x2),

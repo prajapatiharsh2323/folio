@@ -224,13 +224,16 @@ fun NotesScreen() {
                 else -> {
                     FilterRow(filter) { picked -> filter = picked }
                     if (shown.isEmpty()) {
-                        Text(
-                            "No ${filter.label.lowercase()} yet. Everything you save while reading will show up here.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        FolioEmptyState(
+                            icon = FolioIcons.NotebookPen,
+                            title = "No ${filter.label.lowercase()} yet",
+                            body = "Everything you save while reading will show up here. " +
+                                "Your other saved items are still available.",
+                            ctaLabel = "Show all",
+                            onCta = { filter = AnnotationFilter.All },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x8),
+                                .padding(top = FolioSpacing.x10),
                         )
                     } else {
                         LazyColumn(
@@ -238,22 +241,34 @@ fun NotesScreen() {
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             items(shown, key = { it.id }) { a ->
+                                val bookTitle = docs[a.docId]
                                 AnnotationRow(
                                     annotation = a,
-                                    bookTitle = docs[a.docId] ?: a.docId,
+                                    bookTitle = bookTitle ?: "Book unavailable",
+                                    bookMissing = bookTitle == null,
                                     onOpen = {
-                                        // EPUB-018 tie-in: jump back to the
-                                        // annotation's saved location — chapter-
-                                        // accurate for the href/CFI plus, when a
-                                        // quote+context exists (highlights/notes),
-                                        // a second text-quote anchored go() that
-                                        // lands on the exact highlighted text.
-                                        context.startActivity(
-                                            ReaderActivity.createIntent(
-                                                context, a.docId, a.location ?: "",
-                                                a.prefix, a.quote, a.suffix
+                                        // Audit P1-11: never launch a reader for a
+                                        // document that is gone from the manifest.
+                                        // The saved quote/note stays readable here.
+                                        if (bookTitle == null) {
+                                            showSnack(
+                                                "This book isn't in your library anymore. " +
+                                                    "The saved item is still here."
                                             )
-                                        )
+                                        } else {
+                                            // EPUB-018 tie-in: jump back to the
+                                            // annotation's saved location — chapter-
+                                            // accurate for the href/CFI plus, when a
+                                            // quote+context exists (highlights/notes),
+                                            // a second text-quote anchored go() that
+                                            // lands on the exact highlighted text.
+                                            context.startActivity(
+                                                ReaderActivity.createIntent(
+                                                    context, a.docId, a.location ?: "",
+                                                    a.prefix, a.quote, a.suffix
+                                                )
+                                            )
+                                        }
                                     },
                                     onEdit = { mutationError = null; editTarget = a },
                                     onDelete = { mutationError = null; deleteTarget = a },
@@ -416,6 +431,7 @@ private fun FilterRow(selected: AnnotationFilter, onSelect: (AnnotationFilter) -
 private fun AnnotationRow(
     annotation: Annotation,
     bookTitle: String,
+    bookMissing: Boolean,
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -445,10 +461,22 @@ private fun AnnotationRow(
             Text(
                 bookTitle,
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (bookMissing) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (bookMissing) {
+                Text(
+                    "No longer in your library",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
             if (annotation.quote.isNotBlank()) {
                 Text(
                     "\u201C${annotation.quote}\u201D",

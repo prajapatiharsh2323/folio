@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -41,6 +42,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -101,6 +103,7 @@ import dev.folio.mobile.ui.icons.FolioIcons
 import dev.folio.mobile.ui.theme.FolioDimensions
 import dev.folio.mobile.ui.theme.FolioSpacing
 import dev.folio.mobile.ui.theme.FolioMobileTheme
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -181,6 +184,21 @@ private suspend fun runSample(context: android.content.Context) {
     }
 }
 
+/** What the user chose when a batch contains an already-imported file. */
+private enum class DuplicateChoice { Skip, Replace, KeepBoth }
+
+/** Per-file progress for the batch import UI. [index] is zero-based. */
+private data class ImportBatchProgress(val index: Int, val total: Int, val name: String)
+
+/** Result of one file inside a single/multi-file import run. */
+private data class ImportOutcome(
+    val added: Boolean = false,
+    val replaced: Boolean = false,
+    val keptBoth: Boolean = false,
+    val skipped: Boolean = false,
+    val failure: String? = null
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(sharedFileUri: Uri? = null) {
@@ -208,6 +226,9 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var sortBy by remember { mutableStateOf("recent") }
     var duplicateResult by remember { mutableStateOf<ImportResult?>(null) }
     var duplicateDialogOpen by remember { mutableStateOf(false) }
+    var duplicateChoice by remember { mutableStateOf<CompletableDeferred<DuplicateChoice>?>(null) }
+    var importProgress by remember { mutableStateOf<ImportBatchProgress?>(null) }
+    var importFailures by remember { mutableStateOf<List<String>?>(null) }
 
     // Audit P0-01: a corrupt manifest must never render as a normal empty
     // library. Mutations are blocked in LibraryManager until repair/restore.
@@ -308,55 +329,152 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    fun runImport(uri: Uri) {
-        scope.launch {
-            importing = true
-            try {
-                val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: throw IOException("Cannot read the selected file")
+    fun uriDisplayName(uri: Uri): String =
+        uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "import"
+
+    /**
+     * Imports one file. Duplicates pause only this file while the user picks
+     * Skip/Replace/Keep both; the caller keeps processing the remaining batch
+     * afterwards (audit P1-03: one bad or duplicate file never blocks the rest).
+     */
+    suspend fun importOne(uri: Uri): ImportOutcome {
+        val name = uriDisplayName(uri)
+        val bytes = withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IOException("Cannot read the selected file")
+        }
+        if (bytes.size > 50 * 1024 * 1024) {
+            return ImportOutcome(failure = "File too large (max 50 MB)")
+        }
+        val result = try {
+            ImportDispatch.import(bytes, name)
+        } catch (e: UnsupportedFormatException) {
+            return ImportOutcome(failure = "Unsupported format — EPUB, HTML or TXT only")
+        }
+
+        val library = appLibrary(context)
+        val duplicate = withContext(Dispatchers.IO) {
+            library.findDuplicate(result.meta.contentHash)
+        }
+        if (duplicate == null) {
+            withContext(Dispatchers.IO) { library.addDocument(result) }
+            return ImportOutcome(added = true)
+        }
+
+        val choice = CompletableDeferred<DuplicateChoice>()
+        duplicateResult = result
+        duplicateChoice = choice
+        duplicateDialogOpen = true
+        val picked = try {
+            choice.await()
+        } finally {
+            duplicateDialogOpen = false
+            duplicateResult = null
+            duplicateChoice = null
+        }
+        return when (picked) {
+            DuplicateChoice.Skip -> ImportOutcome(skipped = true)
+            DuplicateChoice.KeepBoth -> {
+                withContext(Dispatchers.IO) { library.addDocument(result) }
+                ImportOutcome(keptBoth = true)
+            }
+            DuplicateChoice.Replace -> {
+                val current = withContext(Dispatchers.IO) {
+                    library.findDuplicate(result.meta.contentHash)
                 }
-                if (bytes.size > 50 * 1024 * 1024) {
-                    throw IOException("File too large (max 50 MB)")
-                }
-                val displayName = uri.lastPathSegment?.substringAfterLast('/')
-                    ?.takeIf { it.isNotBlank() } ?: "import"
-                val result = ImportDispatch.import(bytes, displayName)
-                val library = appLibrary(context)
-                val dup = withContext(Dispatchers.IO) { library.findDuplicate(result.meta.contentHash) }
-                if (dup != null) {
-                    duplicateResult = result
-                    duplicateDialogOpen = true
+                if (current != null) {
+                    withContext(Dispatchers.IO) { library.replaceDocument(current.id, result) }
+                    ImportOutcome(replaced = true)
                 } else {
                     withContext(Dispatchers.IO) { library.addDocument(result) }
-                    refresh()
-                    snackbar.showSnackbar("Imported")
+                    ImportOutcome(added = true)
                 }
-            } catch (e: UnsupportedFormatException) {
-                snackbar.showSnackbar("Unsupported format — EPUB, HTML or TXT only")
-            } catch (corrupt: LibraryFileCorruptException) {
-                snackbar.showSnackbar(
-                    "Library index needs repair — import paused to keep your library safe"
-                )
-            } catch (t: Throwable) {
-                snackbar.showSnackbar(t.message ?: "Import failed")
+            }
+        }
+    }
+
+    fun runImport(uris: List<Uri>) {
+        if (uris.isEmpty() || importing) return
+        scope.launch {
+            importing = true
+            importFailures = null
+            var added = 0
+            var replaced = 0
+            var keptBoth = 0
+            var skipped = 0
+            val failures = mutableListOf<String>()
+            try {
+                uris.forEachIndexed { index, uri ->
+                    val name = uriDisplayName(uri)
+                    importProgress = ImportBatchProgress(index, uris.size, name)
+                    try {
+                        val outcome = importOne(uri)
+                        if (outcome.added) added++
+                        if (outcome.replaced) replaced++
+                        if (outcome.keptBoth) keptBoth++
+                        if (outcome.skipped) skipped++
+                        outcome.failure?.let { failures += "$name: $it" }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (corrupt: LibraryFileCorruptException) {
+                        failures += "$name: library index needs repair"
+                    } catch (t: Throwable) {
+                        failures += "$name: ${t.message ?: "Import failed"}"
+                    }
+                }
+                refresh()
+
+                if (uris.size == 1) {
+                    when {
+                        failures.isNotEmpty() -> snackbar.showSnackbar(failures.first().substringAfter(": "))
+                        replaced == 1 -> snackbar.showSnackbar("Replaced — notes and progress kept")
+                        keptBoth == 1 -> snackbar.showSnackbar("Imported as new copy")
+                        skipped == 1 -> snackbar.showSnackbar("Already in your library — skipped")
+                        else -> snackbar.showSnackbar("Imported")
+                    }
+                } else {
+                    val summary = buildList {
+                        if (added > 0) add("Imported $added")
+                        if (replaced > 0) add("replaced $replaced")
+                        if (keptBoth > 0) add("kept $keptBoth as new")
+                        if (skipped > 0) add("skipped $skipped duplicate${if (skipped == 1) "" else "s"}")
+                        if (failures.isNotEmpty()) add("${failures.size} couldn't be imported")
+                    }.joinToString(" · ").ifBlank { "Nothing imported" }
+                    if (failures.isNotEmpty()) importFailures = failures
+                    snackbar.showSnackbar(summary)
+                }
             } finally {
                 importing = false
+                importProgress = null
+                duplicateDialogOpen = false
+                duplicateResult = null
+                duplicateChoice = null
             }
         }
     }
 
     // Shared file (ACTION_VIEW) handled once per composition instance.
     if (sharedFileUri != null) {
-        LaunchedEffect(sharedFileUri) { runImport(sharedFileUri) }
+        LaunchedEffect(sharedFileUri) { runImport(listOf(sharedFileUri)) }
     }
 
+    // Audit P1-03: the picker accepts several files; each is imported in turn
+    // with per-file progress and isolated failures.
     val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let(::runImport) }
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> runImport(uris) }
 
     val filterOptions = LibraryUi.filters(collections, entries)
     val visibleEntries = LibraryUi.applyFilter(entries, activeFilter)
+
+    // Audit P1-14: recovery stays discoverable in Library search mode. The
+    // full banners would crowd the results, so search shows one compact
+    // "Needs attention" row that opens the matching recovery dialog.
+    val recoveryCount =
+        (if (indexCorrupt) 1 else 0) +
+            (damagedNotice?.count ?: 0) +
+            (orphanNotice?.count ?: 0) +
+            (if (corruptUserState.isNotEmpty()) 1 else 0)
 
     // Long-press shelf: system back exits selection before leaving the screen.
     if (selectionMode) {
@@ -468,6 +586,17 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                                     collectionsScreen = true
                                 }
                             )
+                            if (entries.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("Select books") },
+                                    leadingIcon = { Icon(FolioIcons.Check, contentDescription = null) },
+                                    onClick = {
+                                        topMenuOpen = false
+                                        selectedIds = emptySet()
+                                        selectionMode = true
+                                    }
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("Notes") },
                                 leadingIcon = { Icon(FolioIcons.NotebookPen, contentDescription = null) },
@@ -493,10 +622,46 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (importing) {
+                val progress = importProgress
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2)
+                ) {
+                    if (progress == null) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(
+                            progress = {
+                                progress.index.toFloat() / progress.total.coerceAtLeast(1)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Importing ${progress.index + 1} of ${progress.total} · ${progress.name}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = FolioSpacing.x1),
+                        )
+                    }
+                }
+            }
             if (searchActive) {
                 SearchPanel(
                     libraryVersion = libraryVersion,
                     initialLoading = loading,
+                    recoveryCount = recoveryCount,
+                    onReviewRecovery = {
+                        when {
+                            indexCorrupt -> repairIndex()
+                            damagedNotice != null -> damagedDialogOpen = true
+                            orphanNotice != null -> orphanDialogOpen = true
+                            corruptUserState.isNotEmpty() -> userStateDialogOpen = true
+                        }
+                    },
                     onOpenHit = { docId, order ->
                         context.startActivity(
                             ReaderActivity.createIntent(context, docId, order)
@@ -945,76 +1110,64 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         )
     }
 
-    // Duplicate import prompt (spec §4 Rule 3).
+    // Duplicate import prompt (spec §4 Rule 3). The waiting import coroutine
+    // applies the choice and then continues with the rest of a batch.
     if (duplicateDialogOpen) {
+        val choose: (DuplicateChoice) -> Unit = { choice ->
+            val pending = duplicateChoice
+            if (pending != null) pending.complete(choice) else duplicateDialogOpen = false
+        }
         AlertDialog(
-            onDismissRequest = {
-                duplicateDialogOpen = false
-                duplicateResult = null
-            },
+            onDismissRequest = { choose(DuplicateChoice.Skip) },
             title = { Text("Already in library") },
             text = {
-                Text(
-                    "This document's content already exists. " +
-                        "Replace keeps this copy's highlights, notes, reading progress and collections."
-                )
+                Column {
+                    Text(
+                        "“${duplicateResult?.meta?.title ?: "This file"}” is already in your library. " +
+                            "Replace keeps this copy's highlights, notes, reading progress and collections."
+                    )
+                    if ((importProgress?.total ?: 0) > 1) {
+                        Text(
+                            "The other selected files continue after you choose.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = FolioSpacing.x2),
+                        )
+                    }
+                }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    duplicateDialogOpen = false
-                    val r = duplicateResult
-                    duplicateResult = null
-                    if (r != null) {
-                        scope.launch {
-                            try {
-                                val library = appLibrary(context)
-                                withContext(Dispatchers.IO) { library.addDocument(r) }
-                                refresh()
-                                snackbar.showSnackbar("Imported as new copy")
-                            } catch (corrupt: LibraryFileCorruptException) {
-                                snackbar.showSnackbar(corruptionMessage("Import"))
-                            } catch (t: Throwable) {
-                                snackbar.showSnackbar(t.message ?: "Import failed")
-                            }
-                        }
-                    }
-                }) { Text("Keep both") }
+                TextButton(onClick = { choose(DuplicateChoice.KeepBoth) }) { Text("Keep both") }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = {
-                        duplicateDialogOpen = false
-                        duplicateResult = null
-                    }) { Text("Skip") }
-                    TextButton(onClick = {
-                        duplicateDialogOpen = false
-                        val r = duplicateResult
-                        duplicateResult = null
-                        if (r != null) {
-                            scope.launch {
-                                try {
-                                    val library = appLibrary(context)
-                                    val dup = withContext(Dispatchers.IO) {
-                                        library.findDuplicate(r.meta.contentHash)
-                                    }
-                                    if (dup != null) {
-                                        withContext(Dispatchers.IO) { library.replaceDocument(dup.id, r) }
-                                        refresh()
-                                        snackbar.showSnackbar("Replaced — notes and progress kept")
-                                    } else {
-                                        withContext(Dispatchers.IO) { library.addDocument(r) }
-                                        refresh()
-                                        snackbar.showSnackbar("Imported")
-                                    }
-                                } catch (corrupt: LibraryFileCorruptException) {
-                                    snackbar.showSnackbar(corruptionMessage("Replace"))
-                                } catch (t: Throwable) {
-                                    snackbar.showSnackbar(t.message ?: "Import failed")
-                                }
-                            }
-                        }
-                    }) { Text("Replace") }
+                    TextButton(onClick = { choose(DuplicateChoice.Skip) }) { Text("Skip") }
+                    TextButton(onClick = { choose(DuplicateChoice.Replace) }) { Text("Replace") }
                 }
+            }
+        )
+    }
+
+    // A multi-file import reports every failure after the batch finishes; a
+    // single failed file stays a snackbar (no dialog for one item).
+    importFailures?.let { failures ->
+        AlertDialog(
+            onDismissRequest = { importFailures = null },
+            title = { Text("Some files weren't imported") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(FolioSpacing.x2)) {
+                    Text("The rest of the batch was imported normally.")
+                    failures.forEach { failure ->
+                        Text(
+                            "• $failure",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { importFailures = null }) { Text("Close") }
             }
         )
     }
@@ -1360,19 +1513,30 @@ private fun OrphanDocsDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "These folders were left behind by an import that never finished.",
+                    "These folders were left behind by an import that never finished. " +
+                        "Finish adds the book back only when its reading file is present. " +
+                        "Delete removes only that unfinished import's leftover files — " +
+                        "your books, notes and progress are not affected.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(8.dp))
                 for (item in notice.items) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            item.label,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                item.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            item.problem?.let { problem ->
+                                Text(
+                                    "Can't finish — $problem",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
                         if (item.finishable) {
                             TextButton(onClick = { onFinish(item) }) { Text("Finish") }
                         }
@@ -1396,6 +1560,8 @@ private fun OrphanDocsDialog(
 private fun SearchPanel(
     libraryVersion: Int,
     initialLoading: Boolean,
+    recoveryCount: Int,
+    onReviewRecovery: () -> Unit,
     onOpenHit: (docId: String, targetOrder: Int) -> Unit,
     onClose: () -> Unit
 ) {
@@ -1462,6 +1628,36 @@ private fun SearchPanel(
                 contentDescription = "Close search",
                 onClick = onClose,
             )
+        }
+
+        if (recoveryCount > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onReviewRecovery)
+                    .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+            ) {
+                Icon(
+                    FolioIcons.AlertTriangle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(FolioDimensions.iconSmall),
+                )
+                Text(
+                    "Needs attention · $recoveryCount",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = FolioSpacing.x2),
+                )
+                Text(
+                    "Review",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
         when {

@@ -22,6 +22,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -47,6 +49,12 @@ fun FolioSearchField(
     onClear: (() -> Unit)? = null,
     enabled: Boolean = true,
     focusRequester: FocusRequester? = null,
+    /**
+     * Screen-reader name for the field. Defaults to the visible placeholder so
+     * TalkBack announces the field's purpose, not just an unlabeled edit box
+     * (audit P2-02).
+     */
+    label: String = placeholder,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -95,6 +103,7 @@ fun FolioSearchField(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(24.dp)
+                        .semantics { contentDescription = label }
                         .then(
                             if (focusRequester != null) {
                                 Modifier.focusRequester(focusRequester)
