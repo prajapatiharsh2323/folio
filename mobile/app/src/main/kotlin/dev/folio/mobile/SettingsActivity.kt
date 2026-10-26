@@ -130,7 +130,10 @@ fun SettingsScreen() {
     var persistedPrefs by remember { mutableStateOf(ReadingPrefs()) }
     var prefsLoaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var busyLabel by remember { mutableStateOf<String?>(null) }
     var storage by remember { mutableStateOf<StorageInfo?>(null) }
+    var storageError by remember { mutableStateOf(false) }
+    var storageReload by remember { mutableStateOf(0) }
 
     /** Picked backup URI awaiting the merge/replace mode choice. */
     var restoreTarget by remember { mutableStateOf<Uri?>(null) }
@@ -175,8 +178,16 @@ fun SettingsScreen() {
         writes.trySend(next)
     }
 
-    LaunchedEffect(Unit) {
-        storage = withContext(Dispatchers.IO) { computeStorage(context) }
+    LaunchedEffect(storageReload) {
+        storageError = false
+        storage = try {
+            withContext(Dispatchers.IO) { computeStorage(context) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            storageError = true
+            null
+        }
     }
 
     val restoreLauncher = rememberLauncherForActivityResult(
@@ -187,17 +198,19 @@ fun SettingsScreen() {
         if (busy) return
         restoreTarget = null
         busy = true
+        busyLabel = "Restoring backup…"
         scope.launch {
             val message = try {
                 withContext(Dispatchers.IO) { restoreBackup(context, target, mode) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                "Restore couldn't finish. Check the ZIP and try again."
+                "Restore couldn't finish. ${error.message ?: "Check the ZIP and try again."}"
             }
             busy = false
+            busyLabel = null
             showMessage(message)
-            storage = withContext(Dispatchers.IO) { computeStorage(context) }
+            storageReload++
         }
     }
 
@@ -207,21 +220,32 @@ fun SettingsScreen() {
             title = { Text("Restore backup") },
             text = {
                 Text(
-                    "Merge adds missing items and keeps local data. Replace " +
-                        "wipes this library first. Both use the newest notes/progress."
+                    "Merge adds missing items and keeps local data. Replace wipes this " +
+                        "library first (a rollback copy is kept if anything fails). Both use " +
+                        "the newest notes/progress."
                 )
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(enabled = !busy, onClick = { performRestore(target, RestoreMode.Merge) }) {
-                        Text("Merge")
-                    }
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    TextButton(
+                        enabled = !busy,
+                        onClick = { performRestore(target, RestoreMode.Merge) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Merge — keep local data") }
                     FolioDestructiveTextButton(
-                        text = "Replace",
+                        text = "Replace — wipe this library first",
                         enabled = !busy,
                         onClick = { performRestore(target, RestoreMode.Replace) },
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    TextButton(enabled = !busy, onClick = { restoreTarget = null }) { Text("Cancel") }
+                    TextButton(
+                        enabled = !busy,
+                        onClick = { restoreTarget = null },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Cancel") }
                 }
             }
         )
@@ -281,38 +305,47 @@ fun SettingsScreen() {
             item("backup-group") {
                 FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
                     if (busy) {
-                        LinearProgressIndicator(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
-                        )
+                        ) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                busyLabel ?: "Working…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = FolioSpacing.x1),
+                            )
+                        }
                     }
                     FolioSettingsRow(
                         title = "Export backup",
-                        summary = "A ZIP of your library in Folio's backups folder.",
+                        summary = "Books, notes, progress and collections. Per-book display " +
+                            "settings stay on this device.",
+                        enabled = !busy,
                         onClick = {
-                            if (!busy) {
-                                busy = true
-                                scope.launch {
-                                    val message = try {
-                                        withContext(Dispatchers.IO) { exportBackup(context) }
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (error: Exception) {
-                                        "Couldn't write a backup. Check free space and try again."
-                                    }
-                                    busy = false
-                                    showMessage(message)
+                            busy = true
+                            busyLabel = "Exporting backup…"
+                            scope.launch {
+                                val message = try {
+                                    withContext(Dispatchers.IO) { exportBackup(context) }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    "Couldn't write a backup. ${error.message ?: "Check free space and try again."}"
                                 }
+                                busy = false
+                                busyLabel = null
+                                showMessage(message)
                             }
                         },
                     )
                     FolioSettingsRow(
                         title = "Restore backup",
                         summary = "Import a ZIP, then choose merge or replace.",
-                        onClick = {
-                            if (!busy) restoreLauncher.launch(arrayOf("application/zip", "*/*"))
-                        },
+                        enabled = !busy,
+                        onClick = { restoreLauncher.launch(arrayOf("application/zip", "*/*")) },
                     )
                 }
             }
@@ -328,20 +361,31 @@ fun SettingsScreen() {
             item("storage-group") {
                 FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
                     val current = storage
+                    val valueOrState: String = when {
+                        current != null -> ""
+                        storageError -> "Unavailable"
+                        else -> "Calculating…"
+                    }
                     FolioSettingsRow(
                         title = "Library size",
-                        value = current?.let { formatBytes(it.libraryBytes) } ?: "…",
+                        value = current?.let { formatBytes(it.libraryBytes) } ?: valueOrState,
                         summary = "Books, notes, progress and search index.",
                     )
                     FolioSettingsRow(
                         title = "Folio data",
-                        value = current?.let { formatBytes(it.appBytes) } ?: "…",
+                        value = current?.let { formatBytes(it.appBytes) } ?: valueOrState,
                         summary = "Library plus local settings and sync state.",
                     )
                     FolioSettingsRow(
                         title = "Free space",
-                        value = current?.let { formatBytes(it.freeBytes) } ?: "…",
+                        value = current?.let { formatBytes(it.freeBytes) } ?: valueOrState,
                     )
+                    if (storageError) {
+                        FolioSettingsRow(
+                            title = "Retry storage check",
+                            onClick = { storageReload++ },
+                        )
+                    }
                 }
             }
 
@@ -566,16 +610,19 @@ private suspend fun restoreBackup(context: Context, uri: Uri, mode: RestoreMode)
         ?: throw IllegalStateException("Cannot read backup")
     return input.use { stream ->
         val (summary, verification) = BackupRestore.restore(store, library, stream, context.cacheDir, mode)
-        if (!verification.valid) {
-            "Restore completed with warnings: " +
-                verification.issues.joinToString("; ") { "${it.path} (${it.reason})" }
-        } else {
+        val warnings = summary.warnings + verification.issues.map { "${it.path} (${it.reason})" }
+        val summaryText =
             "${summary.mode.replaceFirstChar { it.uppercase() }}: +${summary.newDocsAdded} new, " +
                 "${summary.duplicatesSkipped} duplicates skipped, " +
                 "${summary.metadataUpdated} updated, " +
                 "${summary.annotationsMerged} annotations, " +
                 "${summary.progressUpdated} progress, " +
                 "${summary.collectionsMerged} collections"
+        if (warnings.isEmpty()) {
+            summaryText
+        } else {
+            "Restore completed with warnings — $summaryText. " +
+                warnings.distinct().joinToString("; ")
         }
     }
 }

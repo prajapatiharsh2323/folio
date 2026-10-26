@@ -82,6 +82,7 @@ import dev.folio.mobile.core.library.CoverLoader
 import dev.folio.mobile.core.library.LibraryFileCorruptException
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryUi
+import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.search.SearchService
 import dev.folio.mobile.core.search.SearchUi
@@ -213,6 +214,12 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     var indexCorrupt by remember { mutableStateOf(false) }
     var repairing by remember { mutableStateOf(false) }
 
+    // Audit P0-02: corrupt progress/collections files must not masquerade as
+    // "nothing saved" in the shelf. They are preserved untouched; this banner
+    // explains the state and points at backup restore.
+    var corruptUserState by remember { mutableStateOf<List<String>>(emptyList()) }
+    var userStateDialogOpen by remember { mutableStateOf(false) }
+
     // Any library mutation bumps the version so the search index rebuilds.
     var libraryVersion by remember { mutableStateOf(0) }
 
@@ -220,14 +227,29 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         val library = appLibrary(context)
         try {
             val docs = withContext(Dispatchers.IO) { library.listDocuments() }
-            val progress = withContext(Dispatchers.IO) { library.getAllProgress() }
+            val progressState = withContext(Dispatchers.IO) { library.readAllProgressState() }
+            val progress = when (progressState) {
+                is ReadResult.Loaded -> progressState.value
+                is ReadResult.Missing -> emptyMap()
+                is ReadResult.Corrupt -> emptyMap()
+            }
+            val collectionsState = withContext(Dispatchers.IO) { library.readCollectionsState() }
+            val loadedCollections = when (collectionsState) {
+                is ReadResult.Loaded -> collectionsState.value
+                is ReadResult.Missing -> emptyList()
+                is ReadResult.Corrupt -> emptyList()
+            }
+            corruptUserState = buildList {
+                if (progressState is ReadResult.Corrupt) add("reading progress")
+                if (collectionsState is ReadResult.Corrupt) add("collections")
+            }
             entries = sortLibrary(docs.map { LibraryUi.item(it, progress[it.id]) }, sortBy, progress)
             // Recovery state (spec §4 Rule 2): damaged entries + interrupted imports.
             withContext(Dispatchers.IO) {
                 damagedNotice = LibraryUi.damagedNotice(library.damagedDocuments())
                 orphanNotice = LibraryUi.orphanNotice(library.scanInterruptedImports())
             }
-            collections = withContext(Dispatchers.IO) { library.getCollections() }
+            collections = loadedCollections
             indexCorrupt = false
         } catch (corrupt: LibraryFileCorruptException) {
             // Audit P0-01: never present index corruption as an empty library —
@@ -236,6 +258,7 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             collections = emptyList()
             damagedNotice = null
             orphanNotice = null
+            corruptUserState = emptyList()
             indexCorrupt = true
         }
         // Re-bind the active filter: renames keep it, deleted targets drop it.
@@ -511,6 +534,16 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
                     )
                 }
+                if (corruptUserState.isNotEmpty()) {
+                    FolioStatusBanner(
+                        icon = FolioIcons.AlertTriangle,
+                        message = "Saved ${corruptUserState.joinToString(" and ")} can't be read — " +
+                            "the file was left untouched. Nothing was reset.",
+                        actionLabel = "Review",
+                        onAction = { userStateDialogOpen = true },
+                        modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+                    )
+                }
                 orphanNotice?.let { notice ->
                     FolioStatusBanner(
                         icon = FolioIcons.HardDrive,
@@ -702,12 +735,38 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
         }
     }
 
+    if (userStateDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { userStateDialogOpen = false },
+            title = { Text("Saved data can't be read") },
+            text = {
+                Text(
+                    "Folio couldn't decode your saved ${corruptUserState.joinToString(" and ")}. " +
+                        "The original file has been kept unchanged, so restoring a backup from " +
+                        "Settings can bring this data back. New saves are paused until it is repaired."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    userStateDialogOpen = false
+                    context.startActivity(SettingsActivity.createIntent(context))
+                }) { Text("Open Settings") }
+            },
+            dismissButton = {
+                TextButton(onClick = { userStateDialogOpen = false }) { Text("Close") }
+            },
+        )
+    }
+
     deleteTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Delete “${target.title}”?") },
             text = {
-                Text("Highlights and reading progress for this document are removed too.")
+                Text(
+                    "This removes the book's files, highlights, notes, bookmarks and " +
+                        "reading progress. Collections stay, without this book."
+                )
             },
             confirmButton = {
                 FolioDestructiveTextButton(
@@ -716,10 +775,23 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                         deleteTarget = null
                         scope.launch {
                             try {
-                                withContext(Dispatchers.IO) {
+                                val result = withContext(Dispatchers.IO) {
                                     appLibrary(context).deleteDocument(target.id)
                                 }
                                 refresh()
+                                if (!result.manifestRemoved) {
+                                    snackbar.showSnackbar(
+                                        "Not deleted — the book's files couldn't be removed. " +
+                                            "It stays in your library; try again."
+                                    )
+                                } else if (result.cleanupWarnings.isNotEmpty()) {
+                                    snackbar.showSnackbar(
+                                        "Deleted, but ${result.cleanupWarnings.joinToString(", ")} " +
+                                            "couldn't be cleaned up"
+                                    )
+                                } else {
+                                    snackbar.showSnackbar("Deleted “${target.title}”")
+                                }
                             } catch (corrupt: LibraryFileCorruptException) {
                                 snackbar.showSnackbar(
                                     corruptionMessage("Deleting")
@@ -744,12 +816,20 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
             onRemove = { item ->
                 scope.launch {
                     try {
-                        withContext(Dispatchers.IO) {
+                        val result = withContext(Dispatchers.IO) {
                             appLibrary(context).deleteDocument(item.id)
                         }
                         refresh()
                         if (damagedNotice == null) damagedDialogOpen = false
-                        snackbar.showSnackbar("Removed “${item.label}”")
+                        snackbar.showSnackbar(
+                            when {
+                                !result.manifestRemoved ->
+                                    "Couldn't remove “${item.label}” — it stays listed. Try again."
+                                result.cleanupWarnings.isNotEmpty() ->
+                                    "Removed “${item.label}”, but some saved data couldn't be cleaned up"
+                                else -> "Removed “${item.label}”"
+                            }
+                        )
                     } catch (corrupt: LibraryFileCorruptException) {
                         snackbar.showSnackbar(corruptionMessage("Cleanup"))
                     } catch (t: Throwable) {
@@ -873,7 +953,12 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                 duplicateResult = null
             },
             title = { Text("Already in library") },
-            text = { Text("This document's content already exists. What do you want to do?") },
+            text = {
+                Text(
+                    "This document's content already exists. " +
+                        "Replace keeps this copy's highlights, notes, reading progress and collections."
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     duplicateDialogOpen = false
@@ -909,13 +994,18 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
                             scope.launch {
                                 try {
                                     val library = appLibrary(context)
-                                    val dup = withContext(Dispatchers.IO) { library.findDuplicate(r.meta.contentHash) }
-                                    if (dup != null) {
-                                        withContext(Dispatchers.IO) { library.deleteDocument(dup.id) }
-                                        withContext(Dispatchers.IO) { library.addDocument(r) }
+                                    val dup = withContext(Dispatchers.IO) {
+                                        library.findDuplicate(r.meta.contentHash)
                                     }
-                                    refresh()
-                                    snackbar.showSnackbar("Replaced")
+                                    if (dup != null) {
+                                        withContext(Dispatchers.IO) { library.replaceDocument(dup.id, r) }
+                                        refresh()
+                                        snackbar.showSnackbar("Replaced — notes and progress kept")
+                                    } else {
+                                        withContext(Dispatchers.IO) { library.addDocument(r) }
+                                        refresh()
+                                        snackbar.showSnackbar("Imported")
+                                    }
                                 } catch (corrupt: LibraryFileCorruptException) {
                                     snackbar.showSnackbar(corruptionMessage("Replace"))
                                 } catch (t: Throwable) {

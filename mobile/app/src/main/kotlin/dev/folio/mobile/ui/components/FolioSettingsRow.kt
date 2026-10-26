@@ -36,6 +36,7 @@ fun FolioSettingsRow(
     summary: String? = null,
     value: String? = null,
     onClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
@@ -44,7 +45,7 @@ fun FolioSettingsRow(
             .fillMaxWidth()
             .defaultMinSize(minHeight = FolioDimensions.settingsRowMinHeight)
             .then(
-                if (onClick != null) {
+                if (onClick != null && enabled) {
                     Modifier.clickable(onClick = onClick)
                 } else {
                     Modifier
@@ -66,13 +67,19 @@ fun FolioSettingsRow(
             Text(
                 title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                },
             )
             summary?.let { s ->
                 Text(
                     s,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                        alpha = if (enabled) 1f else 0.45f
+                    ),
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }

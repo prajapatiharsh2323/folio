@@ -245,6 +245,14 @@ class LibraryManager(
      * Commits an imported document with the exact Section 4 write order.
      */
     suspend fun addDocument(importResult: ImportResult): DocMeta = withLocks(K_MANIFEST) {
+        addDocumentLocked(importResult)
+    }
+
+    /**
+     * Body of [addDocument]; the caller must already hold K_MANIFEST (or the
+     * multi-key set in [replaceDocument]).
+     */
+    private suspend fun addDocumentLocked(importResult: ImportResult): DocMeta {
         val manifest = readOrCreateManifest()
         val id = uuidProvider()
         val now = nowIso()
@@ -324,7 +332,87 @@ class LibraryManager(
         )
         store.write(MANIFEST_PATH, json.encodeToString(manifest.copy(docs = manifest.docs + manifestDoc, updatedAt = now)))
 
-        meta
+        return meta
+    }
+
+    /**
+     * Duplicate-import "Replace" (audit P1-04): imports the new file and moves
+     * the old copy's user data onto it — highlights/notes, reading progress and
+     * collection membership — before the old document entry/files are removed.
+     *
+     * Safe failure order: the new document is committed first (write order);
+     * user state is migrated while the old copy still exists; the old folder is
+     * removed last. If any step fails, both copies remain usable and the caller
+     * reports the failure instead of losing notes silently.
+     */
+    suspend fun replaceDocument(
+        existingId: String,
+        importResult: ImportResult
+    ): DocMeta = withLocks(K_MANIFEST, K_PROGRESS, K_ANNOTATIONS, K_COLLECTIONS) {
+        val manifest = readOrCreateManifest()
+        val oldDoc = manifest.docs.firstOrNull { it.id == existingId }
+            ?: throw IllegalArgumentException("Document not found in manifest: $existingId")
+        val oldMeta = json.decodeFromString<DocMeta>(
+            store.readText("library/docs/${oldDoc.slug}/meta.json")
+        )
+
+        val newMeta = addDocumentLocked(
+            importResult.copy(
+                meta = importResult.meta.copy(collectionIds = oldMeta.collectionIds)
+            )
+        )
+
+        // Annotations: same ids, re-pointed at the surviving document.
+        val annotations = readAnnotationsStrictLocked()
+        if (annotations != null) {
+            val moved = annotations.map { a ->
+                if (a.docId == existingId) a.copy(docId = newMeta.id) else a
+            }
+            if (moved != annotations) {
+                store.write(ANNOTATIONS_PATH, json.encodeToString(moved))
+            }
+        }
+
+        // Reading progress: move the entry (keep the user's position).
+        val progress = readProgressStrictLocked()
+        val oldProgress = progress?.get(existingId)
+        if (progress != null && oldProgress != null) {
+            store.write(
+                PROGRESS_PATH,
+                json.encodeToString(
+                    progress - existingId + (newMeta.id to oldProgress.copy(docId = newMeta.id))
+                )
+            )
+        }
+
+        // Collections: swap the membership id, keep the collection itself.
+        val collections = readCollectionsStrictLocked()
+        if (collections != null) {
+            val moved = collections.map { c ->
+                if (existingId in c.docIds) {
+                    c.copy(docIds = c.docIds - existingId + newMeta.id)
+                } else c
+            }
+            if (moved != collections) {
+                store.write(COLLECTIONS_PATH, json.encodeToString(moved))
+            }
+        }
+
+        // Remove the old reading files only after user data has moved.
+        store.remove("library/docs/${oldDoc.slug}", recursive = true)
+        if (store.exists("library/index/text/$existingId.json")) {
+            store.remove("library/index/text/$existingId.json")
+        }
+
+        // Manifest LAST: drop the old entry (the new one was committed above).
+        val after = readOrCreateManifest()
+        store.write(
+            MANIFEST_PATH,
+            json.encodeToString(
+                after.copy(docs = after.docs.filter { it.id != existingId }, updatedAt = nowIso())
+            )
+        )
+        newMeta
     }
 
     /** Lists all documents with intact meta.json (damaged entries are skipped here; recovery surfaces them). */

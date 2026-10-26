@@ -229,6 +229,38 @@ class LibraryManagerTest {
     }
 
     @Test
+    fun `replaceDocument migrates notes progress and collections to the new copy`() = runBlocking {
+        val old = manager.addDocument(importResult(title = "Old Edition"))
+        manager.saveProgress(Progress(old.id, "epubcfi(1)", 42.0, "2026-10-17T00:00:00.000Z"))
+        manager.saveAnnotation(
+            Annotation(
+                id = "a1", docId = old.id, quote = "q", prefix = "p", suffix = "s",
+                kind = AnnotationKind.Highlight, color = HighlightColor.Pink,
+                createdAt = "2026-10-17T00:00:00.000Z", updatedAt = "2026-10-17T00:00:00.000Z"
+            )
+        )
+        val collection = manager.createCollection("Keepers")
+        manager.setDocCollections(old.id, listOf(collection.id))
+
+        val replacement = manager.replaceDocument(
+            old.id,
+            importResult(title = "New Edition").copy(
+                original = ImportOriginal("new.epub", "NEW-BYTES".toByteArray())
+            )
+        )
+
+        assertTrue(replacement.id != old.id)
+        assertFalse(store.exists("library/docs/${old.slug}"))
+        assertEquals(listOf(replacement.id), manager.getManifest().docs.map { it.id })
+        assertEquals(42.0, manager.getProgress(replacement.id)!!.percent, 0.0001)
+        assertEquals(listOf("a1"), manager.getAnnotations().map { it.id })
+        assertEquals(replacement.id, manager.getAnnotations().first().docId)
+        assertEquals(listOf(replacement.id), manager.getCollections().first().docIds)
+        val meta = manager.listDocuments().first()
+        assertEquals(listOf(collection.id), meta.collectionIds)
+    }
+
+    @Test
     fun `recoverInterruptedImports finds uncommitted doc folders`() = runBlocking {
         manager.addDocument(importResult(title = "Committed"))
         // Simulate an interrupted import: folder on disk, not in manifest
