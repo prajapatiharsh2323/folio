@@ -94,6 +94,12 @@ sealed interface DictionaryUiState {
 /** Data-source seam for the repository (local now; online postponed — never mixed). */
 interface OfflineDictionaryDataSource {
     suspend fun lookup(query: DictionaryQuery): DictionaryOutcome
+
+    /**
+     * Releases cached resources (e.g. an open pack connection) at teardown.
+     * Default no-op so fakes/alternate sources need no extra ceremony.
+     */
+    suspend fun close() {}
 }
 
 /** One source row (headword + POS + raw senses JSON). */

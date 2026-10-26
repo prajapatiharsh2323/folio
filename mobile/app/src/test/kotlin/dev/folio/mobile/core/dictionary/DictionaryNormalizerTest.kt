@@ -36,6 +36,18 @@ class DictionaryNormalizerTest {
     }
 
     @Test
+    fun `typographic apostrophes fold to the dataset's ascii keys`() {
+        // EPUB text normally carries U+2019; the pack stores ASCII keys
+        // (aren't → relaxed "arent"). Without the fold a real-book
+        // selection of "aren’t" misses an entry the dataset has.
+        assertEquals("don't", normal("don’t")?.displayKey)
+        assertEquals("aren't", normal("aren’t.")?.displayKey)
+        assertEquals("don't", normal("(“don’t”)")?.displayKey)
+        assertEquals("arent", DictionaryNormalizer.relaxedKey(normal("aren’t")!!))
+        assertEquals("don't", DictionaryNormalizer.cleanDisplay("’don’t’"))
+    }
+
+    @Test
     fun `mixed case folds to lowercase`() {
         assertEquals("president", normal("President")?.displayKey)
         assertEquals("don't", normal("DON'T")?.displayKey)

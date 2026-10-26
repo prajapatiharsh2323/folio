@@ -138,6 +138,25 @@ class DictionaryRepositoryTest {
     }
 
     @Test
+    fun `teardown close is delegated to the data source`() = runBlocking {
+        var closed = false
+        val source = object : OfflineDictionaryDataSource {
+            override suspend fun lookup(query: DictionaryQuery): DictionaryOutcome =
+                DictionaryOutcome.NoMatch(query)
+
+            override suspend fun close() {
+                closed = true
+            }
+        }
+        val repo = DictionaryRepository(source)
+        repo.close()
+        assertTrue(closed)
+        // Closing is idempotent from the repository's perspective.
+        repo.close()
+        assertTrue(closed)
+    }
+
+    @Test
     fun `corrupt senses payload degrades to no senses instead of crashing`() {
         val parsed = DictionaryRow(
             headword = "worn",

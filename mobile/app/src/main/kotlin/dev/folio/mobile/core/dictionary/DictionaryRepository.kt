@@ -20,6 +20,9 @@ class DictionaryRepository(
      */
     fun normalize(raw: String?): DictionaryQuery? = DictionaryNormalizer.normalize(raw)
 
+    /** Releases data-source resources at teardown; safe to call any time. */
+    suspend fun close() = local.close()
+
     suspend fun lookup(rawSelection: String?): DictionaryUiState {
         val query = DictionaryNormalizer.normalize(rawSelection)
             ?: return DictionaryUiState.Invalid(

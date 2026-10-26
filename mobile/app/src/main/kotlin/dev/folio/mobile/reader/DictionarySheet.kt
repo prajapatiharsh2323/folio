@@ -74,10 +74,12 @@ fun DictionarySheet(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        // Header stays OUTSIDE the scroll: on long multi-sense entries the
+        // Close affordance must remain hittable while the body scrolls under
+        // it (the review audit caught the header scrolling away).
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(bottom = FolioSpacing.x6),
         ) {
@@ -96,24 +98,28 @@ fun DictionarySheet(
                 },
                 onClose = onDismiss,
             )
+            // Scrollable body: results of any length stay reachable and the
+            // header never moves.
             FolioSheetBody {
-                when (val s = state) {
-                    DictionaryUiState.Loading -> LoadingBody()
-                    is DictionaryUiState.Ready -> ReadyBody(
-                        queryDisplay = s.query.displayKey,
-                        entries = s.entries,
-                        isExactMatch = s.isExactMatch,
-                        dataset = s.meta.dataset,
-                        datasetVersion = s.meta.datasetVersion,
-                        licence = s.meta.licence,
-                    )
-                    is DictionaryUiState.NoMatch -> NoMatchBody(s.query.displayKey)
-                    is DictionaryUiState.Unavailable -> UnavailableBody(
-                        message = s.message,
-                        retryable = s.retryable,
-                        onRetry = onRetry,
-                    )
-                    is DictionaryUiState.Invalid -> InvalidBody(s.reason)
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    when (val s = state) {
+                        DictionaryUiState.Loading -> LoadingBody()
+                        is DictionaryUiState.Ready -> ReadyBody(
+                            queryDisplay = s.query.displayKey,
+                            entries = s.entries,
+                            isExactMatch = s.isExactMatch,
+                            dataset = s.meta.dataset,
+                            datasetVersion = s.meta.datasetVersion,
+                            licence = s.meta.licence,
+                        )
+                        is DictionaryUiState.NoMatch -> NoMatchBody(s.query.displayKey)
+                        is DictionaryUiState.Unavailable -> UnavailableBody(
+                            message = s.message,
+                            retryable = s.retryable,
+                            onRetry = onRetry,
+                        )
+                        is DictionaryUiState.Invalid -> InvalidBody(s.reason)
+                    }
                 }
             }
         }

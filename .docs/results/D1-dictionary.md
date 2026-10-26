@@ -21,12 +21,43 @@
 
 (filled as work completes)
 
+## Session D-1c — post-audit fixes (2026-10-26)
+
+Independent audit found and fixed (all verified by the unit suite + assembleDebug):
+
+1. **Typographic apostrophe misses (P1).** Real EPUB text uses U+2019; the pack
+   stores ASCII keys (`aren't` → relaxed `arent`). `relaxedKey` stripped only
+   ASCII `'`, so a selected `aren’t` missed an entry the dataset carries
+   (60 apostrophe headwords exposed; reproduced at data level). Fix:
+   `DictionaryNormalizer.normalize`/`cleanDisplay` fold U+2019/U+2018 → ASCII
+   `'` right after NFKC; pinned by
+   `DictionaryNormalizerTest.typographic apostrophes fold to the dataset's ascii keys`.
+2. **Sheet Close scrolls out of reach (P2).** The header (with Close) sat inside
+   the scrolling column, so long multi-sense entries pushed it off-screen
+   (the "persistently hittable header" claim was inaccurate). Fix: header moved
+   outside the scroll in `DictionarySheet` — body scrolls beneath a fixed header.
+3. **SQLite connection leak (P3).** The pack connection was never closed when
+   the reader finished. Fix: `OfflineDictionaryDataSource.close()` (default
+   no-op) + `SqliteOfflineDictionaryDataSource.close()` (mutex, resets cache);
+   `DictionaryRepository.close()` delegates; pinned by
+   `DictionaryRepositoryTest.teardown close is delegated to the data source`;
+   `ReaderActivity.onDestroy` releases it on the process-lifetime `flushScope`.
+4. **Misleading empty-selection feedback (P3).** `SEL_ITEM_MEANING` with no
+   selection toasted "Select a single word or short phrase"; now clears the
+   selection and toasts "Select text first" (the normalization-failure message
+   is reserved for unusable selections).
+
+Tests: `./gradlew testDebugUnitTest assembleDebug` re-run after the fixes —
+green; new total 299 cases (14 normalizer, 10 repository).
+
 ## Blocked / deferred
 
 - English definitions: FreeDict eng-hin has none → Open English WordNet
   (CC BY 4.0) add-on deferred to a later session (user approved this gap).
 - Online fallback: deferred per user decision (interface stub only).
 - Device validation: no emulator/SDK in this sandbox → user manual round.
+  (An SDK was later bootstrapped for JVM/Gradle runs; the KVM/emulator gap
+  for interaction-level checks remains.)
 ## Phase 2 — data pack (DONE 2026-10-25)
 
 - Verified download `freedict-eng-hin-1.6.dictd.tar.xz`, sha512

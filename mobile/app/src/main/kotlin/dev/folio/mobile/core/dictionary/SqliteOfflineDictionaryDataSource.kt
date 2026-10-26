@@ -63,6 +63,21 @@ class SqliteOfflineDictionaryDataSource(
         db ?: installer.ensureInstalled()?.let { file -> openFile(file) }
     }
 
+    /**
+     * Releases the verified connection (activity teardown). The next reader
+     * instance re-opens the promoted pack lazily; safe to call when nothing
+     * was ever opened.
+     */
+    override suspend fun close() {
+        mutex.withLock {
+            runCatching {
+                db?.close()
+                db = null
+                cachedMeta = null
+            }
+        }
+    }
+
     private fun openFile(file: java.io.File): SQLiteDatabase? = try {
         SQLiteDatabase.openDatabase(
             file.absolutePath,

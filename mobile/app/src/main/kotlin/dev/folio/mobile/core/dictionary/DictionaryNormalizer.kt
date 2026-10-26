@@ -28,11 +28,23 @@ object DictionaryNormalizer {
 
     private const val QUOTES = "\u0022\u0027\u2018\u2019\u201C\u201D\u00AB\u00BB"
 
+    /**
+     * EPUB text overwhelmingly uses typographic apostrophes (U+2019), while
+     * the dataset stores ASCII apostrophes (don't, aren't → relaxed "dont",
+     * "arent"). NFKC does NOT fold these, so both keys must fold them or
+     * real-book selections miss entries the pack actually carries.
+     */
+    private fun foldApostrophes(s: String): String =
+        s.replace('\u2019', '\'').replace('\u2018', '\'')
+
     /** "don't." / "「run」" or a paragraph → null with a UI-facing reason. */
     fun normalize(raw: String?): DictionaryQuery? {
         var s = raw?.trim().orEmpty()
         if (s.isEmpty()) return null
         s = Normalizer.normalize(s, Normalizer.Form.NFKC)
+        // Fold typographic apostrophes to the dataset's ASCII keys BEFORE any
+        // trimming/keying (see [foldApostrophes]).
+        s = foldApostrophes(s)
         if (s.length > MAX_INPUT_CHARS) return null
         s = s.trim { it in QUOTES || Character.isWhitespace(it) }
         // Strip trailing/leading punctuation but keep word-internal marks AND
@@ -50,6 +62,8 @@ object DictionaryNormalizer {
     }
 
     fun relaxedKey(query: DictionaryQuery): String =
+        // displayKey is already apostrophe-folded by [normalize]; the strip
+        // of ASCII '-'/' '/''' here reproduces the converter's relaxed key.
         query.displayKey.replace("'", "").replace("-", "").replace(" ", "")
 
     /**
@@ -59,6 +73,7 @@ object DictionaryNormalizer {
      */
     fun cleanDisplay(raw: String?): String {
         var s = raw?.trim().orEmpty()
+        s = foldApostrophes(s)
         s = s.trim { it in QUOTES || Character.isWhitespace(it) }
         s = s.trim { !it.isLetterOrDigit() && !it.isWordMark() }
         return s.ifEmpty { raw?.trim().orEmpty() }

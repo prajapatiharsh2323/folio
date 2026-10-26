@@ -531,6 +531,17 @@ class ReaderActivity : FragmentActivity() {
             }
         }
         loadScope.cancel()
+        // Release the dictionary's cached SQLite connection off the main
+        // thread (D1): the reader never shares it, and the next instance
+        // re-opens the promoted pack lazily.
+        val repo = dictionaryRepo
+        dictionaryRepo = null
+        dictionaryJob?.cancel()
+        if (repo != null) {
+            flushScope.launch {
+                runCatching { repo.close() }
+            }
+        }
         super.onDestroy()
     }
 
@@ -793,8 +804,21 @@ class ReaderActivity : FragmentActivity() {
                             SEL_ITEM_MEANING -> lifecycleScope.launch(Dispatchers.Main) {
                                 val selection = navigator.currentSelection()
                                 mode.finish()
+                                // Honest feedback distinctions: no selection at
+                                // all is different from a selection that is not
+                                // a word/short phrase (that case is reported by
+                                // openDictionaryFor after normalization).
+                                if (selection == null) {
+                                    navigatorRef?.clearSelection()
+                                    android.widget.Toast.makeText(
+                                        this@ReaderActivity,
+                                        "Select text first",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                    return@launch
+                                }
                                 openDictionaryFor(
-                                    selection?.locator?.text?.highlight.orEmpty(),
+                                    selection.locator.text.highlight.orEmpty(),
                                 )
                             }
                         }
