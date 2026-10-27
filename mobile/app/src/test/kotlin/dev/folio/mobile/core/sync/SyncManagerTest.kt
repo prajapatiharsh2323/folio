@@ -14,10 +14,14 @@ import dev.folio.mobile.core.model.HighlightColor
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.SourceFormat
 import dev.folio.mobile.core.store.AppFileStore
+import dev.folio.mobile.core.util.sha256Hex
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -264,5 +268,97 @@ class SyncManagerTest {
         assertEquals(1, state.version)
         assertTrue(state.files.keys.any { it.endsWith("meta.json") })
         assertTrue("sync state must stay local", !cloud.contains(SyncManager.SYNC_STATE_PATH))
+    }
+
+    // --- corruption safety -------------------------------------------------
+
+    private fun seed(cloud: FakeSyncProvider, path: String, bytes: ByteArray) = runBlocking {
+        cloud.upload(path, bytes, sha256Hex(bytes))
+    }
+
+    private fun expectAbort(block: suspend () -> Unit): IllegalStateException {
+        try {
+            runBlocking { block() }
+        } catch (expected: IllegalStateException) {
+            return expected
+        }
+        fail("sync must abort instead of overwriting unreadable data")
+        error("unreachable")
+    }
+
+    @Test
+    fun `an unreadable remote manifest stops sync before anything changes`() {
+        val cloud = FakeSyncProvider()
+        val device = store("device-a")
+        addDoc(device, docMeta("d1", "Book Alpha", "hash-alpha"), "alpha")
+
+        val corrupt = "{not a manifest".encodeToByteArray()
+        seed(cloud, SyncManager.MANIFEST_PATH, corrupt)
+
+        expectAbort { syncManager(device, cloud).sync() }
+
+        assertArrayEquals(corrupt, cloud.bytesOf(SyncManager.MANIFEST_PATH))
+        // The local manifest was not replaced either.
+        assertEquals(1, runBlocking { manager(device).getManifest() }.docs.size)
+    }
+
+    @Test
+    fun `an unreadable remote notes file stops sync and is left untouched`() {
+        val cloud = FakeSyncProvider()
+        val device = store("device-a")
+        addDoc(device, docMeta("d1", "Book Alpha", "hash-alpha"), "alpha")
+        runBlocking { syncManager(device, cloud).sync() }
+
+        val corrupt = "[{oops".encodeToByteArray()
+        seed(cloud, SyncManager.ANNOTATIONS_PATH, corrupt)
+
+        val error = expectAbort { syncManager(device, cloud).sync() }
+        assertTrue(error.message!!.contains("cloud storage"))
+        assertArrayEquals(corrupt, cloud.bytesOf(SyncManager.ANNOTATIONS_PATH))
+    }
+
+    @Test
+    fun `unreadable local notes stop sync without being overwritten`() {
+        val cloud = FakeSyncProvider()
+        val device = store("device-a")
+        addDoc(device, docMeta("d1", "Book Alpha", "hash-alpha"), "alpha")
+        val corrupt = "not json[".toByteArray()
+        runBlocking { device.write(SyncManager.ANNOTATIONS_PATH, corrupt) }
+
+        expectAbort { syncManager(device, cloud).sync() }
+
+        assertArrayEquals(corrupt, runBlocking { device.read(SyncManager.ANNOTATIONS_PATH) })
+        assertFalse(
+            "aborted sync must not advertise a half-synced library",
+            cloud.contains(SyncManager.MANIFEST_PATH)
+        )
+    }
+
+    @Test
+    fun `unreadable local progress stops sync without being overwritten`() {
+        val cloud = FakeSyncProvider()
+        val device = store("device-a")
+        addDoc(device, docMeta("d1", "Book Alpha", "hash-alpha"), "alpha")
+        val corrupt = "{bad".toByteArray()
+        runBlocking { device.write(SyncManager.PROGRESS_PATH, corrupt) }
+
+        expectAbort { syncManager(device, cloud).sync() }
+
+        assertArrayEquals(corrupt, runBlocking { device.read(SyncManager.PROGRESS_PATH) })
+        assertFalse(cloud.contains(SyncManager.MANIFEST_PATH))
+    }
+
+    @Test
+    fun `unreadable local collections stop sync without being overwritten`() {
+        val cloud = FakeSyncProvider()
+        val device = store("device-a")
+        addDoc(device, docMeta("d1", "Book Alpha", "hash-alpha"), "alpha")
+        val corrupt = "[bad".toByteArray()
+        runBlocking { device.write(SyncManager.COLLECTIONS_PATH, corrupt) }
+
+        expectAbort { syncManager(device, cloud).sync() }
+
+        assertArrayEquals(corrupt, runBlocking { device.read(SyncManager.COLLECTIONS_PATH) })
+        assertFalse(cloud.contains(SyncManager.MANIFEST_PATH))
     }
 }

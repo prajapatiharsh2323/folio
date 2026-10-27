@@ -7,6 +7,7 @@ import dev.folio.mobile.core.importer.ImportReading
 import dev.folio.mobile.core.importer.ImportResult
 import dev.folio.mobile.core.importer.SearchChapterText
 import dev.folio.mobile.core.library.LibraryManager
+import dev.folio.mobile.core.library.MANIFEST_PATH
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.DocKind
 import dev.folio.mobile.core.model.DocMeta
@@ -14,6 +15,7 @@ import dev.folio.mobile.core.model.HighlightColor
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.model.SourceFormat
 import dev.folio.mobile.core.store.AppFileStore
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -301,6 +303,84 @@ class BackupRestoreTest {
         assertEquals(
             setOf(backupMeta.id, localMeta.id),
             collections.single().docIds.toSet()
+        )
+    }
+
+    @Test
+    fun `merge preserves corrupt local notes progress and collections before replacing them`() = runBlocking2 {
+        val sBackup = store()
+        val bManager = LibraryManager(sBackup)
+        seedLibrary(sBackup, doc("d1", "2026-10-17-first-book", "hash-1"), body = "one")
+        bManager.saveAnnotation(annotation("b1", "d1", updatedAt = "2026-10-18T00:00:00Z"))
+        bManager.saveProgress(Progress("d1", "epubcfi(/6/2)", 30.0, "2026-10-18T00:00:00Z"))
+        val zip = exportBytes(sBackup)
+
+        val sLocal = store()
+        val local = LibraryManager(sLocal)
+        seedLibrary(sLocal, doc("d2", "2026-10-17-second-book", "hash-2"), body = "two")
+
+        val corruptNotes = "not notes".encodeToByteArray()
+        val corruptProgress = "not progress".encodeToByteArray()
+        val corruptCollections = "not collections".encodeToByteArray()
+        sLocal.write("library/user/annotations.json", corruptNotes)
+        sLocal.write("library/user/progress.json", corruptProgress)
+        sLocal.write("library/user/collections.json", corruptCollections)
+
+        val (summary, _) = restoreZip(sLocal, local, zip, RestoreMode.Merge)
+
+        val recovery = sLocal.list("library/recovery")
+        suspend fun preserved(prefix: String, bytes: ByteArray) {
+            val name = recovery.singleOrNull { it.startsWith(prefix) }
+            assertTrue("missing recovery copy for $prefix", name != null)
+            assertArrayEquals(bytes, sLocal.read("library/recovery/$name"))
+        }
+        preserved("annotations.json-corrupt-", corruptNotes)
+        preserved("progress.json-corrupt-", corruptProgress)
+        preserved("collections.json-corrupt-", corruptCollections)
+        assertTrue(
+            "warnings must name the recovery copies",
+            summary.warnings.any { it.contains("recovery/") }
+        )
+    }
+
+    @Test
+    fun `merge preserves a corrupt local manifest before replacing it`() = runBlocking2 {
+        val sBackup = store()
+        seedLibrary(sBackup, doc("d1", "2026-10-17-first-book", "hash-1"), body = "one")
+        val zip = exportBytes(sBackup)
+
+        val sLocal = store()
+        val local = LibraryManager(sLocal)
+        seedLibrary(sLocal, doc("d2", "2026-10-17-second-book", "hash-2"), body = "two")
+
+        val corruptManifest = "{not a manifest".encodeToByteArray()
+        sLocal.write(MANIFEST_PATH, corruptManifest)
+
+        val (summary, _) = restoreZip(sLocal, local, zip, RestoreMode.Merge)
+
+        val recovery = sLocal.list("library/recovery")
+        val name = recovery.singleOrNull { it.startsWith("manifest.json-corrupt-") }
+        assertTrue("corrupt manifest must be preserved", name != null)
+        assertArrayEquals(corruptManifest, sLocal.read("library/recovery/$name"))
+        assertTrue(summary.warnings.any { it.contains("manifest.json") })
+        // The merge still completes from the backup's manifest.
+        assertEquals(listOf("hash-1"), local.listDocuments().map { it.contentHash })
+    }
+
+    @Test
+    fun `restored books get their search text rebuilt`() = runBlocking2 {
+        val sBackup = store()
+        seedLibrary(sBackup, doc("d1", "2026-10-17-first-book", "hash-1"), body = "one")
+        val zip = exportBytes(sBackup)
+
+        val sLocal = store()
+        val local = LibraryManager(sLocal)
+        restoreZip(sLocal, local, zip, RestoreMode.Replace)
+
+        val restored = local.listDocuments().single()
+        assertTrue(
+            "backups exclude the index, so restore must rebuild search text",
+            local.getSearchText(restored.id).isNotEmpty()
         )
     }
 

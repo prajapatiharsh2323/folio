@@ -57,7 +57,9 @@ data class InterruptedImport(
 class LibraryManager(
     private val store: FileStore,
     private val uuidProvider: () -> String = { UUID.randomUUID().toString() },
-    private val nowIso: () -> String = { java.time.Instant.now().toString().take(24) + "Z" }
+    // Always millisecond precision with a single trailing Z (see IsoTime):
+    // Instant.toString() is not fixed-width and already ends in Z.
+    private val nowIso: () -> String = { dev.folio.mobile.core.util.IsoTime.now() }
 ) {
 
     private val json = Json {

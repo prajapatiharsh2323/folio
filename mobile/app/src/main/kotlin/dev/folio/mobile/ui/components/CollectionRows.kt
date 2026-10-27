@@ -284,7 +284,7 @@ fun FolioCollectionRow(
 
 /** Human "Updated …" label; null when the collection has no recorded update. */
 fun relativeUpdateLabel(iso: String?): String? {
-    val updated = iso?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return null
+    val updated = dev.folio.mobile.core.util.IsoTime.parseOrNull(iso) ?: return null
     val mins = Duration.between(updated, Instant.now()).toMinutes()
     return when {
         mins < 1 -> "Updated just now"

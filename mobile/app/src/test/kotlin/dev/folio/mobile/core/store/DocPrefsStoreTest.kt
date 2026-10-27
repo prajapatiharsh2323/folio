@@ -2,6 +2,7 @@ package dev.folio.mobile.core.store
 
 import dev.folio.mobile.core.model.ReadingPrefs
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -61,15 +62,37 @@ class DocPrefsStoreTest {
     }
 
     @Test
-    fun `corrupted file is treated as empty not fatal`() = runBlocking {
+    fun `corrupt file reads as no override but is preserved before repair`() = runBlocking {
+        val root = store()
+        val corrupt = "not json[".encodeToByteArray()
+        root.write(DocPrefsStore.DOC_SETTINGS_PATH, corrupt)
+
+        val docs = DocPrefsStore(root)
+        // Reading is a display fallback: the reader still opens.
+        assertNull(docs.get("a"))
+        assertArrayEquals(corrupt, root.read(DocPrefsStore.DOC_SETTINGS_PATH))
+
+        docs.set("a", ReadingPrefs(theme = "warm"))
+        assertEquals("warm", docs.get("a")!!.theme)
+
+        val recovery = root.list("library/recovery")
+        val copy = recovery.singleOrNull { it.startsWith("doc-settings.json-corrupt-") }
+        assertTrue("corrupt per-book settings must be preserved", copy != null)
+        assertArrayEquals(corrupt, root.read("library/recovery/$copy"))
+    }
+
+    @Test
+    fun `repairing a corrupt file only preserves it once`() = runBlocking {
         val root = store()
         root.write(DocPrefsStore.DOC_SETTINGS_PATH, "not json[")
 
         val docs = DocPrefsStore(root)
-        assertNull(docs.get("a"))
-
         docs.set("a", ReadingPrefs(theme = "warm"))
+        docs.set("b", ReadingPrefs(theme = "dark"))
+
+        assertEquals(1, root.list("library/recovery").size)
         assertEquals("warm", docs.get("a")!!.theme)
+        assertEquals("dark", docs.get("b")!!.theme)
     }
 
     @Test

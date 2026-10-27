@@ -161,6 +161,17 @@ class SyncFailureMapperTest {
     }
 
     @Test
+    fun `unreadable saved data is surfaced verbatim and never retried`() {
+        val message = "Your saved notes on this device can't be read. " +
+            "Sync stopped without changing them; repair or discard them in Notes first."
+        val failure = SyncFailureMapper.from(SyncDataUnreadableException(message))
+
+        assertEquals(SyncFailureKind.DataUnreadable, failure.kind)
+        assertEquals(message, failure.message)
+        assertFalse("retrying cannot repair corrupt data", failure.retryable)
+    }
+
+    @Test
     fun `unknown failures never leak exception text`() {
         val failure = SyncFailureMapper.from(IllegalArgumentException("secret stack detail"))
         assertEquals(SyncFailureKind.Unknown, failure.kind)

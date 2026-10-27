@@ -118,3 +118,32 @@ Last updated: 26 Oct 2026 (session FIX-D).
   `LibraryUiTest` carries the delete-only reason.
 - Verified: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (full suite),
   `:app:assembleDebug` green.
+
+### FIX-E — 27 Oct 2026 — release hardening: timestamps, corrupt-state preservation, honest reader exits (P0/P1/P2)
+- **Timestamps:** new `IsoTime` is the single writer/parser for schema-1 timestamps.
+  `LibraryManager.nowIso` previously produced `…947ZZ` on millisecond clocks, which made
+  every newer-wins comparison evaluate to epoch 0. `IsoTime` writes fixed milliseconds and
+  tolerates legacy `ZZ`; used by `LibraryManager`, `SyncManager`, `BackupRestore` and
+  `CollectionRows`.
+- **Global reader settings:** `PrefsStore` now exposes typed `readReadingPrefs()`; a corrupt
+  `settings.json` throws instead of silently becoming defaults, and `saveReadingPrefs`
+  preserves the unreadable bytes under `library/recovery/` before rebuilding. Reader and
+  Settings both show an explicit message and continue.
+- **Per-book settings:** `DocPrefsStore` strict-reads for writes and preserves a corrupt
+  `doc-settings.json` before repairing; reads still fall back to global prefs so the reader
+  always opens.
+- **Backup merge:** corrupt local manifest/annotations/progress/collections are copied
+  byte-for-byte under `library/recovery/…-corrupt-…` before the backup replaces them, and the
+  restore summary warns with the recovery path. Restored books now rebuild their search
+  corpus (`library/index/text`) because backup archives exclude it.
+- **Sync:** an unreadable remote manifest or corrupt local/remote annotations, progress or
+  collections aborts before overwrite (typed `SyncDataUnreadableException` → non-retryable
+  `DataUnreadable` UI copy; auto-sync disabled until repaired). `SyncManagerTest` covers
+  remote manifest, remote notes, local notes/progress/collections.
+- **Reader exits:** missing/unreadable book, damaged publication and no-readable-page paths
+  now toast a reason before closing instead of vanishing silently.
+- **Import cap:** the 50 MB limit is checked from the SAF descriptor and enforced while
+  streaming, so an oversized/unknown-length file cannot OOM the process before rejection.
+- Verified: `:app:testDebugUnitTest` → 340 tests, 0 failures; `:app:lintDebug` → 0 errors;
+  `:app:assembleDebug` → success. Device/TalkBack journeys remain blocked (no device/KVM).
+

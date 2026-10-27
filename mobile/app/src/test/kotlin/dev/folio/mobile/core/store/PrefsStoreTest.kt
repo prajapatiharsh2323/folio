@@ -1,11 +1,15 @@
 package dev.folio.mobile.core.store
 
+import dev.folio.mobile.core.library.LibraryFileCorruptException
+import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.ReadingPrefs
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -69,6 +73,54 @@ class PrefsStoreTest {
     fun `missing file returns defaults`() = runBlocking<Unit> {
         val prefs = PrefsStore(store()).loadReadingPrefs()
         assertEquals(ReadingPrefs(), prefs)
+    }
+
+    @Test
+    fun `corrupt file is reported and never silently defaulted`() = runBlocking<Unit> {
+        val root = store()
+        val corrupt = """{"theme":"dark","fontSize":oops""".encodeToByteArray()
+        root.write(PrefsStore.SETTINGS_PATH, corrupt)
+
+        val prefsStore = PrefsStore(root)
+
+        val typed = prefsStore.readReadingPrefs()
+        assertTrue("corrupt settings must not read as Missing", typed is ReadResult.Corrupt)
+
+        try {
+            prefsStore.loadReadingPrefs()
+            fail("corrupt settings must be surfaced, not replaced with defaults")
+        } catch (expected: LibraryFileCorruptException) {
+            assertEquals(PrefsStore.SETTINGS_PATH, expected.path)
+        }
+
+        // Reading never modifies the file.
+        assertArrayEquals(corrupt, root.read(PrefsStore.SETTINGS_PATH))
+    }
+
+    @Test
+    fun `saving over corrupt settings preserves the original bytes first`() = runBlocking<Unit> {
+        val root = store()
+        val corrupt = "not json[".encodeToByteArray()
+        root.write(PrefsStore.SETTINGS_PATH, corrupt)
+
+        PrefsStore(root).saveReadingPrefs(ReadingPrefs(theme = "warm"))
+
+        assertEquals("warm", PrefsStore(root).loadReadingPrefs().theme)
+
+        val recovery = root.list("library/recovery")
+        val copy = recovery.singleOrNull { it.startsWith("settings.json-corrupt-") }
+        assertTrue("corrupt settings must be preserved under library/recovery", copy != null)
+        assertArrayEquals(corrupt, root.read("library/recovery/$copy"))
+    }
+
+    @Test
+    fun `a valid save does not create recovery copies`() = runBlocking<Unit> {
+        val root = store()
+        val prefsStore = PrefsStore(root)
+        prefsStore.saveReadingPrefs(ReadingPrefs(theme = "dark"))
+        prefsStore.saveReadingPrefs(ReadingPrefs(theme = "warm"))
+
+        assertEquals(0, root.list("library/recovery").size)
     }
 
     @Test

@@ -12,6 +12,16 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLException
 
+/**
+ * Sync stopped because local or mirrored user data exists but cannot be
+ * decoded. This is deliberately distinct from a transport failure: retrying
+ * cannot fix it, and the UI must tell the user which data to repair.
+ */
+class SyncDataUnreadableException(
+    message: String,
+    cause: Throwable? = null
+) : IllegalStateException(message, cause)
+
 /** A user-safe classification of a failed sync. */
 enum class SyncFailureKind {
     /** Drive scope consent is needed (or was revoked). */
@@ -28,6 +38,8 @@ enum class SyncFailureKind {
     Server,
     /** A local storage failure. */
     Storage,
+    /** Saved notes/progress/collections exist but cannot be read. */
+    DataUnreadable,
     Unknown,
 }
 
@@ -70,6 +82,13 @@ object SyncFailureMapper {
 
         val chain = chainOf(error)
 
+        chain.firstOrNull { it is SyncDataUnreadableException }?.let {
+            return SyncFailure(
+                SyncFailureKind.DataUnreadable,
+                it.message ?: "Saved library data can't be read. Sync stopped without changing it.",
+                retryable = false,
+            )
+        }
         chain.firstOrNull { it is UserRecoverableAuthIOException }?.let { return authRequired() }
         chain.firstOrNull { it is GoogleJsonResponseException }?.let {
             return fromHttp(it as GoogleJsonResponseException)

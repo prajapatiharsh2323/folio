@@ -74,6 +74,7 @@ class CloudSyncWorker(
                 SyncFailureKind.AuthRequired,
                 SyncFailureKind.PermissionDenied,
                 SyncFailureKind.AccountMissing,
+                SyncFailureKind.DataUnreadable,
                 -> {
                     // A background worker cannot show a consent screen. Turn the
                     // schedule off and surface the reason when Settings opens.

@@ -108,7 +108,31 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
+
+/** Same 50 MB ceiling as the PWA import, enforced while streaming. */
+private const val MAX_IMPORT_BYTES = 50L * 1024 * 1024
+
+/**
+ * Reads [input] up to [limit] bytes. Oversized files are rejected before the
+ * whole file is buffered, so a SAF provider reporting an unknown/incorrect
+ * length cannot OOM the process before the size check runs.
+ */
+private fun readAtMost(input: InputStream, limit: Long): ByteArray {
+    val out = ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > limit) throw IOException("File too large (max 50 MB)")
+        out.write(buffer, 0, read)
+    }
+    return out.toByteArray()
+}
 
 /**
  * Library screen (v1 library phase): manifest-backed list with reading progress,
@@ -339,11 +363,23 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
      */
     suspend fun importOne(uri: Uri): ImportOutcome {
         val name = uriDisplayName(uri)
-        val bytes = withContext(Dispatchers.IO) {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: throw IOException("Cannot read the selected file")
+        // Reject obviously oversized files from the descriptor before reading,
+        // then read through a hard cap so a lying/unknown size can never pull
+        // an unbounded file into the heap (audit P2: OOM before the size check).
+        val declaredSize = withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+            }.getOrNull()
         }
-        if (bytes.size > 50 * 1024 * 1024) {
+        if (declaredSize != null && declaredSize > MAX_IMPORT_BYTES) {
+            return ImportOutcome(failure = "File too large (max 50 MB)")
+        }
+        val bytes = withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri)?.use {
+                readAtMost(it, MAX_IMPORT_BYTES)
+            } ?: throw IOException("Cannot read the selected file")
+        }
+        if (bytes.size > MAX_IMPORT_BYTES) {
             return ImportOutcome(failure = "File too large (max 50 MB)")
         }
         val result = try {

@@ -526,7 +526,23 @@ class ReaderActivity : FragmentActivity() {
         loadScope.launch {
             // Prefs FIRST — the navigator gets the mapped values at attach time.
             // Per-book override (Batch 2) wins over the global defaults.
-            val global = prefsStore.loadReadingPrefs()
+            //
+            // Corrupt global settings must not silently masquerade as factory
+            // defaults: the reader still opens (reading must never be blocked)
+            // but says so, and the unreadable file is left untouched.
+            val global = try {
+                prefsStore.loadReadingPrefs()
+            } catch (corrupt: LibraryFileCorruptException) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity,
+                        "Couldn't read your saved reading settings. Defaults are shown; " +
+                            "your old settings file is kept.",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                ReadingPrefs()
+            }
             val docOverride = docPrefsStore.get(docId)
             prefsState.value = docOverride ?: global
             hasDocOverride.value = docOverride != null
@@ -607,7 +623,18 @@ class ReaderActivity : FragmentActivity() {
     private fun onResetPerBookPrefs() {
         loadScope.launch(Dispatchers.IO) {
             docPrefsStore.set(currentDocId, null)
-            val global = prefsStore.loadReadingPrefs()
+            val global = try {
+                prefsStore.loadReadingPrefs()
+            } catch (corrupt: LibraryFileCorruptException) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity,
+                        "Couldn't read your saved reading settings. Keeping the current appearance.",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                prefsState.value
+            }
             withContext(Dispatchers.Main) {
                 hasDocOverride.value = false
                 applyPrefs(global)
@@ -628,7 +655,9 @@ class ReaderActivity : FragmentActivity() {
         }
         val readingRel = meta?.files?.reading
         if (meta == null || readingRel == null) {
-            withContext(Dispatchers.Main) { finish() }
+            finishWithMessage(
+                "Couldn't open this book — it isn't in your library anymore, or its files can't be read."
+            )
             return
         }
         docAuthor = meta.author
@@ -660,7 +689,7 @@ class ReaderActivity : FragmentActivity() {
 
         val publication = openPublication(file)
         if (publication == null) {
-            withContext(Dispatchers.Main) { finish() }
+            finishWithMessage("Couldn't open this book — the file may be damaged.")
             return
         }
 
@@ -729,13 +758,30 @@ class ReaderActivity : FragmentActivity() {
             }
         }
         val initial = initialLocator ?: run {
-            withContext(Dispatchers.Main) { finish() }
+            finishWithMessage("This book doesn't have any readable pages.")
             return
         }
 
         withContext(Dispatchers.Main) {
             if (isFinishing || isDestroyed) return@withContext
             attachNavigator(publication, docId, initial)
+        }
+    }
+
+    /**
+     * Closes the reader with an explanation instead of a silent return to the
+     * library. Previously an unreadable/missing publication just called
+     * [finish], so the user saw the screen flash and vanish with no reason.
+     */
+    private suspend fun finishWithMessage(message: String) {
+        withContext(Dispatchers.Main) {
+            if (isFinishing || isDestroyed) return@withContext
+            android.widget.Toast.makeText(
+                this@ReaderActivity,
+                message,
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            finish()
         }
     }
 

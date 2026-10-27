@@ -3,17 +3,22 @@ package dev.folio.mobile.core.backup
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryManager.FileLock
 import dev.folio.mobile.core.library.MANIFEST_PATH
+import dev.folio.mobile.core.library.RECOVERY_DIR
 import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.library.RestoreSwap
+import dev.folio.mobile.core.importer.ImportDispatch
+import dev.folio.mobile.core.importer.SearchChapterText
 import dev.folio.mobile.core.model.ReadingPrefs
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.model.Manifest
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.store.FileStore
+import dev.folio.mobile.core.util.IsoTime
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.coroutines.CancellationException
 import java.io.File
 import java.io.InputStream
 
@@ -50,8 +55,7 @@ import java.io.InputStream
  */
 object BackupRestore {
 
-    private fun epochMs(iso: String?): Long =
-        runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrElse { 0L }
+    private fun epochMs(iso: String?): Long = dev.folio.mobile.core.util.IsoTime.epochMs(iso)
 
     /** "library/docs/x" → "docs/x" (the staging tree mirrors the library root). */
     private fun stagedRel(path: String): String {
@@ -220,20 +224,22 @@ object BackupRestore {
         if (mode == RestoreMode.Merge) {
             val currentManifest: Manifest =
                 if (store.exists(MANIFEST_PATH)) {
-                    runCatching {
+                    try {
                         parseManifest(store.readText(MANIFEST_PATH))
-                    }.getOrElse {
-                        // Restore-merge is an intentional escape hatch: a corrupt
-                        // local index is replaced by the backup content.
+                    } catch (e: Exception) {
+                        // Merge is the deliberate escape hatch for a damaged
+                        // local index, but the unreadable bytes must survive
+                        // before the backup's manifest replaces them.
+                        preserveCorruptLocal(store, MANIFEST_PATH, warnings)
                         Manifest(
                             libraryId = backupManifest.libraryId,
-                            updatedAt = java.time.Instant.now().toString()
+                            updatedAt = IsoTime.now()
                         )
                     }
                 } else {
                     Manifest(
                         libraryId = backupManifest.libraryId,
-                        updatedAt = java.time.Instant.now().toString()
+                        updatedAt = IsoTime.now()
                     )
                 }
 
@@ -289,6 +295,7 @@ object BackupRestore {
                     is ReadResult.Loaded -> localState.value
                     is ReadResult.Missing -> emptyList()
                     is ReadResult.Corrupt -> {
+                        preserveCorruptLocal(store, "library/user/annotations.json", warnings)
                         warnings += "Your local saved notes couldn't be read, so they were not merged — restore proceeded with the backup's notes."
                         emptyList()
                     }
@@ -316,6 +323,7 @@ object BackupRestore {
                     is ReadResult.Loaded -> localState.value
                     is ReadResult.Missing -> emptyMap()
                     is ReadResult.Corrupt -> {
+                        preserveCorruptLocal(store, "library/user/progress.json", warnings)
                         warnings += "Your local reading progress couldn't be read, so it was not merged — restore proceeded with the backup's progress."
                         emptyMap<String, Progress>()
                     }
@@ -346,6 +354,7 @@ object BackupRestore {
                     is ReadResult.Loaded -> localState.value
                     is ReadResult.Missing -> emptyList()
                     is ReadResult.Corrupt -> {
+                        preserveCorruptLocal(store, "library/user/collections.json", warnings)
                         warnings += "Your local collections couldn't be read, so they were not merged — restore proceeded with the backup's collections."
                         emptyList()
                     }
@@ -375,11 +384,16 @@ object BackupRestore {
                     Manifest.serializer(),
                     currentManifest.copy(
                         docs = mergedDocs,
-                        updatedAt = java.time.Instant.now().toString(),
+                        updatedAt = IsoTime.now(),
                         libraryId = currentManifest.libraryId.ifBlank { backupManifest.libraryId }
                     )
                 )
             )
+
+            // Backups exclude library/index/text (spec §8), so restored books
+            // would be invisible to search until re-imported. Rebuild the
+            // missing corpora from the original files, best-effort.
+            rebuildMissingSearchText(store, mergedDocs, warnings)
 
             return summary.copy(
                 newDocsAdded = newDocsAdded,
@@ -411,6 +425,10 @@ object BackupRestore {
                     "Restore verification failed after commit — the pre-restore library was rolled back"
                 )
             }
+
+            // Backups exclude the search index (spec §8); rebuild it from the
+            // original files now that the new tree is live.
+            rebuildMissingSearchText(store, committed.docs, warnings)
 
             return summary.copy(
                 newDocsAdded = backupManifest.docs.size,
@@ -518,5 +536,87 @@ object BackupRestore {
         }
 
         return userFiles
+    }
+
+    /**
+     * Copies an unreadable local file into [RECOVERY_DIR] byte-for-byte before
+     * a merge overwrites it. A warning naming the recovery file is appended so
+     * the restore summary tells the user where their old data went.
+     *
+     * Best-effort: if even the copy fails, the restore still proceeds (the
+     * original bytes have not been overwritten at this point) and the warning
+     * says the copy failed.
+     */
+    private suspend fun preserveCorruptLocal(
+        store: FileStore,
+        path: String,
+        warnings: MutableList<String>
+    ) {
+        if (!store.exists(path)) return
+        val stamp = IsoTime.now().replace(":", "-").replace(".", "-")
+        val dest = "$RECOVERY_DIR/${path.substringAfterLast('/')}-corrupt-$stamp"
+        try {
+            store.write(dest, store.read(path))
+            warnings += "Your local ${path.removePrefix("library/")} couldn't be read; " +
+                "a copy was kept at ${dest.removePrefix("library/")} before the restore replaced it."
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (copyError: Exception) {
+            warnings += "Your local ${path.removePrefix("library/")} couldn't be read and a " +
+                "recovery copy could not be written (${copyError.message}); the restore proceeded."
+        }
+    }
+
+    /**
+     * Rebuilds `library/index/text/<docId>.json` for restored documents that
+     * have no corpus yet. Backup archives deliberately exclude the search
+     * index; without this, a restored library would open fine but search would
+     * silently return nothing until every book was re-imported.
+     *
+     * Best-effort by design: indexing failure must never fail a restore that
+     * already committed. One aggregate warning is reported instead.
+     */
+    private suspend fun rebuildMissingSearchText(
+        store: FileStore,
+        docs: List<dev.folio.mobile.core.model.ManifestDoc>,
+        warnings: MutableList<String>
+    ) {
+        var failed = 0
+        for (doc in docs) {
+            val searchPath = "library/index/text/${doc.id}.json"
+            if (store.exists(searchPath)) continue
+            val originalPath = doc.files.firstOrNull { it.path.contains("/original/") }?.path
+            if (originalPath == null || !store.exists(originalPath)) {
+                failed++
+                continue
+            }
+            try {
+                val original = store.read(originalPath)
+                val searchText = ImportDispatch
+                    .import(original, originalPath.substringAfterLast('/'))
+                    .searchText
+                if (searchText.isNotEmpty()) {
+                    store.write(
+                        searchPath,
+                        backupJson.encodeToString(
+                            ListSerializer(SearchChapterText.serializer()),
+                            searchText
+                        )
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                failed++
+                android.util.Log.w(
+                    "BackupRestore",
+                    "Search rebuild failed for ${doc.id}: ${e.message}"
+                )
+            }
+        }
+        if (failed > 0) {
+            warnings += "Search text couldn't be rebuilt for $failed restored book(s); " +
+                "they open normally but won't appear in search until re-imported."
+        }
     }
 }

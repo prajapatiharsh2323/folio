@@ -8,6 +8,7 @@ import dev.folio.mobile.core.importer.ImportDispatch
 import dev.folio.mobile.core.importer.SearchChapterText
 import dev.folio.mobile.core.library.LibraryManager
 import dev.folio.mobile.core.library.LibraryManager.FileLock
+import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.model.Manifest
@@ -15,6 +16,7 @@ import dev.folio.mobile.core.model.ManifestDoc
 import dev.folio.mobile.core.model.Progress
 import dev.folio.mobile.core.store.FileStore
 import dev.folio.mobile.core.util.sha256Hex
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
@@ -104,7 +106,20 @@ class SyncManager(
         loadState().files.forEach { (path, item) -> stateFiles[path] = item }
 
         val remoteManifest: Manifest? = remoteMap[MANIFEST_PATH]?.let {
-            runCatching { parseManifest(provider.download(MANIFEST_PATH).decodeToString()) }.getOrNull()
+            try {
+                parseManifest(provider.download(MANIFEST_PATH).decodeToString())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                // Never treat an unreadable remote manifest as "no manifest":
+                // this sync would then re-upload local docs and overwrite the
+                // mirror. Stop before any write and leave both sides untouched.
+                throw SyncDataUnreadableException(
+                    "The library manifest in cloud storage can't be read. " +
+                        "Sync stopped without changing anything.",
+                    e
+                )
+            }
         }
 
         val localManifest = library.getManifest()
@@ -291,15 +306,31 @@ class SyncManager(
         if (!hasRemote && !hasLocal) return
 
         val remoteAnnotations = if (hasRemote) {
-            runCatching {
+            try {
                 parseAnnotations(provider.download(ANNOTATIONS_PATH).decodeToString())
-            }.getOrElse { emptyList() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                throw SyncDataUnreadableException(
+                    "Your notes in cloud storage can't be read. Sync stopped and left them untouched.",
+                    e
+                )
+            }
         } else {
             emptyList()
         }
 
+        val localAnnotations = when (val state = library.readAnnotationsState()) {
+            is ReadResult.Loaded -> state.value
+            ReadResult.Missing -> emptyList()
+            is ReadResult.Corrupt -> throw SyncDataUnreadableException(
+                "Your saved notes on this device can't be read. Sync stopped without " +
+                    "changing them; repair or discard them in Notes first."
+            )
+        }
+
         val merged = LinkedHashMap<String, Annotation>()
-        library.getAnnotations().forEach { merged[it.id] = it }
+        localAnnotations.forEach { merged[it.id] = it }
         for (remote in remoteAnnotations) {
             val normalized = remote.copy(docId = docIdRemap[remote.docId] ?: remote.docId)
             val current = merged[normalized.id]
@@ -327,15 +358,32 @@ class SyncManager(
         if (!hasRemote && !hasLocal) return
 
         val remoteProgress = if (hasRemote) {
-            runCatching {
+            try {
                 parseProgressMap(provider.download(PROGRESS_PATH).decodeToString())
-            }.getOrElse { emptyMap() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                throw SyncDataUnreadableException(
+                    "Your reading progress in cloud storage can't be read. " +
+                        "Sync stopped and left it untouched.",
+                    e
+                )
+            }
         } else {
             emptyMap()
         }
 
+        val localProgress = when (val state = library.readAllProgressState()) {
+            is ReadResult.Loaded -> state.value
+            ReadResult.Missing -> emptyMap()
+            is ReadResult.Corrupt -> throw SyncDataUnreadableException(
+                "Your saved reading progress on this device can't be read. " +
+                    "Sync stopped without changing it."
+            )
+        }
+
         val merged = LinkedHashMap<String, Progress>()
-        library.getAllProgress().forEach { (id, progress) -> merged[id] = progress }
+        localProgress.forEach { (id, progress) -> merged[id] = progress }
         for ((rawDocId, progress) in remoteProgress) {
             val docId = docIdRemap[rawDocId] ?: rawDocId
             val normalized = progress.copy(docId = docId)
@@ -366,15 +414,32 @@ class SyncManager(
         if (!hasRemote && !hasLocal) return
 
         val remoteCollections = if (hasRemote) {
-            runCatching {
+            try {
                 parseCollections(provider.download(COLLECTIONS_PATH).decodeToString())
-            }.getOrElse { emptyList() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                throw SyncDataUnreadableException(
+                    "Your collections in cloud storage can't be read. " +
+                        "Sync stopped and left them untouched.",
+                    e
+                )
+            }
         } else {
             emptyList()
         }
 
+        val localCollections = when (val state = library.readCollectionsState()) {
+            is ReadResult.Loaded -> state.value
+            ReadResult.Missing -> emptyList()
+            is ReadResult.Corrupt -> throw SyncDataUnreadableException(
+                "Your saved collections on this device can't be read. " +
+                    "Sync stopped without changing them."
+            )
+        }
+
         val merged = LinkedHashMap<String, Collection>()
-        library.getCollections().forEach { merged[it.id] = it }
+        localCollections.forEach { merged[it.id] = it }
         for (remote in remoteCollections) {
             val remappedDocIds = remote.docIds.map { docIdRemap[it] ?: it }
             val current = merged[remote.id]
@@ -488,8 +553,7 @@ class SyncManager(
         onProgress?.invoke(SyncProgress(phase, current, total, currentItem, message))
     }
 
-    private fun epochMs(iso: String?): Long =
-        runCatching { java.time.Instant.parse(iso).toEpochMilli() }.getOrElse { 0L }
+    private fun epochMs(iso: String?): Long = dev.folio.mobile.core.util.IsoTime.epochMs(iso)
 
-    private fun nowIso(): String = java.time.Instant.now().toString()
+    private fun nowIso(): String = dev.folio.mobile.core.util.IsoTime.now()
 }

@@ -281,7 +281,8 @@ fun CloudSyncSection() {
                 }
                 message = failure.message
                 if (failure.kind == SyncFailureKind.AccountMissing ||
-                    failure.kind == SyncFailureKind.PermissionDenied
+                    failure.kind == SyncFailureKind.PermissionDenied ||
+                    failure.kind == SyncFailureKind.DataUnreadable
                 ) {
                     autoSync = false
                     CloudSyncScheduler.setEnabled(context, false)
