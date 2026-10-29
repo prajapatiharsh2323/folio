@@ -56,7 +56,7 @@
        writes; dismiss via existing clearSelection() pattern.
 7. [ ] Unit tests under `mobile/app/src/test/.../core/dictionary/` (normalizer,
        lookup, installer contract, no-fabrication, local-hit isolation).
-8. [ ] Push → mobile-ci verdict; `FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`;
+8. [ ] Push → mobile-ci verdict; `.docs/plans/implementations/FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`;
        tracking + result summary updates.
 
 ## Schema (locked)

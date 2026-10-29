@@ -1,7 +1,7 @@
 # D1 — Dictionary (offline English→Hindi) — result summary
 
 **Status:** IN PROGRESS (session D-1, 2026-10-25)
-**Plan:** `.docs/plans/dictionary-plan.md` — read that first after memory erase.
+**Plan:** `.docs/plans/.docs/plans/implementations/dictionary-plan.md` — read that first after memory erase.
 
 ## Progress checklist
 
@@ -13,7 +13,7 @@
 - [x] Core dictionary layer (pure Kotlin + sqlite).
 - [x] DictionarySheet UI + ReaderActivity wiring.
 - [x] Unit tests green (session D-1b below; 297/297, 0 failures).
-- [x] Report `FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`.
+- [x] Report `.docs/plans/implementations/FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`.
 - [x] Tracking updated (MOBILE-TRACKING.md status line + session log).
 - [ ] Device manual round (no emulator/KVM here — user round).
 

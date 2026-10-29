@@ -97,8 +97,8 @@ Ref: `SettingsActivity.kt`, `ui/sync/CloudSyncSection.kt`, sections in 03 §5.7
 
 ## 5. Dictionary (P2 phase, D1 parity)
 
-Ref: `core/dictionary/*`, `.docs/plans/dictionary-plan.md`,
-`FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`
+Ref: `core/dictionary/*`, `.docs/plans/implementations/dictionary-plan.md`,
+`.docs/plans/implementations/FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`
 
 - Pack: FreeDict eng-hin SQLite (25,450 entries, ~5 MB) → **build once** with mobile's
   `mobile/tools/build_dict.py` (reuse verbatim — do not fork the tool).

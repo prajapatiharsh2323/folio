@@ -29,16 +29,19 @@ Folio is an installable PWA for Android and Windows, paired with a browser exten
 
 ## Quick Start
 
+> **Note:** the original PWA/clipper codebase was retired (commit `d793212`) —
+> the active product is the native Android app in [`mobile/`](mobile/).
+> See [`docs/mobile-cloud-sync.md`](docs/mobile-cloud-sync.md) and
+> [`desktop-docs/`](desktop-docs/README.md) (planned Windows desktop port).
+
 ```bash
-# Install dependencies
-pnpm install
-
-# Run the PWA web app (http://localhost:5173)
-pnpm --filter @folio/web run dev
-
-# Build the Clipper browser extension
-pnpm --filter @folio/clipper run build
-
-# Run unit tests
-pnpm test
+# Android app — verified gates (run inside mobile/)
+./gradlew :app:testDebugUnitTest   # unit tests
+./gradlew :app:lintDebug           # lint (0 errors expected)
+./gradlew :app:assembleDebug       # debug APK
 ```
+
+## For AI coding agents
+
+See [`AGENTS.md`](AGENTS.md) and the knowledge base in [`.docs/`](.docs/README.md)
+— project context, task board, current session checkpoint, plans, audits, decisions.

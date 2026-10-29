@@ -25,7 +25,7 @@
    /tmp/opencode/android-sdk; mobile/local.properties git-ignored). Dictionary
    DB = framework SQLiteDatabase in `assets/dictionary/`, no Room. Device
    manual round still pending (no emulator here). Details:
-   `.docs/results/D1-dictionary.md`, root `FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`.
+   `.docs/results/D1-dictionary.md`, `.docs/plans/implementations/FOLIO_DICTIONARY_IMPLEMENTATION_REPORT.md`.
 0. **User manual-testing round (in flight as of M-21 close):** a debug APK with
    all M-21 features is at the repo root — `folio-mobile-debug-2026-10-19.apk`
    (~39 MB, supersedes the removed stale `app-release*.apk`). Test points:
@@ -287,7 +287,7 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     `.docs/FIX-PLAN-TRACKING.md` (no device pass has been claimed).
 
 - **Session D-1 (Oct 25, 2026)** — Dictionary feature (IN PROGRESS). Plan:
-  `.docs/plans/dictionary-plan.md`; live results: `.docs/results/D1-dictionary.md`.
+  `.docs/plans/`.docs/plans/implementations/dictionary-plan.md``; live results: `.docs/results/D1-dictionary.md`.
 
 - **Session M-23 (Oct 20, 2026)** - USER ROUND: bundled cover art + icon tint.
   - **Bundled cover art (option A, user-chosen).** The five `cover-imgs`
