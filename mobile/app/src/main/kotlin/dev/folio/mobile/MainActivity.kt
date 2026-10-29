@@ -87,6 +87,7 @@ import dev.folio.mobile.core.library.LibraryUi
 import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.Collection
 import dev.folio.mobile.core.search.SearchService
+import dev.folio.mobile.core.store.AppAppearanceStore
 import dev.folio.mobile.core.search.SearchUi
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.BuildConfig
@@ -103,6 +104,7 @@ import dev.folio.mobile.ui.icons.FolioIcons
 import dev.folio.mobile.ui.theme.FolioDimensions
 import dev.folio.mobile.ui.theme.FolioSpacing
 import dev.folio.mobile.ui.theme.FolioMobileTheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -158,8 +160,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val shared = sharedFileUri(intent)
+        // App-interface appearance (S1 audit Phase 2): one blocking read so
+        // the first frame carries the stored choice (System is the default).
+        val storedAppearance = AppAppearanceStore.loadThemeSync(AppFileStore(filesDir))
         setContent {
-            FolioMobileTheme {
+            FolioMobileTheme(
+                darkTheme = AppAppearanceStore.isDark(storedAppearance, isSystemInDarkTheme()),
+            ) {
                 LibraryScreen(sharedFileUri = shared)
             }
         }

@@ -100,7 +100,19 @@ sync-free build (`folio-mobile-debug-2026-10-29-sync-free.apk`).
 - Preserve `library/`, ZIP backup/restore, all recovery copies. ZIP suite must
   stay green after every removal batch.
 
-### Phase 2 — Settings rebuild
+### Phase 2 — Settings rebuild. ✅ DONE (M-25, results: `.docs/results/M25-s1-phase2.md`)
+All items below executed 2026-10-29: app-appearance System/Light/Dark in its
+own store (`AppAppearanceStore`, `app-appearance.json`, backup-external,
+PrefsStore-grade data safety) wired into MainActivity/NotesActivity/
+SettingsActivity; reading-defaults full editor extracted into the shared
+`ReadingPrefsEditor` (reader sheet + Settings render the identical control
+set) with a REAL reader-theme/ink preview and commit-only persistence
+(conflated ordered writer); CreateDocument("application/zip") export with
+staged temp/flush/copy; merge/replace restore with include-list copy;
+Storage & recovery rows + "Recovery copies"; persistent corrupt banners with
+the recovery route; visible back/up in the TopAppBar; 8 new store tests.
+User-test APK: `folio-mobile-debug-2026-10-29-p2-settings.apk`.
+
 - Landing IA: Appearance (app UI: System/Light/Dark, own store, default
   System) · Reading defaults (full editor extracted from
   `ReadingAppearanceSheet`, preview = real reader theme/ink mapping,

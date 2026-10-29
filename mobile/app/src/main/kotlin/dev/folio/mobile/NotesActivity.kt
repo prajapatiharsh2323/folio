@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,7 @@ import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.Annotation
 import dev.folio.mobile.core.model.AnnotationKind
 import dev.folio.mobile.core.model.HighlightColor
+import dev.folio.mobile.core.store.AppAppearanceStore
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.reader.ReaderActivity
 import dev.folio.mobile.ui.components.FolioDestructiveTextButton
@@ -79,8 +81,12 @@ class NotesActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // App-interface appearance (S1 audit Phase 2): see MainActivity.
+        val storedAppearance = AppAppearanceStore.loadThemeSync(AppFileStore(filesDir))
         setContent {
-            FolioMobileTheme {
+            FolioMobileTheme(
+                darkTheme = AppAppearanceStore.isDark(storedAppearance, isSystemInDarkTheme()),
+            ) {
                 NotesScreen()
             }
         }

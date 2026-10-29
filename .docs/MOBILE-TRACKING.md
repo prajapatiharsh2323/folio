@@ -311,6 +311,29 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     `GRADLE_USER_HOME=/tmp/opencode/gradle-home` here.
   Result: `.docs/results/M25-s1-phase1.md`. Next: Phase 2 (Settings rebuild).
 
+- **Session M-25 continued (Oct 29, 2026)** — completed S1 **Phase 2**: the
+  Settings rebuild, including the P1 export-flow finding.
+  - New `AppAppearanceStore` (`app-appearance.json`, outside `library/` and
+    the backup contract): System/Light/Dark app-UI theme, default System,
+    corrupt-preserving save semantics, per-activity sync theme load (no
+    first-frame flash). Wired into MainActivity, NotesActivity,
+    SettingsActivity (which re-themes live on tap).
+  - Shared `ui/components/ReadingPrefsEditor` extracted from
+    `ReadingAppearanceSheet` — identical control set in the reader sheet and
+    Settings; Settings shows a REAL reader-page preview (colors straight from
+    the now-public `ReaderPrefsMapper.themeColors`), persists on commit only
+    (conflated ordered writer), and gets confirm-guarded reset-defaults with
+    the global-vs-per-book note.
+  - Export moved to CreateDocument("application/zip") (user picks the
+    location; staged `.part` + flush + fsync + streamed copy); restore dialog
+    copy now names the actual schema include-list.
+  - Storage & recovery: honest rows + "Recovery copies" counter; persistent
+    corrupt banners (settings + appearance) that clear on verified save;
+    visible back/up in the TopAppBar.
+  - Gates green: **329/329 tests (+8), lintDebug 0 errors, assembleDebug
+    green**. User-test APK: `folio-mobile-debug-2026-10-29-p2-settings.apk`.
+  Result: `.docs/results/M25-s1-phase2.md`. Next: Phase 3 (reader recovery).
+
 - **Session FIX (Oct 26, 2026)** — UX/UI & Reading-Experience fix plan, in three
   committed batches. Live per-item status: `.docs/FIX-PLAN-TRACKING.md`.
   - **FIX-A (commit `9a63767`)** — P1-15: lock-safe `deleteCollection()` clears

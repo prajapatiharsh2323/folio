@@ -56,6 +56,18 @@ object ReaderPrefsMapper {
         val accent: String
     )
 
+    /**
+     * Read-only accessor for UI previews (Settings reading-defaults editor) so
+     * swatches/preview cards render the REAL reader mapping without
+     * duplicating the hex values. "system" resolves against [systemDark]; an
+     * unknown theme resolves to light.
+     */
+    fun themeColors(theme: String, systemDark: Boolean): ThemeTokens = when (theme) {
+        "system" -> THEME_COLORS[if (systemDark) "dark" else "light"]
+            ?: THEME_COLORS.getValue("light")
+        else -> THEME_COLORS[theme] ?: THEME_COLORS.getValue("light")
+    }
+
     /** Primitive preferences handed to the navigator's Android adapter. */
     data class MappedReaderPrefs(
         /** Readium relative font size (schema px / 16). */

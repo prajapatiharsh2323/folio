@@ -10,29 +10,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -52,17 +46,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.folio.mobile.core.backup.BackupRestore
 import dev.folio.mobile.core.backup.exportBackupZip
 import dev.folio.mobile.core.backup.RestoreMode
 import dev.folio.mobile.core.backup.generateBackupFilename
 import dev.folio.mobile.core.library.LibraryManager
+import dev.folio.mobile.core.library.RECOVERY_DIR
+import dev.folio.mobile.core.library.ReadResult
 import dev.folio.mobile.core.model.ReadingPrefs
+import dev.folio.mobile.core.store.AppAppearanceStore
 import dev.folio.mobile.core.store.AppFileStore
 import dev.folio.mobile.core.store.PrefsStore
 import dev.folio.mobile.core.store.directoryBytes
@@ -71,8 +65,13 @@ import dev.folio.mobile.ui.components.FolioDestructiveTextButton
 import dev.folio.mobile.ui.components.FolioSectionHeader
 import dev.folio.mobile.ui.components.FolioSettingsGroup
 import dev.folio.mobile.ui.components.FolioSettingsRow
+import dev.folio.mobile.ui.components.ReadingEditorSection
+import dev.folio.mobile.ui.components.ReadingPagePreview
+import dev.folio.mobile.ui.components.ReadingPrefsEditor
+import dev.folio.mobile.ui.components.ReadingSegment
 import dev.folio.mobile.ui.icons.FolioIcons
 import dev.folio.mobile.ui.theme.FolioMobileTheme
+import dev.folio.mobile.ui.theme.FolioRadii
 import dev.folio.mobile.ui.theme.FolioSpacing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -86,9 +85,19 @@ class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // App-interface appearance (S1 audit Phase 2): own store, one blocking
+        // read so the first frame already carries the stored choice instead of
+        // flashing the system theme. A corrupt file resolves to System here;
+        // the honest corrupt banner lives in Settings where the user can act.
+        val storedAppearance = AppAppearanceStore.loadThemeSync(AppFileStore(filesDir))
         setContent {
-            FolioMobileTheme {
-                SettingsScreen()
+            FolioMobileTheme(
+                darkTheme = AppAppearanceStore.isDark(
+                    storedAppearance,
+                    isSystemInDarkTheme(),
+                ),
+            ) {
+                SettingsScreen(initialAppTheme = storedAppearance)
             }
         }
     }
@@ -99,62 +108,78 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
-/** Display labels for stored theme keys (serialized keys are unchanged). */
-private val THEME_OPTIONS = listOf(
-    ThemeOption("light", "Light", 0xFFFAFAF7, 0xFF1C1B19),
-    ThemeOption("warm", "Paper", 0xFFF4ECD8, 0xFF3B3226),
-    ThemeOption("dark", "Dark", 0xFF121214, 0xFFE6E3DC),
-    ThemeOption("true-black", "True black", 0xFF000000, 0xFFC8C4BC),
-    ThemeOption("system", "System", 0xFFFAFAF7, 0xFF1C1B19, isSystem = true),
-)
-
-private data class ThemeOption(
-    val key: String,
-    val label: String,
-    val pageArgb: Long,
-    val inkArgb: Long,
-    val isSystem: Boolean = false,
-)
-
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(initialAppTheme: String = AppAppearanceStore.KEY_SYSTEM) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val prefsStore = remember { PrefsStore(AppFileStore(context.filesDir)) }
-    val writes = remember { Channel<ReadingPrefs>(Channel.UNLIMITED) }
+    val appearanceStore = remember { AppAppearanceStore(AppFileStore(context.filesDir)) }
+    // CONFLATED channel: rapid slider commits leave one pending snapshot
+    // (bounded writer; every drain persists the newest value).
+    val writes = remember { Channel<ReadingPrefs>(Channel.CONFLATED) }
 
     var prefs by remember { mutableStateOf(ReadingPrefs()) }
     var persistedPrefs by remember { mutableStateOf(ReadingPrefs()) }
+
+    /**
+     * Living app-UI theme key. Starts from the synchronously loaded value;
+     * changes re-theme this screen immediately and persist async.
+     */
+    var appTheme by remember { mutableStateOf(initialAppTheme) }
+
+    /** Honest corrupt-state flags — %s surfaced once, plain language. */
+    var readingSettingsCorrupt by remember { mutableStateOf(false) }
+    var appearanceCorrupt by remember { mutableStateOf(false) }
+
     var prefsLoaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var busyLabel by remember { mutableStateOf<String?>(null) }
     var storage by remember { mutableStateOf<StorageInfo?>(null) }
     var storageError by remember { mutableStateOf(false) }
     var storageReload by remember { mutableStateOf(0) }
+    /** First-aid copies kept under library/recovery. */
+    var recoveryCopies by remember { mutableStateOf(0) }
 
     /** Picked backup URI awaiting the merge/replace mode choice. */
     var restoreTarget by remember { mutableStateOf<Uri?>(null) }
+
+    var confirmResetDefaults by remember { mutableStateOf(false) }
 
     fun showMessage(message: String) {
         scope.launch { snackbar.showSnackbar(message) }
     }
 
     LaunchedEffect(Unit) {
+        // Honest reads: Missing = valid first run; Corrupt = explicit banner
+        // with the recovery route, never a silent empty reset.
         try {
             val loaded = withContext(Dispatchers.IO) { prefsStore.loadReadingPrefs() }
             prefs = loaded
             persistedPrefs = loaded
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
-            showMessage("Couldn't load saved settings. Defaults are shown.")
+            readingSettingsCorrupt = true
+        }
+        try {
+            when (withContext(Dispatchers.IO) { appearanceStore.read() }) {
+                is ReadResult.Loaded -> Unit // initialAppTheme already carries it
+                ReadResult.Missing -> Unit
+                is ReadResult.Corrupt -> appearanceCorrupt = true
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            showMessage("Folio's appearance setting could not be read.")
         } finally {
             prefsLoaded = true
         }
     }
 
-    // One writer, strictly ordered. Rapid taps cannot persist out of order, and
-    // a failed write reverts only when no newer edit is already queued.
+    // One writer, strictly ordered. A failed write reverts only when no newer
+    // edit is already queued.
     LaunchedEffect(prefsLoaded) {
         if (!prefsLoaded) return@LaunchedEffect
         while (true) {
@@ -162,16 +187,21 @@ fun SettingsScreen() {
             try {
                 withContext(Dispatchers.IO) { prefsStore.saveReadingPrefs(next) }
                 persistedPrefs = next
+                // A successful save resolves a stale corrupt-settings state.
+                readingSettingsCorrupt = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 if (prefs == next) prefs = persistedPrefs
-                showMessage("Couldn't save settings. Check free space and try again.")
+                showMessage(
+                    error.message?.takeIf { it.isNotBlank() }
+                        ?: "Couldn't save settings. Check free space and try again."
+                )
             }
         }
     }
 
-    fun updatePrefs(next: ReadingPrefs) {
+    fun commitPrefs(next: ReadingPrefs) {
         if (!prefsLoaded) return
         prefs = next
         writes.trySend(next)
@@ -186,6 +216,33 @@ fun SettingsScreen() {
         } catch (error: Exception) {
             storageError = true
             null
+        }
+        recoveryCopies = try {
+            withContext(Dispatchers.IO) { recoveryCopyCount(context) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            0
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri == null || busy) return@rememberLauncherForActivityResult
+        busy = true
+        busyLabel = "Exporting backup…"
+        scope.launch {
+            val message = try {
+                withContext(Dispatchers.IO) { exportBackup(context, uri) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                "Couldn't write a backup. ${error.message ?: "Check free space and try again."}"
+            }
+            busy = false
+            busyLabel = null
+            showMessage(message)
         }
     }
 
@@ -219,7 +276,9 @@ fun SettingsScreen() {
             title = { Text("Restore backup") },
             text = {
                 Text(
-                    "Merge adds missing items and keeps local data. Replace wipes this " +
+                    "The ZIP can include books, the library manifest, annotations, " +
+                        "reading progress, collections and the global reading settings.json. " +
+                        "Merge adds missing items and keeps local data. Replace wipes this " +
                         "library first (a rollback copy is kept if anything fails). Both use " +
                         "the newest notes/progress."
                 )
@@ -250,10 +309,62 @@ fun SettingsScreen() {
         )
     }
 
+    if (confirmResetDefaults) {
+        AlertDialog(
+            onDismissRequest = { confirmResetDefaults = false },
+            title = { Text("Reset reading defaults?") },
+            text = {
+                Text(
+                    "All reading defaults return to the factory values. Books that opened " +
+                        "with their own settings keep them; nothing else changes."
+                )
+            },
+            confirmButton = {
+                FolioDestructiveTextButton(
+                    text = "Reset defaults",
+                    onClick = {
+                        confirmResetDefaults = false
+                        commitPrefs(ReadingPrefs())
+                    },
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmResetDefaults = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    val corruptMessages = remember(readingSettingsCorrupt, appearanceCorrupt) {
+        buildList {
+            if (readingSettingsCorrupt) {
+                add(
+                    "Your saved reading settings are unreadable — defaults are shown. " +
+                        "Nothing is lost: when you save new settings the unreadable file " +
+                        "is preserved in library/recovery first."
+                )
+            }
+            if (appearanceCorrupt) {
+                add(
+                    "Folio's appearance setting is unreadable — System is active. The " +
+                        "unreadable file is preserved in library/recovery when you choose " +
+                        "another option."
+                )
+            }
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = { (context as? ComponentActivity)?.finish() }) {
+                        Icon(
+                            FolioIcons.ArrowLeft,
+                            contentDescription = "Go back",
+                        )
+                    }
+                },
                 title = { Text("Settings", style = MaterialTheme.typography.titleLarge) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -268,7 +379,39 @@ fun SettingsScreen() {
                 .imePadding(),
             contentPadding = PaddingValues(bottom = FolioSpacing.x8),
         ) {
-            item("reading-header") { FolioSectionHeader(text = "Reading") }
+            if (corruptMessages.isNotEmpty()) {
+                item("corrupt-banner") {
+                    CorruptBanner(corruptMessages)
+                }
+            }
+
+            item("appearance-header") { FolioSectionHeader(text = "Appearance") }
+            item("appearance-group") {
+                FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
+                    AppThemePicker(
+                        selected = appTheme,
+                        onSelect = { key ->
+                            if (key == appTheme) return@AppThemePicker
+                            appTheme = key
+                            appearanceCorrupt = false
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { appearanceStore.save(key) }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    showMessage(
+                                        error.message?.takeIf { it.isNotBlank() }
+                                            ?: "Couldn't save the appearance setting."
+                                    )
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+
+            item("reading-header") { FolioSectionHeader(text = "Reading defaults") }
             item("reading-group") {
                 FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
                     if (!prefsLoaded) {
@@ -281,12 +424,22 @@ fun SettingsScreen() {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(0.4f))
                         }
                     } else {
-                        DefaultThemePicker(
+                        ReadingEditorSection("Preview") {
+                            ReadingPagePreview(
+                                prefs = prefs,
+                                modifier = Modifier.padding(horizontal = FolioSpacing.x2),
+                            )
+                        }
+                        ReadingPrefsEditor(
                             prefs = prefs,
-                            onSelect = { key -> updatePrefs(prefs.copy(theme = key)) },
+                            onPrefsChange = ::commitPrefs,
+                            // Preview updates the DISPLAY only; persistence
+                            // happens on commit — no write storm (audit S1).
+                            onPreview = { next -> if (prefsLoaded) prefs = next },
                         )
                         Text(
-                            "Default for new books. Changes made inside a book stay with that book.",
+                            "Applies to new books. Changes made inside a book stay with " +
+                                "that book until you reset it there.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(
@@ -296,11 +449,16 @@ fun SettingsScreen() {
                                 bottom = FolioSpacing.x3,
                             ),
                         )
+                        FolioSettingsRow(
+                            title = "Reset reading defaults",
+                            summary = "Factory values for new books. Per-book settings are untouched.",
+                            onClick = { confirmResetDefaults = true },
+                        )
                     }
                 }
             }
 
-            item("backup-header") { FolioSectionHeader(text = "Backup") }
+            item("backup-header") { FolioSectionHeader(text = "Backup & restore") }
             item("backup-group") {
                 FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
                     if (busy) {
@@ -320,25 +478,10 @@ fun SettingsScreen() {
                     }
                     FolioSettingsRow(
                         title = "Export backup",
-                        summary = "Books, notes, progress and collections. Per-book display " +
-                            "settings stay on this device.",
+                        summary = "Books, notes, progress, collections and reading settings — " +
+                            "you pick the location.",
                         enabled = !busy,
-                        onClick = {
-                            busy = true
-                            busyLabel = "Exporting backup…"
-                            scope.launch {
-                                val message = try {
-                                    withContext(Dispatchers.IO) { exportBackup(context) }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (error: Exception) {
-                                    "Couldn't write a backup. ${error.message ?: "Check free space and try again."}"
-                                }
-                                busy = false
-                                busyLabel = null
-                                showMessage(message)
-                            }
-                        },
+                        onClick = { exportLauncher.launch(generateBackupFilename()) },
                     )
                     FolioSettingsRow(
                         title = "Restore backup",
@@ -349,7 +492,7 @@ fun SettingsScreen() {
                 }
             }
 
-            item("storage-header") { FolioSectionHeader(text = "Storage") }
+            item("storage-header") { FolioSectionHeader(text = "Storage & recovery") }
             item("storage-group") {
                 FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
                     val current = storage
@@ -359,7 +502,7 @@ fun SettingsScreen() {
                         else -> "Calculating…"
                     }
                     FolioSettingsRow(
-                        title = "Library size",
+                        title = "Library use",
                         value = current?.let { formatBytes(it.libraryBytes) } ?: valueOrState,
                         summary = "Books, notes, progress and search index.",
                     )
@@ -371,6 +514,16 @@ fun SettingsScreen() {
                     FolioSettingsRow(
                         title = "Free space",
                         value = current?.let { formatBytes(it.freeBytes) } ?: valueOrState,
+                    )
+                    FolioSettingsRow(
+                        title = "Recovery copies",
+                        value = when (recoveryCopies) {
+                            0 -> "None"
+                            1 -> "1 copy"
+                            else -> "$recoveryCopies copies"
+                        },
+                        summary = "First-aid copies Folio kept when a file was unreadable " +
+                            "(library/recovery). They are never deleted by Folio.",
                     )
                     if (storageError) {
                         FolioSettingsRow(
@@ -394,147 +547,70 @@ fun SettingsScreen() {
     }
 }
 
+/**
+ * Persistent corrupt-state banners (S1 audit Phase 2): corruption is named
+ * louder than an empty first-run state, with the recovery route spelled out.
+ */
 @Composable
-private fun DefaultThemePicker(
-    prefs: ReadingPrefs,
-    onSelect: (String) -> Unit,
-) {
-    // Intentional horizontal scroller: on narrow phones all five swatches do
-    // not fit, so soft edge fades (only when more can be scrolled) signal that
-    // the row continues off-screen instead of leaving a clipped "System".
-    val listState = rememberLazyListState()
-    Box {
-        LazyRow(
-            state = listState,
-            horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
-            contentPadding = PaddingValues(
-                start = FolioSpacing.x4,
-                end = FolioSpacing.x6,
-                top = FolioSpacing.x3,
-            ),
-            modifier = Modifier.selectableGroup(),
-        ) {
-            items(THEME_OPTIONS, key = { it.key }) { option ->
-                val selected = prefs.theme == option.key
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .selectable(
-                            selected = selected,
-                            role = Role.RadioButton,
-                            onClick = { onSelect(option.key) },
-                        )
-                        .padding(bottom = FolioSpacing.x2),
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(option.pageArgb),
-                        border = BorderStroke(
-                            width = if (selected) 2.dp else 1.dp,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.outline
-                            },
-                        ),
-                        modifier = Modifier
-                            .size(width = 56.dp, height = 44.dp),
-                    ) {
-                        if (option.isSystem) {
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .background(Color(0xFFFAFAF7)),
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .background(Color(0xFF121214)),
-                                )
-                            }
-                        } else {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    "Aa",
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        color = Color(option.inkArgb),
-                                    ),
-                                )
-                            }
-                        }
-                        if (selected) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(4.dp),
-                                contentAlignment = Alignment.TopEnd,
-                            ) {
-                                Text(
-                                    "✓",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        option.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (selected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        maxLines = 1,
-                        modifier = Modifier.padding(top = FolioSpacing.x1),
-                    )
+private fun CorruptBanner(messages: List<String>) {
+    Surface(
+        shape = RoundedCornerShape(FolioRadii.card),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        modifier = Modifier
+            .padding(horizontal = FolioSpacing.x5)
+            .fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x3)) {
+            messages.forEachIndexed { index, message ->
+                if (index > 0) {
+                    Spacer(modifier = Modifier.padding(top = FolioSpacing.x1))
                 }
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
-        EdgeFade(
-            atStart = listState.canScrollBackward,
-            atEnd = listState.canScrollForward,
-        )
     }
 }
 
-/**
- * 12dp soft fades at the ends of a horizontally scrollable strip, drawn only
- * while content still overflows in that direction. Purely decorative for the
- * eye — pointer input passes through to the row underneath.
- */
+/** App-interface appearance: System / Light / Dark (S1 audit Phase 2). */
 @Composable
-private fun EdgeFade(atStart: Boolean, atEnd: Boolean) {
-    if (!atStart && !atEnd) return
-    val surface = MaterialTheme.colorScheme.surface
-    Row(modifier = Modifier.fillMaxWidth()) {
-        if (atStart) {
-            Box(
-                modifier = Modifier
-                    .size(width = 12.dp, height = 44.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(surface.copy(alpha = 0f), surface.copy(alpha = 1f)),
-                        ),
-                    ),
-            )
-        }
-        Spacer(modifier = Modifier.weight(1f))
-        if (atEnd) {
-            Box(
-                modifier = Modifier
-                    .size(width = 12.dp, height = 44.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(surface.copy(alpha = 1f), surface.copy(alpha = 0f)),
-                        ),
-                    ),
+private fun AppThemePicker(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    val options = listOf(
+        AppAppearanceStore.KEY_SYSTEM to "System",
+        AppAppearanceStore.KEY_LIGHT to "Light",
+        AppAppearanceStore.KEY_DARK to "Dark",
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
+        horizontalArrangement = Arrangement.spacedBy(FolioSpacing.x2),
+    ) {
+        options.forEach { (key, label) ->
+            ReadingSegment(
+                label = label,
+                selected = selected == key,
+                onClick = { onSelect(key) },
+                modifier = Modifier.weight(1f),
             )
         }
     }
+    Text(
+        "Changes Folio's own screens. The reader page follows its own reading settings.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(
+            start = FolioSpacing.x4,
+            end = FolioSpacing.x4,
+            bottom = FolioSpacing.x3,
+        ),
+    )
 }
 
 private data class StorageInfo(
@@ -552,42 +628,37 @@ private fun computeStorage(context: Context): StorageInfo {
     )
 }
 
+private fun recoveryCopyCount(context: Context): Int =
+    File(context.filesDir, RECOVERY_DIR)
+        .listFiles()?.count { it.isFile } ?: 0
+
 /**
  * Streams a verified, PWA-compatible backup ZIP (entries added one file at a
- * time — the whole library never sits in memory). The archive is written to a
- * temporary ".part" file first and renamed only after the stream completes, so
- * an interrupted export never leaves a file that looks like a finished backup.
- * Caller is on Dispatchers.IO.
+ * time — the whole library never sits in memory) into the user-chosen
+ * location. The archive is written to a temporary ".part" file in the cache
+ * first and only copied to the target after the stream completes and flushes,
+ * so an interrupted export never leaves a half-written document. Caller is on
+ * Dispatchers.IO.
  */
-private suspend fun exportBackup(context: Context): String {
+private suspend fun exportBackup(context: Context, target: Uri): String {
     val store = AppFileStore(context.filesDir)
-    val outDir = File(context.getExternalFilesDir(null), "backups").apply { mkdirs() }
-    // PWA contract name (folio-backup-YYYYMMDD-HHMM.zip); never truncate an
-    // earlier backup from the same minute — add a serial suffix instead.
-    val base = generateBackupFilename()
-    var out = File(outDir, base)
-    var attempt = 1
-    while (out.exists()) {
-        out = File(outDir, base.removeSuffix(".zip") + "-$attempt.zip")
-        attempt++
-    }
-    val temp = File.createTempFile("folio-export-", ".part", outDir)
+    val temp = File.createTempFile("folio-export-", ".part", context.cacheDir)
     try {
         FileOutputStream(temp).use { fos ->
             exportBackupZip(store, fos)
             fos.flush()
             fos.fd.sync()
         }
-        if (out.exists() && !out.delete()) {
-            throw java.io.IOException("Could not replace the existing backup file")
-        }
-        if (!temp.renameTo(out)) {
-            temp.copyTo(out, overwrite = true)
+        val out = context.contentResolver.openOutputStream(target)
+            ?: throw java.io.IOException("Could not write to the picked location")
+        out.use { stream ->
+            temp.inputStream().use { input -> input.copyTo(stream) }
+            stream.flush()
         }
     } finally {
-        if (temp.exists()) temp.delete()
+        temp.delete()
     }
-    return "Backup saved: ${out.name}"
+    return "Backup exported."
 }
 
 /**
