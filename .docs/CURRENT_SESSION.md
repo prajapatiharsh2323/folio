@@ -3,32 +3,56 @@
 > This file is the recovery anchor. After every meaningful milestone, update:
 > date, verified state, what changed, blockers, and the **exact next action**.
 
-- **Last updated:** 2026-10-29 (knowledge-system build-out session)
-- **Last verified project state:** `main` clean and up to date with `origin/main`
-  (commit `ac6332f`, FIX-E release hardening, 2026-10-27). That commit was
-  verified in its own session: 340/340 unit tests, `lintDebug` 0 errors,
-  `assembleDebug` green. Device journeys remain unverified (no device/KVM in VM).
-- **This session changed:** documentation only — created the `.docs/` operating
-  layer (this KB: README, PROJECT_CONTEXT, TASKS, CURRENT_SESSION, sessions/,
-  audits/, decisions/, improvements/, archive/), moved root reports into the KB
-  with reference updates, restored `audits/ui-ux/EPUB_READER_AUDIT_REPORT.md`
-  from git history (`d793212^` — it was deleted as PWA spill-over), wrote root
-  `AGENTS.md`, fixed the stale PWA Quick Start in the root README. No app code touched.
-- **Committed & pushed:** `1bc7ef7` → verified push output `ac6332f..1bc7ef7
-  main -> main` on `origin/main` (2026-10-29).
+- **Last updated:** 2026-10-29 (session M-25 — S1 audit Phase 0 landed)
+- **Last verified project state:** HEAD is `9058c8e` + the M-25 Phase 0 commit
+  (user's `9058c8e` deleted `desktop-docs/` — deliberate, not touched). Phase 0
+  changes verified in THIS VM on the freshly re-provisioned SDK:
+  **350/350 unit tests, lintDebug clean, assembleDebug green** (was 340 tests
+  before M-25's +10). Release-gate behavior verified on the build system:
+  `assembleRelease` fails without credentials; `-Pfolio.localReleaseSigning=true`
+  builds a debug-signed APK (apksigner confirmed, never for publication).
+  Device journeys NOT verified (no device/KVM here) — user-side.
+- **This session changed (Phase 0 of `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md`):**
+  1. `core/store/PrefsStore.kt` — preservation must exist AND hash-verify
+     before the save proceeds; all failure paths throw and abort the save
+     (`DocPrefsStore` untouched — already throwing).
+  2. `core/backup/BackupZip.kt` — streaming caps on real decompressed bytes
+     (`readEntryStreamed`/`readEntryLimited`, incremental SHA-256, entry 512 MB
+     / total 1 GB / metadata 16 MB / user-state 64 MB), injectable
+     `BackupLimitsSpec`; BackupZip semantics/schema untouched.
+  3. `core/backup/BackupRestore.kt` — cap-aware reads throughout; `limits`
+     param (default = production).
+  4. `app/build.gradle.kts` — signing fail-safe: missing credentials refuse
+     release tasks (`folio-release-sign-gate`); debug-keystore fallback only
+     behind explicit `folio.localReleaseSigning` / `FOLIO_LOCAL_RELEASE_SIGNING`
+     with a non-publishable banner.
+  5. Tests: PrefsStoreTest +3 fault-injection; new `BackupZipLimitsTest`
+     (7: mid-stream abort, parity, entry/total/metadata cap refusals,
+     refused-Replace keeps local library byte-identical, real 640 MB
+     zero-bomb). ZIP suites otherwise preserved untouched (22/22 green).
+  6. Docs updated in the same commit: audit adoption file
+     (`.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md`),
+     `.docs/results/M25-s1-phase0.md`, TASKS.md rows, MOBILE-TRACKING log.
 
 ## Blockers
 
-- Android SDK missing at `/tmp/opencode/android-sdk` in this VM — gates cannot
-  run until re-provisioned (or `sdk.dir` repointed). See `PROJECT_CONTEXT.md`.
-- Device verification (user-side, APK manual round) still pending from FIX-E/D1.
+- No device/emulator: S1 device checklist (TBD Phase 4) is user-side.
+- `assembleRelease` for a real release needs git-ignored
+  `mobile/keystore.properties` (user-side decision 3 of the S1 audit).
 
 ## Exact next action
 
-1. ~~Commit & push the knowledge system~~ **DONE** — `1bc7ef7` pushed (verified).
-2. If authorized to build: install SDK 35 + build-tools via `sdkmanager`, then run
-   `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` in
-   `mobile/` and record the gate results here (nothing has re-verified HEAD in
-   this VM yet).
-3. Then pick the next task from `TASKS.md` (highest value: restore the
-   `mobile-ci` GitHub workflow, or start the desktop port Phase 0).
+1. **S1 Phase 1 — one-step Drive sync removal** (open the S1 audit §Phase 1 in
+   `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md` + execution order):
+   repository-wide symbol sweep (CloudSyncWorker/CloudSyncScheduler/DriveAuth/
+   DriveSyncProvider/SyncManager/SyncProtocol/SyncFailure/FakeSyncProvider/
+   `folio-cloud-sync`/`folio-drive-auth`); delete sync code+tests+UI; remove
+   WorkManager + Google deps/catalog aliases; remove `GET_ACCOUNTS`
+   (and `ACCESS_NETWORK_STATE` if sync-only); `INTERNET` usage sweep first;
+   drop Google META-INF excludes only after a clean assemble; fix the stale
+   "and sync state" storage copy; ZIP regression suite green after every
+   batch; gates + push per phase.
+2. Keep the S1 order: Phase 2 Settings rebuild → Phase 3 reader recovery →
+   Phase 4 library/notes finish + PDF dead-code removal (user decision 2).
+3. Later: decide the Play-side work split (M6), CI workflow restore
+   (`mobile-ci.yml`), `auditscratch/` + repo-hygiene items (user's call).

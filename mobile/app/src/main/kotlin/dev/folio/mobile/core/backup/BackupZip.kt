@@ -29,7 +29,61 @@ import java.util.zip.ZipOutputStream
 object BackupLimits {
     const val MAX_ENTRIES = 20000
     const val MAX_TOTAL_UNCOMPRESSED = 1024L * 1024L * 1024L // 1 GB
+
+    /** Per-entry uncompressed cap. Enforced DURING streaming (audit P0: a
+     *  hostile entry must abort before its bytes can pile up in the heap, not
+     *  only after they have). 512 MB is ~10× the 50 MB import cap, so no
+     *  schema-1 archive produced by Folio ever comes near it. */
+    const val MAX_ENTRY_UNCOMPRESSED = 512L * 1024L * 1024L
+
+    /** Tiny metadata entries are parsed into objects — capped hard. */
+    const val MAX_METADATA_UNCOMPRESSED = 16L * 1024L * 1024L
+
+    /** User-state JSON entries (annotations/progress/collections/settings). */
+    const val MAX_USER_STATE_UNCOMPRESSED = 64L * 1024L * 1024L
+
+    /** Entries parsed as metadata before verification concludes. */
+    val METADATA_ENTRIES = setOf("backup.json", "library/manifest.json")
+
+    /** Entries parsed as user state (byte-compatible PWA contract). */
+    val USER_STATE_ENTRIES = setOf(
+        "library/user/annotations.json",
+        "library/user/progress.json",
+        "library/user/collections.json",
+        "library/user/settings.json"
+    )
 }
+
+/**
+ * A per-verification limit set. Defaults to [BackupLimits]; tests inject
+ * smaller values so an over-limit abort can be exercised in milliseconds
+ * instead of streaming real 1 GB bombs.
+ */
+data class BackupLimitsSpec(
+    val maxEntries: Int,
+    val maxTotalUncompressed: Long,
+    val maxEntryUncompressed: Long,
+    val maxMetadataUncompressed: Long,
+    val maxUserStateUncompressed: Long,
+) {
+    companion object {
+        val DEFAULT = BackupLimitsSpec(
+            maxEntries = BackupLimits.MAX_ENTRIES,
+            maxTotalUncompressed = BackupLimits.MAX_TOTAL_UNCOMPRESSED,
+            maxEntryUncompressed = BackupLimits.MAX_ENTRY_UNCOMPRESSED,
+            maxMetadataUncompressed = BackupLimits.MAX_METADATA_UNCOMPRESSED,
+            maxUserStateUncompressed = BackupLimits.MAX_USER_STATE_UNCOMPRESSED,
+        )
+    }
+}
+
+/** Thrown when an entry's ACTUAL decompressed byte count exceeds its limit.
+ *  Counted from real streamed bytes, never trusted from ZIP metadata. */
+class EntryOversizeException(
+    val entryName: String,
+    val bytesRead: Long,
+    val limit: Long,
+) : RuntimeException("Entry '$entryName' expands past its limit: $bytesRead > $limit")
 
 /** Validates zip entry names against path traversal and drive-letter abuse. */
 fun checkPathSafety(entryName: String): Boolean {
@@ -79,12 +133,71 @@ class StagedArchive private constructor(
 
     fun hasEntry(name: String): Boolean = zip.getEntry(name) != null
 
-    /** Decompressed bytes of one entry (a few MB max for a single book file). */
+    /**
+     * Decompressed bytes of one entry (a few MB max for a single book file).
+     * Kept as a diagnostic/small-entry reader; verification and restore use
+     * the cap-aware [readEntryLimited] / [readEntryStreamed] below so no
+     * uncapped decompression path remains in the production pipeline.
+     */
     fun readEntry(name: String): ByteArray? =
         zip.getEntry(name)?.let { e -> zip.getInputStream(e).use { it.readBytes() } }
 
-        fun readTextEntry(name: String): String? =
+    fun readTextEntry(name: String): String? =
         readEntry(name)?.decodeToString()
+
+    /**
+     * Streams one entry through [consume] in BUFFER chunks, counting ACTUAL
+     * decompressed bytes. Returns the counted size (null = entry missing);
+     * throws [EntryOversizeException] the instant the count passes [limit] —
+     * the heap never holds more than one chunk of an oversized entry.
+     * "Count what really arrived" is the rule; a ZIP-declared entry size is
+     * only a cheap pre-flight hint and is never trusted over real bytes.
+     */
+    fun readEntryStreamed(
+        name: String,
+        limit: Long,
+        consume: (chunk: ByteArray, len: Int) -> Unit
+    ): Long? {
+        val entry = zip.getEntry(name) ?: return null
+        if (entry.size > 0 && entry.size > limit) {
+            throw EntryOversizeException(name, entry.size, limit)
+        }
+        val chunk = ByteArray(BUFFER)
+        var total = 0L
+        zip.getInputStream(entry).use { ins ->
+            while (true) {
+                val n = ins.read(chunk)
+                if (n < 0) break
+                if (n > 0) {
+                    total += n
+                    if (total > limit) {
+                        throw EntryOversizeException(name, total, limit)
+                    }
+                    consume(chunk, n)
+                }
+            }
+        }
+        return total
+    }
+
+    /**
+     * Whole-entry bytes read through the streaming counter with a hard cap:
+     * chunks accumulate only while the running total stays under [limit], so
+     * allocation is bounded by the configured cap.
+     */
+    fun readEntryLimited(name: String, limit: Long): ByteArray? {
+        val chunks = ArrayList<ByteArray>()
+        val size = readEntryStreamed(name, limit) { chunk, len ->
+            chunks += chunk.copyOf(len)
+        } ?: return null
+        val out = ByteArray(size.toInt())
+        var off = 0
+        for (c in chunks) {
+            c.copyInto(out, off)
+            off += c.size
+        }
+        return out
+    }
 
     override fun close() {
         runCatching { zip.close() }
@@ -132,7 +245,10 @@ class StagedArchive private constructor(
  * `corrupted` issue). Contents stay on disk — only one entry byte-buffer at
  * a time is in memory.
  */
-fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
+fun unzipAndVerifyBackup(
+    archive: StagedArchive,
+    limits: BackupLimitsSpec = BackupLimitsSpec.DEFAULT
+): VerificationResult {
     val issues = mutableListOf<VerificationIssue>()
     val digests = HashMap<String, String>()
     var totalFiles = 0
@@ -140,6 +256,20 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
 
     var metMeta: String? = null
     var metManifest: String? = null
+
+    /** Limit for one entry: min of its class cap, the per-entry cap and the
+     *  remaining share of the total cap. Null = the total cap is already
+     *  spent (caller reports total-size excess without another read). */
+    fun limitFor(name: String): Long? {
+        val remaining = limits.maxTotalUncompressed - totalSize
+        if (remaining <= 0) return null
+        val classCap = when {
+            name in BackupLimits.METADATA_ENTRIES -> limits.maxMetadataUncompressed
+            name in BackupLimits.USER_STATE_ENTRIES -> limits.maxUserStateUncompressed
+            else -> Long.MAX_VALUE
+        }
+        return minOf(classCap, limits.maxEntryUncompressed, remaining)
+    }
 
     run unzip@{
         try {
@@ -156,17 +286,53 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
                 }
                 if (entry.isDirectory) continue
                 totalFiles++
-                if (totalFiles > BackupLimits.MAX_ENTRIES) {
+                if (totalFiles > limits.maxEntries) {
                     issues.add(
                         VerificationIssue(
                             path = "<archive>", reason = "corrupted",
-                            message = "Archive exceeds maximum entry count of ${BackupLimits.MAX_ENTRIES}"
+                            message = "Archive exceeds maximum entry count of ${limits.maxEntries}"
                         )
                     )
                     return@unzip
                 }
-                val bytes = try {
-                    archive.readEntry(name)
+                val limit = limitFor(name)
+                if (limit == null) {
+                    issues.add(
+                        VerificationIssue(
+                            path = "<archive>", reason = "corrupted",
+                            message = "Archive exceeds maximum uncompressed size of ${limits.maxTotalUncompressed / (1024L * 1024L)} MB"
+                        )
+                    )
+                    return@unzip
+                }
+
+                // Streaming verification: document chunks pass through an
+                // incremental SHA-256 only; the entry is NEVER held in the heap
+                // (audit P0: size limits enforced on real decompressed bytes as
+                // they arrive, not after a full ByteArray already exists).
+                val maybeOversize: EntryOversizeException? = try {
+                    val md = java.security.MessageDigest.getInstance("SHA-256")
+                    val size = archive.readEntryStreamed(name, limit) { chunk, len ->
+                        md.update(chunk, 0, len)
+                    }
+                    if (size == null) continue
+                    digests[name] = md.digest().joinToString("") { String.format("%02x", it) }
+                    totalSize += size
+                    if (name in BackupLimits.METADATA_ENTRIES || name in BackupLimits.USER_STATE_ENTRIES) {
+                        // Metadata/user state must be parseable — re-read it
+                        // (bounded by the same limit) into bytes for parsing.
+                        val bytes = archive.readEntryLimited(name, limit)
+                        if (bytes != null) {
+                            when (name) {
+                                "backup.json" -> metMeta = bytes.decodeToString()
+                                "library/manifest.json" -> metManifest = bytes.decodeToString()
+                            }
+                            digests[name] = sha256Hex(bytes)
+                        }
+                    }
+                    null
+                } catch (oversize: EntryOversizeException) {
+                    oversize
                 } catch (e: java.util.zip.ZipException) {
                     // CRC/local-header mismatch on any entry makes the whole
                     // archive untrustworthy.
@@ -177,21 +343,25 @@ fun unzipAndVerifyBackup(archive: StagedArchive): VerificationResult {
                         )
                     )
                     return@unzip
-                } ?: continue
-                totalSize += bytes.size
-                if (totalSize > BackupLimits.MAX_TOTAL_UNCOMPRESSED) {
+                }
+                if (maybeOversize != null) {
+                    // Which constraint was the smaller limit when the stream
+                    // aborted decides the user-facing story: an entry that
+                    // overshoots the REMAINING total budget means the archive
+                    // is genuinely too big; an entry under its own cap means
+                    // that single entry alone is hostile.
+                    val remaining = limits.maxTotalUncompressed - totalSize
+                    val limitedByTotal = maybeOversize.limit >= remaining
                     issues.add(
                         VerificationIssue(
                             path = "<archive>", reason = "corrupted",
-                            message = "Archive exceeds maximum uncompressed size of 1 GB"
+                            message = if (limitedByTotal)
+                                "Archive exceeds maximum uncompressed size of ${limits.maxTotalUncompressed / (1024L * 1024L)} MB"
+                            else
+                                "Archive entry '${maybeOversize.entryName}' expands past the maximum allowed ${maybeOversize.limit} bytes"
                         )
                     )
                     return@unzip
-                }
-                digests[name] = sha256Hex(bytes)
-                when (name) {
-                    "backup.json" -> metMeta = bytes.decodeToString()
-                    "library/manifest.json" -> metManifest = bytes.decodeToString()
                 }
             }
         } catch (e: java.util.zip.ZipException) {

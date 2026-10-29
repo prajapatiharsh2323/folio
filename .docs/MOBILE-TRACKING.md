@@ -269,6 +269,22 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 
 ## Session log
 
+- **Session M-25 (Oct 29, 2026)** — adopted the user's S1 UI/UX/Settings/sync
+  audit (`.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md`; locked decisions:
+  one-step sync removal w/ uninstall-reinstall, PDF out of scope, fail-safe
+  signing, phase-by-phase). Landed **Phase 0** (data safety + release gates):
+  - PrefsStore preservation verified (exists + byte-identical) or save aborts;
+    corrupt `settings.json` can no longer be overwritten silently.
+  - ZIP caps streamed: incremental SHA-256, per-entry 512 MB / total 1 GB /
+    metadata 16 MB / user-state 64 MB on REAL bytes; injectable
+    `BackupLimitsSpec`; 640 MB zero-bomb test; refused-Replace test proves
+    local library byte-identical. Backup schema + semantics untouched.
+  - Signing gate: missing credentials refuse release tasks
+    (`folio-release-sign-gate`); debug key only behind explicit
+    `folio.localReleaseSigning`/`FOLIO_LOCAL_RELEASE_SIGNING`, never publishable.
+  - Baseline re-verified on untouched HEAD `9058c8e` after SDK re-provision.
+  Result: `.docs/results/M25-s1-phase0.md`. Next: Phase 1 (Drive sync removal).
+
 - **Session FIX (Oct 26, 2026)** — UX/UI & Reading-Experience fix plan, in three
   committed batches. Live per-item status: `.docs/FIX-PLAN-TRACKING.md`.
   - **FIX-A (commit `9a63767`)** — P1-15: lock-safe `deleteCollection()` clears

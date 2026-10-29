@@ -69,10 +69,11 @@ object BackupRestore {
         manager: LibraryManager,
         input: InputStream,
         stagingDir: File,
-        mode: RestoreMode
+        mode: RestoreMode,
+        limits: BackupLimitsSpec = BackupLimitsSpec.DEFAULT
     ): Pair<RestoreSummary, VerificationResult> =
         StagedArchive.stage(input, stagingDir).use { archive ->
-            restore(store, manager, archive, mode)
+            restore(store, manager, archive, mode, limits)
         }
 
     /** Restore from an already-staged [archive] (caller closes it). */
@@ -80,7 +81,8 @@ object BackupRestore {
         store: FileStore,
         manager: LibraryManager,
         archive: StagedArchive,
-        mode: RestoreMode
+        mode: RestoreMode,
+        limits: BackupLimitsSpec = BackupLimitsSpec.DEFAULT
     ): Pair<RestoreSummary, VerificationResult> {
         // 0. Kill any leftover from an interrupted earlier restore first: an
         //    unfinished swap is rolled back so the live tree is always coherent
@@ -88,7 +90,7 @@ object BackupRestore {
         RestoreSwap.rollbackPending(store)
 
         // 1. Verify the archive thoroughly before touching local state.
-        val verification = unzipAndVerifyBackup(archive)
+        val verification = unzipAndVerifyBackup(archive, limits)
         val fatal = verification.issues.filter {
             it.reason == "unsafe_path" || it.reason == "corrupted" ||
                     it.path == "library/manifest.json"
@@ -101,7 +103,7 @@ object BackupRestore {
         }
 
         // 2. Validate the backup manifest.
-        val backupManifestBytes = archive.readEntry(MANIFEST_PATH)
+        val backupManifestBytes = archive.readEntryLimited(MANIFEST_PATH, BackupLimits.MAX_METADATA_UNCOMPRESSED)
             ?: throw IllegalArgumentException("Missing library/manifest.json in backup archive")
         val backupManifest: Manifest = runCatching { parseManifest(backupManifestBytes.decodeToString()) }
             .getOrElse { throw IllegalArgumentException("Corrupted library/manifest.json in backup archive") }
@@ -152,10 +154,11 @@ object BackupRestore {
     )
 
     private fun parseUserState(archive: StagedArchive): ParsedUserState {
-        val annotBytes = archive.readEntry("library/user/annotations.json")
-        val progBytes = archive.readEntry("library/user/progress.json")
-        val collBytes = archive.readEntry("library/user/collections.json")
-        val settingsBytes = archive.readEntry("library/user/settings.json")
+        val cap = BackupLimits.MAX_USER_STATE_UNCOMPRESSED
+        val annotBytes = archive.readEntryLimited("library/user/annotations.json", cap)
+        val progBytes = archive.readEntryLimited("library/user/progress.json", cap)
+        val collBytes = archive.readEntryLimited("library/user/collections.json", cap)
+        val settingsBytes = archive.readEntryLimited("library/user/settings.json", cap)
 
         val annotations = if (annotBytes != null) runCatching {
             parseAnnotations(annotBytes.decodeToString())
@@ -261,7 +264,7 @@ object BackupRestore {
                 }
                 if (byId != null) {
                     if (epochMs(bDoc.updatedAt) > epochMs(byId.updatedAt)) {
-                        (unzipped.readEntry("library/docs/${bDoc.slug}/meta.json"))?.let {
+                        (unzipped.readEntryLimited("library/docs/${bDoc.slug}/meta.json", BackupLimits.MAX_ENTRY_UNCOMPRESSED))?.let {
                             store.write("library/docs/${bDoc.slug}/meta.json", it)
                         }
                         val idx = mergedDocs.indexOfFirst { it.id == byId.id }
@@ -276,9 +279,9 @@ object BackupRestore {
 
                 // Write all files belonging to this document (meta.json included).
                 for (f in bDoc.files) {
-                    unzipped.readEntry(f.path)?.let { store.write(f.path, it) }
+                    unzipped.readEntryLimited(f.path, BackupLimits.MAX_ENTRY_UNCOMPRESSED)?.let { store.write(f.path, it) }
                 }
-                unzipped.readEntry("library/docs/${bDoc.slug}/meta.json")?.let {
+                unzipped.readEntryLimited("library/docs/${bDoc.slug}/meta.json", BackupLimits.MAX_ENTRY_UNCOMPRESSED)?.let {
                     store.write("library/docs/${bDoc.slug}/meta.json", it)
                 }
 
@@ -475,7 +478,7 @@ object BackupRestore {
         // 5a. Stage every document file from the archive under the staging tree.
         for (bDoc in backupManifest.docs) {
             for (f in bDoc.files) {
-                val bytes = unzipped.readEntry(f.path)
+                val bytes = unzipped.readEntryLimited(f.path, BackupLimits.MAX_ENTRY_UNCOMPRESSED)
                     ?: throw IllegalArgumentException(
                         "Restore stage failed: ${f.path} is listed but missing from the archive"
                     )
@@ -485,9 +488,10 @@ object BackupRestore {
 
         // 5b. Stage the user state as RAW bytes (byte-compatible PWA contract).
         val userFiles = HashMap<String, ByteArray>()
-        unzipped.readEntry("library/user/annotations.json")?.let { userFiles["library/user/annotations.json"] = it }
-        unzipped.readEntry("library/user/progress.json")?.let { userFiles["library/user/progress.json"] = it }
-        unzipped.readEntry("library/user/collections.json")?.let { userFiles["library/user/collections.json"] = it }
+        val userCap = BackupLimits.MAX_USER_STATE_UNCOMPRESSED
+        unzipped.readEntryLimited("library/user/annotations.json", userCap)?.let { userFiles["library/user/annotations.json"] = it }
+        unzipped.readEntryLimited("library/user/progress.json", userCap)?.let { userFiles["library/user/progress.json"] = it }
+        unzipped.readEntryLimited("library/user/collections.json", userCap)?.let { userFiles["library/user/collections.json"] = it }
         if (settingsBytes != null && settingsOk) {
             userFiles["library/user/settings.json"] = settingsBytes
         } else if (settingsBytes != null && !settingsOk) {

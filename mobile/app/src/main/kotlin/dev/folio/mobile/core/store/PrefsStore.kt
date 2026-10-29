@@ -25,7 +25,9 @@ import kotlinx.coroutines.CancellationException
  * [ReadResult.Corrupt], [loadReadingPrefs] throws
  * [LibraryFileCorruptException] (callers show defaults with an explicit
  * message), and [saveReadingPrefs] preserves the unreadable bytes under
- * [RECOVERY_DIR] before overwriting them.
+ * [RECOVERY_DIR] (verified byte-identical) before overwriting them — if the
+ * preservation cannot be confirmed, the save aborts and the corrupt source
+ * stays exactly as it was.
  */
 class PrefsStore(private val store: FileStore) {
 
@@ -78,27 +80,53 @@ class PrefsStore(private val store: FileStore) {
     suspend fun saveReadingPrefs(prefs: ReadingPrefs) {
         // Never overwrite unreadable user settings without keeping the bytes.
         if (readReadingPrefs() is ReadResult.Corrupt) {
+            // Throws when the recovery copy is not written AND verifiably
+            // byte-identical — the corrupt source must stay intact.
             preserveCorrupt()
         }
         store.write(SETTINGS_PATH, json.encodeToString(ReadingPrefs.serializer(), prefs))
     }
 
+    /**
+     * Preserves the unreadable settings bytes under [RECOVERY_DIR] before the
+     * caller overwrites them.
+     *
+     * Preservation is only "done" when the copy exists and reads back
+     * byte-identical to the source. Anything else (the write itself fails,
+     * the copy vanishes, silent bit-rot) throws and [saveReadingPrefs] aborts:
+     * overwriting the user's unreadable settings without a verified copy would
+     * destroy the only copy of their data. Callers already handle a failing
+     * save with a visible error, so throwing is the safe failure mode.
+     */
     private suspend fun preserveCorrupt() {
+        val bytes = store.read(SETTINGS_PATH)
         val stamp = IsoTime.now().replace(":", "-").replace(".", "-")
         val dest = "$RECOVERY_DIR/settings.json-corrupt-$stamp"
         try {
-            store.write(dest, store.read(SETTINGS_PATH))
-            android.util.Log.w(
-                "PrefsStore",
-                "Preserved unreadable reader settings at $dest before replacing them"
-            )
+            store.write(dest, bytes)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            android.util.Log.w(
-                "PrefsStore",
-                "Could not preserve unreadable reader settings before replacing them: ${error.message}"
+            throw IllegalStateException(
+                "Could not preserve unreadable reader settings before replacing " +
+                    "them (${error.message}) — save aborted, your old settings file is unchanged",
+                error
             )
         }
+        val copied = try {
+            store.exists(dest) && store.read(dest).contentEquals(bytes)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            false
+        }
+        check(copied) {
+            "Recovery copy of unreadable reader settings not confirmed at $dest — " +
+                "save aborted, your old settings file is unchanged"
+        }
+        android.util.Log.w(
+            "PrefsStore",
+            "Preserved unreadable reader settings at $dest before replacing them"
+        )
     }
 }

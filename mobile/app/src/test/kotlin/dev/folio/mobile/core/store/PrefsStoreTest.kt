@@ -130,4 +130,87 @@ class PrefsStoreTest {
             PrefsStore.SETTINGS_PATH.startsWith("library/user/")
         )
     }
+
+    // ----- Fault-injected preservation (audit P0: no silent overwrite) -----
+
+    /** Ways a recovery copy can be lost after the attempt. */
+    private enum class RecoveryFault {
+        /** Recovery write throws (disk full, permissions, injected IO failure). */
+        WRITE_FAILS,
+
+        /** Recovery write "succeeds" but the copy cannot be read back. */
+        EVAPORATES,
+
+        /** Recovery copy exists but its bytes no longer match the source. */
+        MUTATES,
+    }
+
+    /**
+     * [FileStore] wrapper injecting a fault into recovery-directory writes.
+     * Everything else delegates to a real [AppFileStore] on a temp folder.
+     */
+    private class FaultyRecoveryStore(
+        private val delegate: AppFileStore,
+        private val fault: RecoveryFault,
+    ) : FileStore by delegate {
+
+        override suspend fun write(path: String, data: ByteArray) {
+            if (fault == RecoveryFault.WRITE_FAILS && path.startsWith("library/recovery/")) {
+                throw java.io.IOException("injected: recovery write failed")
+            }
+            delegate.write(path, data)
+        }
+
+        override suspend fun exists(path: String): Boolean {
+            if (fault == RecoveryFault.EVAPORATES && path.startsWith("library/recovery/")) {
+                return false
+            }
+            return delegate.exists(path)
+        }
+
+        override suspend fun read(path: String): ByteArray {
+            val bytes = delegate.read(path)
+            if (fault == RecoveryFault.MUTATES && path.startsWith("library/recovery/")) {
+                return bytes + byteArrayOf(0x58) // silent bit-rot on the copy
+            }
+            return bytes
+        }
+    }
+
+    private fun assertSaveAbortedAndSourceIntact(fault: RecoveryFault) = runBlocking {
+        val root = store()
+        val corrupt = "not json[".encodeToByteArray()
+        root.write(PrefsStore.SETTINGS_PATH, corrupt)
+
+        val prefsStore = PrefsStore(FaultyRecoveryStore(root, fault))
+        try {
+            prefsStore.saveReadingPrefs(ReadingPrefs(theme = "warm"))
+            fail("a lost/unverified recovery copy must abort the save, not overwrite the source")
+        } catch (expected: IllegalStateException) {
+            assertTrue(
+                "message must tell the user their data is intact: ${expected.message}",
+                expected.message != null &&
+                    expected.message!!.contains("save aborted")
+            )
+        }
+
+        // The corrupt source is byte-for-byte unchanged and still corrupt.
+        assertArrayEquals(corrupt, root.read(PrefsStore.SETTINGS_PATH))
+        assertTrue(prefsStore.readReadingPrefs() is ReadResult.Corrupt)
+    }
+
+    @Test
+    fun `a failed recovery write aborts the save keeping corrupt settings`() = runBlocking<Unit> {
+        assertSaveAbortedAndSourceIntact(RecoveryFault.WRITE_FAILS)
+    }
+
+    @Test
+    fun `an unreadable recovery copy aborts the save keeping corrupt settings`() = runBlocking<Unit> {
+        assertSaveAbortedAndSourceIntact(RecoveryFault.EVAPORATES)
+    }
+
+    @Test
+    fun `a mutated recovery copy aborts the save keeping corrupt settings`() = runBlocking<Unit> {
+        assertSaveAbortedAndSourceIntact(RecoveryFault.MUTATES)
+    }
 }

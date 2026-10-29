@@ -11,10 +11,11 @@
 - **`mobile/`** — native Android app (Kotlin + Jetpack Compose + Readium),
   package `dev.folio.mobile`, `versionName 0.2.0` / `versionCode 2`. This is the
   shipped artifact (user manual-tests from debug APKs built at repo root).
-- **`desktop-docs/`** — locked plan for the **next** target: Folio Desktop for
-  Windows (Tauri 2 + TS/React + Readium web), full schema-1 compatibility with
-  the mobile app, UI = port of `.docs/design-system.md` + `mobile/` behavior.
-  Doc 08 contains the phased build prompt pack.
+- **`desktop-docs/`** — deleted from disk by the user (commit `9058c8e`,
+  2026-10-29); the Tauri 2 + TS/React desktop-port plan (schema-1 compatible
+  with the mobile app) remains recoverable from git history only. Treat the
+  desktop port as PAUSED until the user re-instates specs; do not build from
+  the old doc references.
 - **Dropped from v1 scope**: TTS, PDF rendering/extraction, audio (user decision,
   2026-10-17 — post-v1 backlog, not debt). EPUB-first.
 
