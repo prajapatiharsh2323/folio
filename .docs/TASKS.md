@@ -11,7 +11,7 @@ PROGRESS`, `BLOCKED`, `DONE`.
 
 | Task | Priority | Status | Notes / source |
 |---|---|---|---|
-| **S1 audit Phases 3–4** — reader recovery, library/notes finish (Phases 0–2 DONE 2026-10-29) | P0 (UX) → in order | OPEN (Phases 0–2 DONE 2026-10-29) | `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md` (locked decisions + removal list); results: `.docs/results/M25-s1-phase0.md`, `-phase1.md`, `-phase2.md` |
+| **S1 audit Phase 4** — library/notes finish + PDF dead-code removal (Phases 0–3 DONE 2026-10-29) | P0 (UX) → in order | OPEN (Phases 0–3 DONE 2026-10-29) | `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md` (locked decisions + removal list); results: `.docs/results/M25-s1-phase0.md` … `-phase3.md` |
 | S1 Phase 1 pre-step: user uninstalls the 2026-10-27 sync-enabled APK before installing the sync-free build (one-step decision) | P0 | READY (user-side) — sync-free APK at repo root | S1 audit locked decision 1 — never install over the old APK; install `folio-mobile-debug-2026-10-29-sync-free.apk` |
 | Re-provision Android SDK (`/tmp/opencode/android-sdk`) + rerun 3 gates to re-verify HEAD in this VM | P1 | DONE (M-25) | SDK 35 + build-tools 35.0.0 provisioned; HEAD `9058c8e` gates green (test/lint/assemble) |
 | User manual-testing round for the 2026-10-27 debug APK (15 device journeys, TalkBack, real Drive sync) | P1 | SUPERSEDED | Sync journeys drop (sync removed); the rest moves to the S1 Phase-1 device checklist `audits/bugs/FIRST_RELEASE_BUGFIX_REPORT.md` §E |

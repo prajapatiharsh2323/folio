@@ -334,6 +334,30 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
     green**. User-test APK: `folio-mobile-debug-2026-10-29-p2-settings.apk`.
   Result: `.docs/results/M25-s1-phase2.md`. Next: Phase 3 (reader recovery).
 
+- **Session M-25 continued (Oct 29, 2026)** — completed S1 **Phase 3**: reader
+  recovery & comfort.
+  - Process-death recovery: `onCreate(savedInstanceState != null)` drops the
+    restored dummy/dead navigator fragments (dummyFactory round-trip) and
+    REBUILDS the reader from the durable doc id + persisted progress locator
+    (same loadAndAttach restore path as fresh open) — no more finish-on-
+    restore. Locked jump extras (search spine / notes location / text-quote
+    context) are stripped on recreation so a rebuild resumes from saved
+    progress instead of replaying the old jump. `attachNavigator` also
+    removes any stale `NAV_TAG` fragment first (never two navigators).
+  - Chrome discoverability: one-time dismissible hint chip ("Tap the middle
+    of the page to show the controls") via new `AppHintsStore`
+    (`app-hints.json`, device-local, outside the backup contract; corrupt =
+    "not shown yet", replaced on next write). Revealing chrome retires the
+    hint permanently; dismissal persists off the main thread.
+  - Gates green (fresh-VM SDK re-provision, gradle-home on /tmp):
+    **334/334 tests (+5 AppHintsStoreTest), lintDebug 0 errors,
+    assembleDebug green**. User-test APK:
+    `folio-mobile-debug-2026-10-29-p3-reader-recovery.apk`.
+  - Exact CFI restore still gated on the Kotlin 2.1/Readium 3.1.2 upgrade
+    decision; §4.6 reader regression matrix is user-side (no device here).
+  Result: `.docs/results/M25-s1-phase3.md`. Next: Phase 4 (library/notes
+  finish + PDF dead-code removal, user decision 2).
+
 - **Session FIX (Oct 26, 2026)** — UX/UI & Reading-Experience fix plan, in three
   committed batches. Live per-item status: `.docs/FIX-PLAN-TRACKING.md`.
   - **FIX-A (commit `9a63767`)** — P1-15: lock-safe `deleteCollection()` clears

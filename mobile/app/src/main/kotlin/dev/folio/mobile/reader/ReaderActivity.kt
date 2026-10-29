@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,10 +81,13 @@ import dev.folio.mobile.core.reader.ReaderResume
 import dev.folio.mobile.core.reader.ReaderSearch
 import dev.folio.mobile.core.reader.ReadingPaceStats
 import dev.folio.mobile.core.store.AppFileStore
+import dev.folio.mobile.core.store.AppHintsStore
 import dev.folio.mobile.core.store.DocPrefsStore
 import dev.folio.mobile.core.store.PrefsStore
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import dev.folio.mobile.ui.components.DefaultCoverArt
+import dev.folio.mobile.ui.components.FolioIconButton
+import dev.folio.mobile.ui.icons.FolioIcons
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -246,6 +251,14 @@ class ReaderActivity : FragmentActivity() {
     private val chromeVisible = mutableStateOf(true)
 
     /**
+     * One-time chrome hint (S1 audit Phase 3): the chrome toggle was reported
+     * undiscoverable; until dismissed (X) or the user reveals the chrome once,
+     * a small chip names the gesture. Dismissal is remembered across sessions
+     * in [AppHintsStore] (device-local, outside the backup contract).
+     */
+    private val chromeHintVisible = mutableStateOf(false)
+
+    /**
      * Bottom pillar is auto-hide (it otherwise covers the page's last lines):
      * follows the chrome toggle, and is pinned up while the scrubber is in
      * use, dropping a short grace period after the drag ends.
@@ -347,15 +360,37 @@ class ReaderActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         if (savedInstanceState != null) {
-            // The OS killed the process mid-session: the navigator can only be
-            // rebuilt from a live Publication, so exit gracefully (per the
-            // Readium guide's dummy-factory recipe).
+            // The OS killed the process mid-session: the dead navigator's
+            // fragment state can only be re-instantiated through the dummy
+            // factory (the real constructor needs a live Publication), never
+            // restored into a working navigator.
             supportFragmentManager.fragmentFactory = EpubNavigatorFragment.createDummyFactory()
         }
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) {
-            finish()
-            return
+            // S1 audit Phase 3: process recreation REBUILDS the reader instead
+            // of exiting. The intent (durable doc id) is reused by the OS on
+            // recreation, and the reading position is restored below from the
+            // persisted progress locator — the same path as a fresh open.
+            // Here only the restored dummy/dead fragments are dropped.
+            val fm = supportFragmentManager
+            val restored = fm.fragments.toList()
+            if (restored.isNotEmpty()) {
+                fm.commitNow(allowStateLoss = true) {
+                    restored.forEach { remove(it) }
+                }
+            }
+            // One-time explicit jump extras (search-hit spine, notes/bookmark
+            // location, text-quote context) must NOT replay on recreation —
+            // they were consumed by the killed instance, and after a process
+            // death the user expects to resume from the persisted progress,
+            // not be teleported back to the jump target. Strip them BEFORE
+            // loadAndAttach reads the saved-progress fallback path.
+            intent?.removeExtra(EXTRA_TARGET_ORDER)
+            intent?.removeExtra(EXTRA_TARGET_LOCATION)
+            intent?.removeExtra(EXTRA_TEXT_PREFIX)
+            intent?.removeExtra(EXTRA_TEXT_HIGHLIGHT)
+            intent?.removeExtra(EXTRA_TEXT_SUFFIX)
         }
         val docId = intent?.getStringExtra(EXTRA_DOC_ID) ?: run {
             finish()
@@ -368,6 +403,17 @@ class ReaderActivity : FragmentActivity() {
         prefsStore = PrefsStore(AppFileStore(filesDir))
         docPrefsStore = DocPrefsStore(AppFileStore(filesDir))
         currentDocId = docId
+        // One-time chrome hint (S1 Phase 3): remembered across sessions,
+        // device-local; blocking read keeps the state ready before mount.
+        chromeHintVisible.value = !AppHintsStore.chromeHintDismissedSync(
+            AppFileStore(filesDir)
+        )
+        // Revealing the chrome once IS the discovery moment — the hint
+        // retires itself then (persisted off the main thread).
+        lifecycleScope.launch {
+            snapshotFlow { chromeVisible.value }.first { it }
+            dismissChromeHint()
+        }
 
         // Edge-to-edge: Readium only pads for display cutouts, so handle the
         // system bars (status + nav/gesture) at this container level instead.
@@ -417,6 +463,20 @@ class ReaderActivity : FragmentActivity() {
                     systemDark = isSystemDark(),
                     bookmarked = currentLocation.value?.let { it in bookmarkLocations.value } == true,
                 )
+                AnimatedVisibility(
+                    visible = readerReady.value && chromeHintVisible.value && !chromeVisible.value,
+                    enter = fadeIn(animationSpec = tween(300)),
+                    exit = fadeOut(animationSpec = tween(300)),
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                ) {
+                    ReaderChromeHint(
+                        onReveal = {
+                            chromeVisible.value = true
+                            dismissChromeHint()
+                        },
+                        onDismiss = { dismissChromeHint() },
+                    )
+                }
                 if (tocVisible.value) {                    TocSheet(
                         entries = tocEntries.value,
                         onEntry = { onTocEntryTapped(it) },
@@ -638,6 +698,20 @@ class ReaderActivity : FragmentActivity() {
             withContext(Dispatchers.Main) {
                 hasDocOverride.value = false
                 applyPrefs(global)
+            }
+        }
+    }
+
+    /** One-time chrome hint: hide + remember across sessions (device-local). */
+    private fun dismissChromeHint() {
+        if (!chromeHintVisible.value) return
+        chromeHintVisible.value = false
+        // Fire-and-forget on the process-lifetime scope: losing one flag write
+        // at most re-shows a hint once (non-user data).
+        val appContext = applicationContext
+        flushScope.launch {
+            runCatching {
+                AppHintsStore(AppFileStore(appContext.filesDir)).dismissChromeHint()
             }
         }
     }
@@ -914,6 +988,11 @@ class ReaderActivity : FragmentActivity() {
             )
         )
         supportFragmentManager.fragmentFactory = factoryFragment
+        // S1 Phase 3: never two navigators in the container — a stale dummy or
+        // dead navigator under NAV_TAG is removed before the live one lands.
+        (supportFragmentManager.findFragmentByTag(NAV_TAG))?.let { stale ->
+            supportFragmentManager.commitNow { remove(stale) }
+        }
         supportFragmentManager.commitNow {
             add(R.id.navigator_container, EpubNavigatorFragment::class.java, null, NAV_TAG)
         }
@@ -1850,6 +1929,46 @@ private fun SearchSheet(
                 }
             }
             }
+        }
+    }
+}
+
+/**
+ * One-time dismissible chrome hint (S1 audit Phase 3, "chrome toggle not
+ * discoverable"): a small chip above the bottom edge naming the gesture. Tap
+ * = reveal the chrome at once; the X only dismisses (the page keeps working —
+ * the chip is small and never blocks the reading area).
+ */
+@Composable
+private fun ReaderChromeHint(
+    onReveal: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = Modifier
+            .padding(bottom = 88.dp)
+            .clickable(onClick = onReveal),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Tap the middle of the page to show the controls",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(
+                    start = dev.folio.mobile.ui.theme.FolioSpacing.x4,
+                    end = dev.folio.mobile.ui.theme.FolioSpacing.x1,
+                    top = dev.folio.mobile.ui.theme.FolioSpacing.x2,
+                    bottom = dev.folio.mobile.ui.theme.FolioSpacing.x2,
+                ),
+            )
+            FolioIconButton(
+                icon = FolioIcons.Close,
+                contentDescription = "Dismiss hint",
+                onClick = onDismiss,
+                modifier = Modifier.padding(end = dev.folio.mobile.ui.theme.FolioSpacing.x2),
+            )
         }
     }
 }

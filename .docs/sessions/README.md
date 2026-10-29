@@ -24,6 +24,7 @@ duplicates and because they carry evidence). This index locates them.
 | Oct 25 2026 | D-1, D-1b | dictionary build + repair (`../plans/implementations/`) |
 | Oct 26 2026 | FIX-A…FIX-D | UX/UI & data-safety fix sweep (sheet top at `../FIX-PLAN-TRACKING.md`) |
 | Oct 27 2026 | FIX-E + first-release report | release hardening; verdict in `../audits/bugs/FIRST_RELEASE_BUGFIX_REPORT.md` |
+| Oct 29 2026 (user) + M-25 | M-25 | S1 audit adoption: Phase 0 data-safety/release gates, Phase 1 Drive-sync removal (offline-first), Phase 2 Settings rebuild, Phase 3 reader recovery & comfort — results `../results/M25-s1-phase0..3.md` |
 
 ## Rules for new session records
 

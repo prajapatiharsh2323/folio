@@ -127,7 +127,7 @@ User-test APK: `folio-mobile-debug-2026-10-29-p2-settings.apk`.
   storm; bounded/ordered writer).
 - Visible back/up in `TopAppBar`; settings corruption ≠ first-run empty.
 
-### Phase 3 — reader recovery & comfort
+### Phase 3 — reader recovery & comfort. ✅ DONE (M-25, results: `.docs/results/M25-s1-phase3.md`)
 - Reader must rebuild from durable doc id + persisted locator on
   `savedInstanceState != null` (no more finish-on-restore); handle
   deleted/damaged doc with a clear recovery message.
