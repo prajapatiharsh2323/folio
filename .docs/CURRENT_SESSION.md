@@ -14,6 +14,8 @@
   with reference updates, restored `audits/ui-ux/EPUB_READER_AUDIT_REPORT.md`
   from git history (`d793212^` — it was deleted as PWA spill-over), wrote root
   `AGENTS.md`, fixed the stale PWA Quick Start in the root README. No app code touched.
+- **Committed & pushed:** `1bc7ef7` → verified push output `ac6332f..1bc7ef7
+  main -> main` on `origin/main` (2026-10-29).
 
 ## Blockers
 
@@ -23,11 +25,10 @@
 
 ## Exact next action
 
-1. Verify this session's work: `git status` clean-ish (new + moved docs), review
-   `git diff --cached`. Commit the knowledge system, push, and confirm the push
-   output — do not attempt to push unless committing was authorized.
+1. ~~Commit & push the knowledge system~~ **DONE** — `1bc7ef7` pushed (verified).
 2. If authorized to build: install SDK 35 + build-tools via `sdkmanager`, then run
    `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` in
-   `mobile/` and record results here.
-3. Then pick the next task from `TASKS.md` (highest value: restore `mobile-ci`
-   GitHub workflow or start the desktop port Phase 0).
+   `mobile/` and record the gate results here (nothing has re-verified HEAD in
+   this VM yet).
+3. Then pick the next task from `TASKS.md` (highest value: restore the
+   `mobile-ci` GitHub workflow, or start the desktop port Phase 0).
