@@ -285,6 +285,32 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
   - Baseline re-verified on untouched HEAD `9058c8e` after SDK re-provision.
   Result: `.docs/results/M25-s1-phase0.md`. Next: Phase 1 (Drive sync removal).
 
+- **Session M-25 continued (Oct 29, 2026)** — completed S1 **Phase 1**: the
+  one-step Drive sync removal (locked decision 1).
+  - Deleted `core/` sync tree (`CloudSyncWorker`, `DriveAuth`,
+    `DriveSyncProvider`, `SyncManager`, `SyncProtocol`, `SyncFailure`),
+    `ui/sync/CloudSyncSection.kt`, sync tests `SyncManagerTest`+
+    `SyncFailureMapperTest`+`FakeSyncProvider` (29 cases exactly), Cloud sync
+    section in `SettingsActivity`, and the Google/WorkManager dependencies +
+    catalog aliases. App is now fully offline by manifest (INTERNET,
+    ACCESS_NETWORK_STATE, GET_ACCOUNTS removed after a usage sweep).
+  - Google META-INF packaging excludes removed, validated by a fresh clean
+    assemble (no remaining dependency needs them).
+  - Stale "settings and sync state" copy + sync-flavored comments in
+    `LibraryManager`/`SearchIndex` corrected; `docs/mobile-cloud-sync.md`
+    marked SUPERSEDED in place (kept as protocol history; old Drive copies
+    are never deleted by the app).
+  - Gates green in this VM (fresh SDK re-provision): **321/321 tests,
+    lintDebug 0 errors, assembleDebug green**; release sign-gate still
+    refuses without credentials. Suite math: 350 − 29 = 321 ✔.
+  - User-test APK at repo root:
+    `folio-mobile-debug-2026-10-29-sync-free.apk`. Same un-install-first
+    rule as before (locked decision 1).
+  - VM note: `/home` disk fills under Gradle caching (documented
+    symptom/fix in PROJECT_CONTEXT); use
+    `GRADLE_USER_HOME=/tmp/opencode/gradle-home` here.
+  Result: `.docs/results/M25-s1-phase1.md`. Next: Phase 2 (Settings rebuild).
+
 - **Session FIX (Oct 26, 2026)** — UX/UI & Reading-Experience fix plan, in three
   committed batches. Live per-item status: `.docs/FIX-PLAN-TRACKING.md`.
   - **FIX-A (commit `9a63767`)** — P1-15: lock-safe `deleteCollection()` clears

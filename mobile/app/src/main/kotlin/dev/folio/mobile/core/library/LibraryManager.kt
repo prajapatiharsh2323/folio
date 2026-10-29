@@ -220,8 +220,9 @@ class LibraryManager(
             )
         }
 
-        // The corrupt file's libraryId is unrecoverable; a fresh one keeps the
-        // schema valid (cloud sync treats it as a new library identity).
+        // The corrupt file's libraryId is unrecoverable; a fresh one keeps
+        // the library identity unique (a restored/backed-up library adopts
+        // the surviving identity it can trust).
         val manifest = Manifest(
             libraryId = uuidProvider(),
             updatedAt = nowIso(),

@@ -62,6 +62,12 @@ manual-testing round goes to the **repo root** with a date in the name.
   `git config user.name "Harsh Prajapati"; git config user.email "harshprajapaticoding@gmail.com"` (repo-local).
 - Emulator memory hazard (from M-21, Windows VMs): stop the Gradle daemon before
   booting an emulator on a 16 GB host (`./gradlew --stop`); otherwise ANR loop.
+- **`/home` is a small separate disk (~4.8 GB)** in some VMs: Gradle caches
+  (`~/.gradle/caches`) can fill it to 100% → builds fail with "No space left
+  on device" or the daemon just disappears. Symptom signature 2026-10-29
+  (M-25): crash-like failures that are actually disk-full. Fix:
+  `rm -rf ~/.gradle/caches` (regenerable; deps re-download; keep wrapper).
+  Keep big artifacts (SDK, temp outputs) on `/` or `/tmp/opencode` instead.
 
 ## Compatibility contracts (do not break)
 
@@ -73,7 +79,10 @@ the migration fixtures honest:
 - backup streaming ZIP format + SHA-256 verification + merge/replace semantics,
 - annotation anchors (Readium Locator/CFI strings in `Progress.location`),
 - Google Drive `drive.file` mirror protocol (`sync/state.json`, file properties,
-  newer-metadata-wins, deletions-never-propagate) — documented in `docs/mobile-cloud-sync.md`,
+  newer-metadata-wins, deletions-never-propagate) — **historical**: Drive sync
+  was removed from the product (S1 audit decision 1, 2026-10-29); the shape of
+  old `sync/state.json` files is still known and they are left untouched, and
+  the protocol doc `docs/mobile-cloud-sync.md` is superseded in place.
 - canonical shapes + invariants: `desktop-docs/05-data-model-and-compat.md`.
 
 Timestamps: write via `IsoTime` (`core/util/IsoTime.kt`) — it exists because
@@ -85,7 +94,7 @@ surface honest UI, per the fix sweep (`FIX-PLAN-TRACKING.md`).
 ## Code layout
 
 - `mobile/app/src/main/kotlin/dev/folio/mobile/`
-  - `core/` — library/manifest, import pipeline, backup/restore, sync, search
+  - `core/` — library/manifest, import pipeline, backup/restore, search
     index, annotations, dictionary, reading prefs, util (pure logic; most tests here)
   - `reader/` — ReaderActivity, Readium wiring, chrome, appearance sheets,
     highlight manager, annotation menus

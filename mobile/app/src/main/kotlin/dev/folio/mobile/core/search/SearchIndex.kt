@@ -8,7 +8,7 @@ package dev.folio.mobile.core.search
  * snippets from raw chapter texts.
  *
  * v1 scope note (documented in MOBILE-TRACKING): the PWA persists search.json
- * (drive-synced); the mobile index is rebuilt in memory on demand — entries
+ * (single local library); the mobile index is rebuilt in memory on demand — entries
  * come from the library's per-chapter searchText files and DocMeta. This keeps
  * schema-1 untouched and, per the user-approved decision (2026-10-17), avoids
  * SQLDelight/FTS5 entirely (Android platform SQLite has no FTS5, and the PWA

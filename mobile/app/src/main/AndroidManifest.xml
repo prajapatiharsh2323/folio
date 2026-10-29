@@ -2,14 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Cloud sync only: the library itself is offline-first and never needs
-         the network. INTERNET is required by the Drive client for the
-         optional "Cloud sync" section; GET_ACCOUNTS is a normal permission
-         used only to revalidate a previously chosen account. Selection itself
-         always goes through the system account chooser. -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+    <!-- Offline-first: the library, reader, notes and backup/restore are all
+         local. The optional Google Drive sync the app once shipped was
+         removed (S1 audit decision 1, 2026-10-29): no network permissions. -->
 
     <!-- OS auto-backup must stay OFF: it would sweep the whole filesDir
          (docs, progress, annotations, doc-settings) into cloud/device

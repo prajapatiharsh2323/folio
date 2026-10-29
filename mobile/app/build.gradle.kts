@@ -99,18 +99,10 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    // The Google client jars each ship a META-INF/DEPENDENCIES marker, which
-    // would otherwise collide when the jars are merged into the APK.
-    packaging {
-        resources {
-            excludes += setOf(
-                "META-INF/DEPENDENCIES",
-                "META-INF/INDEX.LIST",
-                "META-INF/LICENSE",
-                "META-INF/NOTICE",
-            )
-        }
-    }
+    // (The Google Drive client jars that needed META-INF/DEPENDENCIES,
+    // INDEX.LIST etc. excluded were removed with Drive sync — S1 audit
+    // Phase 1. If a future dependency reintroduces a META-INF collision,
+    // re-add only the specific markers the clean build reports.)
 }
 
 dependencies {
@@ -133,22 +125,6 @@ dependencies {
     implementation(libs.readium.navigator)
     implementation(libs.androidx.fragment)
     implementation(libs.androidx.activity)
-    // Opt-in background cloud sync (WorkManager).
-    implementation(libs.androidx.work.runtime.ktx)
-
-    // Cloud sync (Google Drive appDataFolder). The Drive service client is the
-    // only network dependency in the app; everything else stays local.
-    implementation(libs.google.api.client.android)
-    implementation(libs.google.http.client.gson)
-    // The Drive client pulls the Apache transport in by default; Folio uses
-    // the JDK transport (NetHttpTransport), so the Apache stack is dropped
-    // rather than shipped unused.
-    implementation(libs.google.api.services.drive) {
-        exclude(group = "com.google.http-client", module = "google-http-client-apache-v2")
-    }
-    // GoogleAuthUtil / GoogleAuthException, used by GoogleAccountCredential to
-    // obtain Drive tokens through the system account manager.
-    implementation(libs.play.services.auth)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

@@ -1,5 +1,14 @@
 # Mobile cloud sync (Android)
 
+> **SUPERSEDED (2026-10-29):** Cloud sync was removed from the Android app
+> (S1 audit decision 1 — the user reinstalls fresh rather than updating in
+> place). This document is kept as the historical record of the Drive
+> `drive.file` mirror protocol (which remains a known schema-1 compatibility
+> contract for old data files: `sync/state.json` and remote `Folio Library`
+> copies are left untouched by Folio; the app just no longer talks to Drive).
+> **Folio never deletes a user's remote Drive copy** — removal only
+> disconnects the app.
+
 The Android app mirrors the library to the user's own Google Drive, using the
 same protocol as the web app (spec §8, `packages/core/src/sync`). The device
 library stays the source of truth; Drive holds a visible `Folio Library` folder.

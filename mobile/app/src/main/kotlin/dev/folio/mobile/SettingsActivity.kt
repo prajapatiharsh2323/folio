@@ -72,7 +72,6 @@ import dev.folio.mobile.ui.components.FolioSectionHeader
 import dev.folio.mobile.ui.components.FolioSettingsGroup
 import dev.folio.mobile.ui.components.FolioSettingsRow
 import dev.folio.mobile.ui.icons.FolioIcons
-import dev.folio.mobile.ui.sync.CloudSyncSection
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import dev.folio.mobile.ui.theme.FolioSpacing
 import kotlinx.coroutines.CancellationException
@@ -350,13 +349,6 @@ fun SettingsScreen() {
                 }
             }
 
-            item("cloud-header") { FolioSectionHeader(text = "Cloud sync") }
-            item("cloud-group") {
-                Box(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
-                    CloudSyncSection()
-                }
-            }
-
             item("storage-header") { FolioSectionHeader(text = "Storage") }
             item("storage-group") {
                 FolioSettingsGroup(modifier = Modifier.padding(horizontal = FolioSpacing.x5)) {
@@ -374,7 +366,7 @@ fun SettingsScreen() {
                     FolioSettingsRow(
                         title = "Folio data",
                         value = current?.let { formatBytes(it.appBytes) } ?: valueOrState,
-                        summary = "Library plus local settings and sync state.",
+                        summary = "Books, indexes, reader settings and local app data.",
                     )
                     FolioSettingsRow(
                         title = "Free space",

@@ -72,7 +72,16 @@
    `BackupLimitsSpec` for tests. Zero-bomb + refused-replace tests.
 3. Signing gate (see decision 3).
 
-### Phase 1 — remove Drive sync (one step)
+### Phase 1 — remove Drive sync (one step). ✅ DONE (M-25, results: `.docs/results/M25-s1-phase1.md`)
+All checklist items below executed 2026-10-29: whole `core/sync/` tree +
+`ui/sync/CloudSyncSection.kt` + sync tests (29 cases) deleted; WorkManager +
+all Google Drive deps and catalog aliases removed; META-INF excludes dropped
+only after a clean assemble; `INTERNET` swept then removed along with
+`ACCESS_NETWORK_STATE` + `GET_ACCOUNTS` (app now fully offline by manifest);
+stale storage copy fixed; ZIP/preserve suites untouched and green. Release
+note for the user: uninstall the 2026-10-27 sync APK before installing the
+sync-free build (`folio-mobile-debug-2026-10-29-sync-free.apk`).
+
 - Delete: `core/sync/{CloudSyncWorker,DriveAuth,DriveSyncProvider,SyncManager,
   SyncProtocol,SyncFailure}.kt`, `ui/sync/CloudSyncSection.kt`, sync tests
   (`SyncManagerTest`, `SyncFailureMapperTest`, `FakeSyncProvider`), Cloud sync

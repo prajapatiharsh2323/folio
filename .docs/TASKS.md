@@ -11,8 +11,8 @@ PROGRESS`, `BLOCKED`, `DONE`.
 
 | Task | Priority | Status | Notes / source |
 |---|---|---|---|
-| **S1 audit Phases 1–4** — Drive sync removal (one-step), Settings rebuild, reader recovery, library/notes finish | P0 (sync+UX) → in order | OPEN (Phase 0 DONE 2026-10-29) | `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md` (locked decisions + removal list); results so far: `.docs/results/M25-s1-phase0.md` |
-| S1 Phase 1 pre-step: user uninstalls the 2026-10-27 sync-enabled APK before installing the sync-free build (one-step decision) | P0 | OPEN (user-side) | S1 audit locked decision 1 — never install over the old APK |
+| **S1 audit Phases 2–4** — Settings rebuild, reader recovery, library/notes finish (Phase 1 sync removal DONE 2026-10-29) | P0 (UX) → in order | OPEN (Phases 0–1 DONE 2026-10-29) | `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md` (locked decisions + removal list); results so far: `.docs/results/M25-s1-phase0.md`, `.docs/results/M25-s1-phase1.md` |
+| S1 Phase 1 pre-step: user uninstalls the 2026-10-27 sync-enabled APK before installing the sync-free build (one-step decision) | P0 | READY (user-side) — sync-free APK at repo root | S1 audit locked decision 1 — never install over the old APK; install `folio-mobile-debug-2026-10-29-sync-free.apk` |
 | Re-provision Android SDK (`/tmp/opencode/android-sdk`) + rerun 3 gates to re-verify HEAD in this VM | P1 | DONE (M-25) | SDK 35 + build-tools 35.0.0 provisioned; HEAD `9058c8e` gates green (test/lint/assemble) |
 | User manual-testing round for the 2026-10-27 debug APK (15 device journeys, TalkBack, real Drive sync) | P1 | SUPERSEDED | Sync journeys drop (sync removed); the rest moves to the S1 Phase-1 device checklist `audits/bugs/FIRST_RELEASE_BUGFIX_REPORT.md` §E |
 | 5 fix-sweep rows flagged **DONE (DEVICE)** (pillar slider a11y, appearance-sheet preview persistence, theme-row narrow-width, reader chrome, sync worker attention UI) — need a device/TalkBack pass | P2 | BLOCKED (device) | `FIX-PLAN-TRACKING.md` rows marked `DONE (DEVICE)`; "sync worker attention UI" row becomes moot with sync removal |
