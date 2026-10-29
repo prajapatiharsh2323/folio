@@ -128,6 +128,12 @@ User-test APK: `folio-mobile-debug-2026-10-29-p2-settings.apk`.
 - Visible back/up in `TopAppBar`; settings corruption ≠ first-run empty.
 
 ### Phase 3 — reader recovery & comfort. ✅ DONE (M-25, results: `.docs/results/M25-s1-phase3.md`)
+All items below executed 2026-10-29: process recreation rebuilds the reader
+from the durable doc id + persisted progress locator (restored dummy/dead
+fragments dropped; jump extras stripped; stale NAV_TAG fragments removed),
+one-time dismissible chrome hint chip backed by the new `AppHintsStore`
+(`app-hints.json`, device-local, backup-external, 5 tests). User-test APK:
+`folio-mobile-debug-2026-10-29-p3-reader-recovery.apk`.
 - Reader must rebuild from durable doc id + persisted locator on
   `savedInstanceState != null` (no more finish-on-restore); handle
   deleted/damaged doc with a clear recovery message.
@@ -137,7 +143,7 @@ User-test APK: `folio-mobile-debug-2026-10-29-p2-settings.apk`.
 - Chrome discoverability: one-time dismissible hint; keep 48dp slider.
 - Run the §4.6 reader regression matrix on device (user-side; never claim).
 
-### Phase 4 — library/notes finish
+### Phase 4 — library/notes finish. ✅ DONE (M-25, results: `.docs/results/M25-s1-phase4.md`)
 - `OpenableColumns.DISPLAY_NAME` with lastPathSegment fallback.
 - Notes header from load state: Loading / "Saved items unavailable" /
   "Nothing saved yet" / "N items"; recovery route + back/up.

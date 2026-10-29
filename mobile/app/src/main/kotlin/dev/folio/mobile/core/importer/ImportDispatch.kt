@@ -12,8 +12,9 @@ object ImportDispatch {
         val format = FileDetector.detectFileFormat(bytes)
     ) {
         DetectedFormat.Epub -> EpubImporter.import(bytes, fileName)
-        // PDF rendering is out of scope for v1 (EPUB-focused); treat as unsupported
-        // so the file is not silently imported into an unreadable library entry.
+        // PDF is out of scope (user decision 2, S1 audit): detected by magic
+        // bytes so a PDF binary never sneaks in as a "text article", but the
+        // honest rejection copy in the UI lists what IS accepted.
         DetectedFormat.Pdf -> throw UnsupportedFormatException(fileName)
         DetectedFormat.Html -> HtmlImporter.import(bytes, fileName)
         DetectedFormat.Txt -> TxtImporter.import(bytes, fileName)

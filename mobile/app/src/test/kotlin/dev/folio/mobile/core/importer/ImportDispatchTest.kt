@@ -23,9 +23,13 @@ class ImportDispatchTest {
     }
 
     @Test
-    fun `pdf signature is unsupported in v1 (epub-focused)`() {
+    fun `pdf signature is unsupported (decision 2, honest rejection)`() {
+        // Binary PDF bytes never become a "text article": UTF-8-hostile bytes
+        // are Unknown → unsupported, and the magic-byte signature path keeps
+        // a PDF detected-but-rejected rather than misdetected as plain text.
+        val pdf = byteArrayOf(0x25, 0x50, 0x44, 0x46, 0x2d, 1, 2, 0xFF.toByte(), 0xFE.toByte())
         val ex = assertThrows(UnsupportedFormatException::class.java) {
-            ImportDispatch.import(PdfFixtures.titledPdf("Report Title", null), "doc.pdf")
+            ImportDispatch.import(pdf, "doc.pdf")
         }
         assertEquals("doc.pdf", ex.fileName)
     }

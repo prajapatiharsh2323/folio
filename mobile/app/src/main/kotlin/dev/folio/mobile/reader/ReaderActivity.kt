@@ -866,8 +866,8 @@ class ReaderActivity : FragmentActivity() {
             httpClient = httpClient
         )
         val asset = assetRetriever.retrieve(file).getOrNull() ?: return null
-        // EPUB-only v1: the pdfium adapter (PDF navigator) is a later R-phase;
-        // TXT/HTML reading editions are EpubBuilder-built EPUBs, PDF later.
+        // Reading editions are EPUB-built v1 (the reader opens the same bytes
+        // through Readium); HTML/TXT imports synthesize the epub in the importer.
         val parser = EpubParser()
         val opener = PublicationOpener(publicationParser = parser)
         return opener.open(asset, allowUserInteraction = true).getOrNull()

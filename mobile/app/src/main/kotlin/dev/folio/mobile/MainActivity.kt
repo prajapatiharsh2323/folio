@@ -3,6 +3,7 @@ package dev.folio.mobile
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -140,7 +141,7 @@ private fun readAtMost(input: InputStream, limit: Long): ByteArray {
  * Library screen (v1 library phase): manifest-backed list with reading progress,
  * content-sniffing SAF import, open/delete actions, and ACTION_VIEW import for
  * files opened via "open with" (parity with the PWA file handlers:
- * .epub/.pdf/.html/.htm/.txt — imported via a fresh task instance).
+ * .epub/.html/.htm/.txt — imported via a fresh task instance).
  */
 class MainActivity : ComponentActivity() {
 
@@ -187,6 +188,17 @@ internal fun appLibrary(context: android.content.Context): LibraryManager =
 /** Honest copy for actions LibraryManager blocks while the index is corrupt (audit P0-01). */
 internal fun corruptionMessage(purpose: String): String =
     "Library index needs repair — $purpose paused to keep your library safe"
+
+/**
+ * Import file-name resolution (S1 Phase 4): the provider query's real
+ * DISPLAY_NAME wins when present and non-blank; otherwise the URI's last
+ * path segment survives its own directory prefix; else the neutral
+ * "import" (title extraction will replace it anyway).
+ */
+internal fun displayNameFrom(queryResult: String?, lastPathSegment: String?): String =
+    queryResult?.trim()?.takeIf { it.isNotBlank() }
+        ?: lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+        ?: "import"
 
 /** Sample import kept for the blocked device-smoke flow (no files needed). */
 private suspend fun runSample(context: android.content.Context) {
@@ -361,7 +373,24 @@ fun LibraryScreen(sharedFileUri: Uri? = null) {
     }
 
     fun uriDisplayName(uri: Uri): String =
-        uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "import"
+        // S1 Phase 4: prefer the provider's real display name (OpenableColumns),
+        // then the URI's last path segment — providers often hand out opaque
+        // paths like "primary:Download/book.epub" or numeric ids with no
+        // extension, which the old name-only lookup turned into the title.
+        displayNameFrom(
+            queryResult = runCatching {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+            }.getOrNull(),
+            lastPathSegment = uri.lastPathSegment,
+        )
 
     /**
      * Imports one file. Duplicates pause only this file while the user picks

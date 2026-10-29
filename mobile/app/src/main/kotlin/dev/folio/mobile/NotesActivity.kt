@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +27,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -167,6 +170,15 @@ fun NotesScreen() {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    // S1 Phase 4: visible back/up like Settings (audit).
+                    IconButton(onClick = { (context as? ComponentActivity)?.finish() }) {
+                        Icon(
+                            FolioIcons.ArrowLeft,
+                            contentDescription = "Go back",
+                        )
+                    }
+                },
                 title = {
                     Column {
                         Text(
@@ -174,11 +186,14 @@ fun NotesScreen() {
                             style = MaterialTheme.typography.titleLarge,
                         )
                         Text(
-                            when (annotations.size) {
-                                0 -> "Nothing saved yet"
-                                1 -> "1 item"
-                                else -> "${annotations.size} items"
-                            },
+                            // S1 Phase 4: the header mirrors the LOAD state —
+                            // never "Nothing saved yet" while loading or when
+                            // the notes file can't be read (audit P2).
+                            notesHeaderSubtitle(
+                                loading = loading,
+                                loadError = loadError,
+                                count = annotations.size,
+                            ),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -395,7 +410,24 @@ fun NotesScreen() {
     }
 }
 
-/** One line of pill filters; selection = filled accent pill (§7.9). */
+/**
+ * Notes header subtitle straight from the load state (S1 audit P2/Phase 4):
+ * "Nothing saved yet" is reserved for a genuinely empty READER-SAVED list —
+ * while loading or after a read failure the header says so instead.
+ */
+internal fun notesHeaderSubtitle(loading: Boolean, loadError: String?, count: Int): String = when {
+    loading -> "Loading…"
+    loadError != null -> "Saved items unavailable"
+    count == 0 -> "Nothing saved yet"
+    count == 1 -> "1 item"
+    else -> "$count items"
+}
+
+/**
+ * One line of pill filters (§7.9). Selection is NOT color-only (S1 Phase 4):
+ * the selected pill carries a leading check icon, and `selectable` already
+ * publishes its selected state to a11y services.
+ */
 @Composable
 private fun FilterRow(selected: AnnotationFilter, onSelect: (AnnotationFilter) -> Unit) {
     Row(
@@ -416,12 +448,25 @@ private fun FilterRow(selected: AnnotationFilter, onSelect: (AnnotationFilter) -
                     .selectable(selected = isOn, role = Role.Tab, onClick = { onSelect(f) })
                     .padding(horizontal = FolioSpacing.x4, vertical = FolioSpacing.x2),
             ) {
-                Text(
-                    f.label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (isOn) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isOn) {
+                        Icon(
+                            FolioIcons.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier
+                                .width(14.dp)
+                                .height(14.dp),
+                        )
+                        Spacer(modifier = Modifier.width(FolioSpacing.x1))
+                    }
+                    Text(
+                        f.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isOn) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

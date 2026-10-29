@@ -18,7 +18,7 @@ class FileDetectorTest {
     }
 
     @Test
-    fun `pdf detected by magic bytes`() {
+    fun `pdf detected by magic bytes is still recognizable for honest rejection`() {
         val pdf = "%PDF-1.7 fake content".toByteArray()
         assertEquals(DetectedFormat.Pdf, FileDetector.detectFileFormat(pdf))
     }

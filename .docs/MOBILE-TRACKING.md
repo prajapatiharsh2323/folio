@@ -358,6 +358,28 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
   Result: `.docs/results/M25-s1-phase3.md`. Next: Phase 4 (library/notes
   finish + PDF dead-code removal, user decision 2).
 
+- **Session M-25 continued (Oct 29, 2026)** — completed S1 **Phase 4**
+  (audit now fully closed): library/notes finish + PDF dead-code removal.
+  - PDF removal (user decision 2): `PdfImporter` + its 6-test file deleted,
+    `pdfbox-android` dep + catalog entries + `FolioApplication` init gone.
+    Schema-compat kept: `SourceFormat.Pdf`/`pdfZoom` stay (byte-compat),
+    `LibraryManager`'s sourceFormat guard stays, `DetectedFormat.Pdf`
+    still detects by magic bytes so a PDF is honestly REJECTED ("EPUB,
+    HTML or TXT only"), never mis-imported as text; `.pdf` stays in the
+    backup include-list for old backups. Debug APK: 42.4 → 32.8 MB.
+  - Import names: `OpenableColumns.DISPLAY_NAME` first, `lastPathSegment`
+    fallback (pure `displayNameFrom` mapper + 5 tests).
+  - Notes header mirrors the load state (pure `notesHeaderSubtitle` +
+    3 tests): "Loading…" / "Saved items unavailable" / empty / "N items";
+    visible back/up in the TopAppBar; Notes filter pills get a leading
+    check icon (library chips are M3 FilterChip, already compliant).
+  - Gates green with the reduced daemon heap (default 4 GB OOM-fired on
+    the 2-core 7.8 GB box — jvmargs documented): **336/336 tests
+    (334 − 6 + 8), lintDebug 0 errors, assembleDebug green**. User-test
+    APK: `folio-mobile-debug-2026-10-29-p4-import-notes.apk`.
+  Result: `.docs/results/M25-s1-phase4.md`. S1 audit closed (device
+  checklist user-side); next up: M6 / CI restore / font-packaging decision.
+
 - **Session FIX (Oct 26, 2026)** — UX/UI & Reading-Experience fix plan, in three
   committed batches. Live per-item status: `.docs/FIX-PLAN-TRACKING.md`.
   - **FIX-A (commit `9a63767`)** — P1-15: lock-safe `deleteCollection()` clears

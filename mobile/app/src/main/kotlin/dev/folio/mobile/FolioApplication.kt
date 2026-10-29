@@ -1,18 +1,14 @@
 package dev.folio.mobile
 
 import android.app.Application
-import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 
 /**
- * App-wide singletons bootstrap.
- * - PDFBox resources must be initialized once before device PDF import
- *   (asset glyphlists/fonts shipped inside the pdfbox AAR).
+ * App-wide singletons bootstrap. Intentionally empty at v2: PDF import was
+ * removed with the pdfbox dependency (S1 Phase 4, user decision 2), and no
+ * other process-wide context is needed right now.
  */
 class FolioApplication : Application() {
-
     override fun onCreate() {
         super.onCreate()
-        runCatching { PDFBoxResourceLoader.init(applicationContext) }
-            .onFailure { android.util.Log.e("FolioApp", "PDFBox init failed", it) }
     }
 }
