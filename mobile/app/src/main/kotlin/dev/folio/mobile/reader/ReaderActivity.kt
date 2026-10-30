@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -276,6 +277,13 @@ class ReaderActivity : FragmentActivity() {
 
     /** Reading appearance sheet visibility. */
     private val appearanceVisible = mutableStateOf(false)
+
+    /**
+     * "Set as default for future books" confirm (M-26). The global reading
+     * defaults are no longer edited from Settings; this sheet is their only
+     * editing surface, so replacing them asks first.
+     */
+    private val confirmSaveDefaultVisible = mutableStateOf(false)
 
     /** Book title for the compact top bar (set once the doc loads). */
     private var docTitle: String? = null
@@ -554,8 +562,44 @@ class ReaderActivity : FragmentActivity() {
                         onPreview = { preview -> previewPrefs(preview) },
                         onPrefsChange = { updated -> onPrefsChanged(updated) },
                         onResetPerBook = { onResetPerBookPrefs() },
+                        onSetDefault = { confirmSaveDefaultVisible.value = true },
                         onDismiss = { appearanceVisible.value = false },
                     )
+                }
+                if (confirmSaveDefaultVisible.value) {
+                    // Match the dictionary sheet's D1 contract: dialogs above the
+                    // reading page materialize with the ACTIVE reading appearance.
+                    FolioMobileTheme(
+                        darkTheme = ReaderPrefsMapper.resolvedThemeIsDark(
+                            prefsState.value.theme,
+                            isSystemDark(),
+                        ),
+                    ) {
+                        AlertDialog(
+                            onDismissRequest = { confirmSaveDefaultVisible.value = false },
+                            title = { Text("Set as default for future books") },
+                            text = {
+                                Text(
+                                    "This replaces your saved reading defaults — the ones books " +
+                                        "use when they have no settings of their own. Books with " +
+                                        "their own settings are untouched."
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        confirmSaveDefaultVisible.value = false
+                                        onSetDefaultPrefs()
+                                    }
+                                ) { Text("Replace defaults") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmSaveDefaultVisible.value = false }) {
+                                    Text("Cancel")
+                                }
+                            },
+                        )
+                    }
                 }
                 // Splash sits ABOVE the chrome so loading is a clean takeover;
                 // it fades out on the navigator's first locator.
@@ -677,6 +721,42 @@ class ReaderActivity : FragmentActivity() {
                 ReaderPrefsMapper.mapPrefs(updated, isSystemDark())
             )
         )
+    }
+
+    /**
+     * "Set as default for future books" (M-26): the global reading defaults
+     * (`library/user/settings.json` via [PrefsStore]) are no longer edited
+     * from the Settings screen, so this sheet is their editing surface. Saves
+     * the CURRENT effective preferences — including any per-book override the
+     * user just applied — as the global defaults. Corrupt-state handling
+     * (preserve-then-refuse) is [PrefsStore]'s own contract; failures surface
+     * as a visible message and never reset the file silently.
+     */
+    private fun onSetDefaultPrefs() {
+        val prefs = prefsState.value
+        loadScope.launch(Dispatchers.IO) {
+            try {
+                prefsStore.saveReadingPrefs(prefs)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity,
+                        "Saved. New books without their own settings open this way.",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@ReaderActivity,
+                        error.message?.takeIf { it.isNotBlank() }
+                            ?: "Couldn't save the defaults. Check free space and try again.",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     /** "reset": drop the doc override and fall back to the global defaults. */
@@ -1753,6 +1833,7 @@ private fun AppearanceBottomSheet(
     onPreview: (ReadingPrefs) -> Unit,
     onPrefsChange: (ReadingPrefs) -> Unit,
     onResetPerBook: () -> Unit,
+    onSetDefault: () -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1761,6 +1842,7 @@ private fun AppearanceBottomSheet(
             perBookOverride = perBookOverride,
             onPrefsChange = onPrefsChange,
             onResetPerBook = onResetPerBook,
+            onSetDefault = onSetDefault,
             onDismiss = onDismiss,
             onPreview = onPreview,
         )

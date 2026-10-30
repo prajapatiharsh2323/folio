@@ -25,10 +25,15 @@ import dev.folio.mobile.ui.theme.FolioSpacing
  * Theme · Text size · Typeface · Line spacing · Page margins · Alignment ·
  * Reading flow · Reader brightness, plus the per-book scope note and reset.
  *
- * S1 audit Phase 2: the control set itself now lives in the SHARED
- * [ReadingPrefsEditor] (identical controls power the Settings reading-defaults
- * editor). This sheet adds only the sheet header, the live reader page
- * preview, and the per-book scope note/reset.
+ * S1 audit Phase 2: the control set itself lives in the SHARED
+ * [ReadingPrefsEditor]; identical controls powered the (now removed) Settings
+ * reading-defaults editor. M-26: with that editor gone, this sheet is also
+ * the EDITING SURFACE for the global reading defaults — "Set as default for
+ * future books" publishes the current effective prefs to
+ * `library/user/settings.json` behind a confirm dialog (ReaderActivity owns
+ * the persist + corrupt handling). This sheet adds the sheet header, the live
+ * reader page preview, the defaults-publishing row, and the per-book scope
+ * note/reset.
  *
  * Prefs contract (unchanged): the sheet only emits updated [ReadingPrefs] with
  * the exact serialized keys already stored ("warm"/"lh"/"mx"/... semantics are
@@ -41,6 +46,8 @@ fun ReadingAppearanceSheet(
     perBookOverride: Boolean,
     onPrefsChange: (ReadingPrefs) -> Unit,
     onResetPerBook: () -> Unit,
+    /** M-26: saves the CURRENT effective prefs as the global reading defaults. */
+    onSetDefault: () -> Unit,
     onDismiss: () -> Unit,
     /** Live preview while dragging; persistence happens through [onPrefsChange]. */
     onPreview: (ReadingPrefs) -> Unit = {}
@@ -69,6 +76,24 @@ fun ReadingAppearanceSheet(
             onPrefsChange = onPrefsChange,
             onPreview = onPreview,
         )
+
+        // Global-defaults editing surface (M-26): the Settings screen no
+        // longer carries a reading-defaults editor, so the sheet publishes
+        // the current effective combination to library/user/settings.json.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = FolioSpacing.x6, vertical = FolioSpacing.x2),
+        ) {
+            Text(
+                "New books without their own settings open this way.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onSetDefault) { Text("Set as default") }
+        }
 
         if (perBookOverride) {
             Row(

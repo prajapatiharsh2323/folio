@@ -68,6 +68,7 @@ import dev.folio.mobile.ui.components.FolioDestructiveTextButton
 import dev.folio.mobile.ui.components.FolioEmptyState
 import dev.folio.mobile.ui.components.FolioIconButton
 import dev.folio.mobile.ui.icons.FolioIcons
+import dev.folio.mobile.ui.theme.FolioAppTheme
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import dev.folio.mobile.ui.theme.FolioSpacing
 import dev.folio.mobile.ui.theme.HighlightBlue
@@ -85,10 +86,11 @@ class NotesActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // App-interface appearance (S1 audit Phase 2): see MainActivity.
-        val storedAppearance = AppAppearanceStore.loadThemeSync(AppFileStore(filesDir))
+        // M-26: shared holder — re-themes if Settings changed the palette.
+        FolioAppTheme.ensure(AppFileStore(filesDir))
         setContent {
             FolioMobileTheme(
-                darkTheme = AppAppearanceStore.isDark(storedAppearance, isSystemInDarkTheme()),
+                darkTheme = AppAppearanceStore.isDark(FolioAppTheme.key.value, isSystemInDarkTheme()),
             ) {
                 NotesScreen()
             }

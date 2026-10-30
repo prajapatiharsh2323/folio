@@ -11,6 +11,7 @@ PROGRESS`, `BLOCKED`, `DONE`.
 
 | Task | Priority | Status | Notes / source |
 |---|---|---|---|
+| Settings reduction to app-management + app-theme propagation (user-directed M-26) | P1 (UX) | DONE (M-26) — device checklist user-side | Gated green (336 tests / lint / assemble). Results: `.docs/results/M26-settings-reduction.md`; APK `folio-mobile-debug-2026-10-30-m26-settings.apk`; old root APKs removed (user-authorized) |
 | S1 audit — CLOSED (Phases 0–4 DONE 2026-10-29; device checklist user-side) | P0 (UX) | DONE (M-25) | `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md`; results: `.docs/results/M25-s1-phase0.md` … `-phase4.md`; Phase 3 APK `folio-mobile-debug-2026-10-29-p3-reader-recovery.apk`, Phase 4 `folio-mobile-debug-2026-10-29-p4-import-notes.apk` |
 | S1 Phase 1 pre-step: user uninstalls the 2026-10-27 sync-enabled APK before installing the sync-free build (one-step decision) | P0 | READY (user-side) — sync-free APK at repo root | S1 audit locked decision 1 — never install over the old APK; install `folio-mobile-debug-2026-10-29-sync-free.apk` |
 | Re-provision Android SDK (`/tmp/opencode/android-sdk`) + rerun 3 gates to re-verify HEAD in this VM | P1 | DONE (M-25) | SDK 35 + build-tools 35.0.0 provisioned; HEAD `9058c8e` gates green (test/lint/assemble) |
@@ -36,6 +37,9 @@ PROGRESS`, `BLOCKED`, `DONE`.
 
 ## Repo hygiene (optional, user's call)
 
-- 2 debug APKs (~79 MB) tracked at repo root; pack ≈ 288 MB. Options: GitHub Releases / LFS / local-only. Needs explicit user authorization.
+- ~~2 debug APKs (~79 MB) tracked at repo root~~ DONE 2026-10-30 (M-26,
+  explicit user authorization): all older APKs removed; a single dated
+  user-test APK remains at the repo root.
 - `this.md` (15-byte stub) and PWA-era `.prettierrc`/`.gitignore` entries are leftovers.
-- `mobile/auditscratch/` is untracked scratch (`audit-build.log`, one-off validation test).
+- S1 was crossed with this earlier note (kept for history): `mobile/auditscratch/`
+  is untracked scratch (`audit-build.log`, one-off validation test).

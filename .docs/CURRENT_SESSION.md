@@ -3,52 +3,54 @@
 > This file is the recovery anchor. After every meaningful milestone, update:
 > date, verified state, what changed, blockers, and the **exact next action**.
 
-- **Last updated:** 2026-10-29 (session M-25 — S1 audit CLOSED: Phases 0–4 all landed)
-- **Last verified project state:** HEAD = Phase 4 commit (on Phase 3, Phase 2
-  `db3e9d8`, Phase 1 `404e595`, Phase 0 `bf09d9c`, user's `9058c8e`). Phase 4
-  verified in THIS VM: **336/336 unit tests, lintDebug 0 errors (57 warns),
-  assembleDebug green** (32.8 MB APK — 42.4 MB before Phase 4's pdfbox
-  removal). Suite math: 334 − 6 (PdfImporterTest) + 8 (DisplayNameFallback 5
-  + NotesHeader 3) = 336 ✔. Device journeys NOT verified (no device/KVM) —
-  user-side. Latest user-test APK at repo root:
-  `folio-mobile-debug-2026-10-29-p4-import-notes.apk`
-  (sha256 `b5c7929068a8b8a32495cfc421f0ffbd5062a21b3ff167c933ceb335b4f72256`).
-  Same rule as every build: uninstall the 2026-10-27 sync APK first (locked
-  decision 1), never install over it. Phase 3 APK:
-  `folio-mobile-debug-2026-10-29-p3-reader-recovery.apk`.
-- **This session's Phases 3+4 changes** (of
-  `.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md`): full detail in
-  `.docs/results/M25-s1-phase3.md` and `-phase4.md`.
-  - Phase 3 (reader): process recreation rebuilds instead of exits (restored
-    dummy/dead fragments dropped; jump extras stripped so resume follows
-    saved progress; stale NAV_TAG fragments removed); one-time dismissible
-    chrome hint chip via NEW `AppHintsStore` (`app-hints.json`, device-local,
-    backup-external, corrupt = "not shown yet"). +5 tests.
-  - Phase 4 (library/notes): PDF dead code removed per user decision 2
-    (`PdfImporter` + `pdfbox` dep/init deleted; schema-1 compat kept —
-    `SourceFormat.Pdf`, `pdfZoom`, backup include-list `.pdf`, magic-byte
-    detection → honest rejection); import names via
-    `OpenableColumns.DISPLAY_NAME` w/ lastPathSegment fallback (pure
-    `displayNameFrom`); Notes header mirrors load state (pure
-    `notesHeaderSubtitle`) + back/up + check-icon on selected filter pills.
+- **Last updated:** 2026-10-30 (session M-26 — Settings reduced to
+  app-management; old root APKs removed)
+- **Last verified project state:** the M-26 commit (on M-25's Phase 4
+  `144bff5`). Verified in THIS VM: **336/336 unit tests, lintDebug 0 errors
+  (57 warnings + 6 info = pre-existing noise), assembleDebug green**
+  (33.3 MB APK). Device journeys NOT verified (no device/KVM) — user-side.
+  User-test APK at repo root:
+  `folio-mobile-debug-2026-10-30-m26-settings.apk`
+  (sha256 `da83a7a86146bdddb13ed1a5d4adcca47df3c252739b7f712a982dafd40a40d9`).
+  Same rule as every build (locked decision 1): uninstall the previous APK
+  first, never install over it.
+- **This session's changes** (full detail: `.docs/results/M26-settings-reduction.md`):
+  - New `ui/theme/FolioAppTheme.kt` process-wide app-theme holder; picking
+    System/Light/Dark in Settings now re-themes the visible session live
+    (previously only the indicator moved and the Library under Settings kept
+    the old palette). MainActivity/NotesActivity/SettingsActivity consume it.
+  - `SettingsActivity` reduced to three groups: Appearance (theme picker +
+    appearance-corrupt banner), Your library (export / restore with the
+    unchanged merge/replace + staged-export machinery, one tap-to-retry
+    "Library storage" row), About (version). Reading defaults left Settings;
+    its UI/writer plumbing deleted. `PrefsStore`, `DocPrefsStore`, backup
+    include-list, recovery preservation: untouched.
+  - Reader sheet: "Set as default for future books" (confirm dialog →
+    `saveReadingPrefs` of effective prefs) is now the global-defaults
+    editing surface.
+  - Repo hygiene (explicit user authorization): all 6 older repo-root APKs
+    removed; only the M-26 APK remains.
 
 ## Blockers
 
-- No device/emulator: never claim device verification. The §4.6 reader
-  regression matrix and all Phase-4 device checks are user-side.
-- VM: default 4 GB Gradle daemon OOM-fired on this 7.8 GB 2-core box — run
-  gates with `-Dorg.gradle.jvmargs="-Xmx2304m -XX:MaxMetaspaceSize=640m"
-  -Dorg.gradle.parallel=false`. `/home` ~736 MB free; keep Gradle home on
-  `/tmp/opencode/gradle-home`; re-provision `/tmp/opencode/android-sdk`
-  (SDK 35 + build-tools 35.0.0) on any fresh VM.
-- Exact CFI restore still gated on the Kotlin 2.1/Readium 3.1.2 upgrade
-  decision (TASKS.md font-packaging row) — NOT an S1 item.
+- No device/emulator: never claim device verification. The M-26 device checks
+  (live re-theme across screens, picker contrast both themes/fonts, reader
+  set-default flow, regression matrix) are user-side.
+- VM: run Gradle with `-Dorg.gradle.jvmargs="-Xmx2304m
+  -XX:MaxMetaspaceSize=640m" -Dorg.gradle.parallel=false` and
+  `GRADLE_USER_HOME=/tmp/opencode/gradle-home` (7.8 GB 2-core box; `/home`
+  small and ~91% full). SDK at `/tmp/opencode/android-sdk` (provisioned this
+  session: platform-35 + build-tools 35.0.0); re-provision on any fresh VM.
 
 ## Exact next action
 
-1. S1 is closed. Next work = the user's pick from `.docs/TASKS.md`
-   "Active / next": Play-side split (M6), CI workflow restore
-   (`mobile-ci.yml`, P1), font-packaging decision (P2, own session),
-   repo-hygiene items (needs explicit user authorization).
-2. When the user installs a APK: report device journeys back; never mark
-   device checks passed from this VM.
+1. User installs `folio-mobile-debug-2026-10-30-m26-settings.apk` and tests:
+   theme pick re-themes immediately and persists across process death;
+   Settings shows only the three groups with no duplicated reader controls;
+   backup export + merge/replace restore still work; reader appearance sheet
+   "Set as default" records defaults a fresh book opens with; light + dark
+   + font scales look right. Report journeys back; never mark device checks
+   passed from this VM.
+2. Next substantive work = user's pick from `.docs/TASKS.md` "Active / next":
+   restore `mobile-ci.yml` (P1), font-packaging decision (P2, own session),
+   Play hardening (M6), repo hygiene leftovers.

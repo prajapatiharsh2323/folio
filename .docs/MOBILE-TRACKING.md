@@ -269,6 +269,36 @@ stay byte-compatible — fixture changes go in BOTH suites in the same commit.
 
 ## Session log
 
+- **Session M-26 (Oct 30, 2026)** — user-directed Settings reduction
+  ("a small app-management screen, not a second place to configure the
+  reader"), build on the S1 Phase 2 screen. Locked via plan-discussion:
+  theme fix across ALL app screens; reader-sheet "Set as default" always
+  visible; keep the segmented theme picker; tap-to-retry storage row.
+  - New `ui/theme/FolioAppTheme.kt` process-wide holder — picks in Settings
+    now re-theme that screen live AND screens held open under it (Library did
+    not, the old per-activity val kept a stale palette); `ensure()` before
+    `setContent` per activity keeps the no-flash first frame.
+  - `SettingsActivity` reduced to Appearance / Your library / About; the
+    reading-defaults editor, its conflated writer, reset dialog, and the
+    reader-corrupt banner left the screen; storage diagnostics collapsed to
+    one tap-to-retry "Library storage" row; backup/restore behavior (staged
+    export, merge/replace dialog, busy gating) unchanged byte-for-byte.
+    `PrefsStore`/`DocPrefsStore`/backup include-list untouched.
+  - Reader sheet publishes global defaults again via "Set as default for
+    future books": confirm dialog (D1-themed) → `saveReadingPrefs` of the
+    effective prefs; corrupt-preservation semantics of `PrefsStore` apply.
+  - Repo hygiene (explicit user authorization): ALL 6 debug APKs removed
+    from the repo root; replaced by the single dated M-26 APK
+    (`folio-mobile-debug-2026-10-30-m26-settings.apk`,
+    sha256 `da83a7a86146…da40d9`, 33.3 MB).
+  - Gates green in this VM (fresh SDK re-provision): **336/336 tests,
+    lintDebug 0 errors (57 warn + 6 info, pre-existing noise),
+    assembleDebug green**. Suite unchanged (Compose-UI-only change; no pure
+    logic added/removed). Device journeys NOT verified (no device/KVM).
+  Result: `.docs/results/M26-settings-reduction.md`. Next: user's pick from
+  TASKS.md Active/next (CI restore, font packaging, Play hardening).
+
+
 - **Session M-25 (Oct 29, 2026)** — adopted the user's S1 UI/UX/Settings/sync
   audit (`.docs/audits/ui-ux/S1-SETTINGS-SYNC-UX-AUDIT.md`; locked decisions:
   one-step sync removal w/ uninstall-reinstall, PDF out of scope, fail-safe

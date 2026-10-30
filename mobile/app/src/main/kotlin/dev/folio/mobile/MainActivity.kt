@@ -104,6 +104,7 @@ import dev.folio.mobile.ui.components.FolioFilledButton
 import dev.folio.mobile.ui.icons.FolioIcons
 import dev.folio.mobile.ui.theme.FolioDimensions
 import dev.folio.mobile.ui.theme.FolioSpacing
+import dev.folio.mobile.ui.theme.FolioAppTheme
 import dev.folio.mobile.ui.theme.FolioMobileTheme
 import androidx.compose.foundation.isSystemInDarkTheme
 import kotlinx.coroutines.CompletableDeferred
@@ -163,10 +164,12 @@ class MainActivity : ComponentActivity() {
         val shared = sharedFileUri(intent)
         // App-interface appearance (S1 audit Phase 2): one blocking read so
         // the first frame carries the stored choice (System is the default).
-        val storedAppearance = AppAppearanceStore.loadThemeSync(AppFileStore(filesDir))
+        // M-26: via the process-wide holder so a theme change made in
+        // Settings re-themes Library on return, not just fresh activities.
+        FolioAppTheme.ensure(AppFileStore(filesDir))
         setContent {
             FolioMobileTheme(
-                darkTheme = AppAppearanceStore.isDark(storedAppearance, isSystemInDarkTheme()),
+                darkTheme = AppAppearanceStore.isDark(FolioAppTheme.key.value, isSystemInDarkTheme()),
             ) {
                 LibraryScreen(sharedFileUri = shared)
             }

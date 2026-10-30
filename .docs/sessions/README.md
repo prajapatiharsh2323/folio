@@ -25,10 +25,11 @@ duplicates and because they carry evidence). This index locates them.
 | Oct 26 2026 | FIX-A…FIX-D | UX/UI & data-safety fix sweep (sheet top at `../FIX-PLAN-TRACKING.md`) |
 | Oct 27 2026 | FIX-E + first-release report | release hardening; verdict in `../audits/bugs/FIRST_RELEASE_BUGFIX_REPORT.md` |
 | Oct 29 2026 (user) + M-25 | M-25 | S1 audit adoption + full close: Phase 0 data-safety/release gates, Phase 1 Drive-sync removal (offline-first), Phase 2 Settings rebuild, Phase 3 reader recovery & comfort, Phase 4 library/notes finish + PDF removal — results `../results/M25-s1-phase0..4.md` |
+| Oct 30 2026 | M-26 | User-directed Settings reduction (app-management only) + app-level theme propagation (`FolioAppTheme`), reader-sheet global-defaults action, root APK cleanup — result `../results/M26-settings-reduction.md` |
 
 ## Rules for new session records
 
-Next mobile session number: **M-25** (then increment). Record the session inside
+Next mobile session number: **M-27** (then increment). Record the session inside
 `MOBILE-TRACKING.md` (append, don't overwrite) if it's project work; if it's a
 standalone audit or one-off investigation, create a dated file in the relevant
 `audits/`, `plans/`, or `archive/` folder and link it from this index and from
