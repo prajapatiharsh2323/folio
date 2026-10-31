@@ -1,47 +1,62 @@
 # Folio
 
-> A private, local-first reading library for articles and books.
+> A private, local-first reading library for Android.
 
-Folio is an installable PWA for Android and Windows, paired with a browser extension that clips web articles into clean, sanitized, offline-readable copies. Real files are stored directly in your browser's Origin Private File System (OPFS) or a chosen Windows folder, and search is instant, offline, and multilingual (English & Hindi).
+Folio is a native Android reading app — your books and articles stay **on your
+device**: no accounts, no servers, no tracking. Import EPUB, PDF, HTML, or TXT
+files, read them in a fast, comfortable reader, and keep everything organized
+with collections, tags, notes, and highlights.
 
----
-
-## Highlights
-
-- 📚 **Read Everything**: Import EPUB, PDF, HTML, and TXT files.
-- ✂️ **Web Article Clipper**: Turn noisy web pages into clean, offline EPUB books with one click.
-- ⚡ **Instant Offline Search**: Full-text multilingual search in English and Hindi with Devanagari combining mark preservation.
-- 🖊️ **Notes & Highlights**: Highlight in 4 colors, add notes with contextual anchoring, and export to Markdown.
-- 📦 **Safe Backups**: Streaming ZIP export/import with SHA-256 verification and merge conflict resolution.
-- ☁️ **Google Drive Mirror**: Direct zero-server mirror using personal OAuth client ID and `drive.file` scope.
-- 🪟 **Windows Folder Mode**: Store your library directly in a folder on your machine (e.g. Google Drive for desktop) with zero API calls.
-- 📱 **Native Feel**: 60 fps smooth navigation, Android back gestures, bottom sheets, haptic feedback, and dynamic theming.
+**Package:** `dev.folio.mobile` · **Version:** v0.2.0 · **Stack:** Kotlin + Jetpack Compose + [Readium 3](https://readium.org/)
 
 ---
 
-## Documentation
+## Features
 
-- 📖 **[User Guide](docs/guide.md)**: Detailed instructions on installation, clipping, reading, shortcuts, backup, and Drive sync.
-- 📐 **[Technical Specification](docs/spec.md)**: Full architecture and design requirements.
-- 📝 **[Decisions Log](docs/decisions.md)**: Running log of architectural decisions across Phase 0 to Phase 6.
+- 📚 **Multi-format library** — EPUB, PDF, HTML, and TXT import via system file picker or open-with.
+- 📖 **Full-featured reader** — paged and scrollable modes, adjustable typography and comfort settings, reader splash with cover art.
+- 🖊️ **Notes & highlights** — highlight in 4 colors, add notes and annotations anchored to text selections, quote cards.
+- 🗂️ **Collections & tags** — group, filter, rename, delete; real list UI with progress and sorting.
+- 🔤 **Built-in dictionary** — look up words while you read.
+- 💾 **Backups** — streaming ZIP export/import with SHA-256 verification and merge conflict resolution.
+- 🛡️ **Local-first** — everything stored on-device; works fully offline.
 
 ---
 
-## Quick Start
+## Install
 
-> **Note:** the original PWA/clipper codebase was retired (commit `d793212`) —
-> the active product is the native Android app in [`mobile/`](mobile/).
-> See [`docs/mobile-cloud-sync.md`](docs/mobile-cloud-sync.md) and
-> [`desktop-docs/`](desktop-docs/README.md) (planned Windows desktop port).
+Grab the latest APK from
+[**GitHub Releases**](https://github.com/prajapatiharsh2323/folio/releases),
+allow "install from unknown sources" on first run, and you're set.
+
+---
+
+## Building from source
+
+Requires JDK 17 and the Android SDK.
 
 ```bash
-# Android app — verified gates (run inside mobile/)
+cd mobile/
 ./gradlew :app:testDebugUnitTest   # unit tests
 ./gradlew :app:lintDebug           # lint (0 errors expected)
 ./gradlew :app:assembleDebug       # debug APK
 ```
 
+All three gates green is the milestone standard — debug APKs are built for
+user testing on real devices.
+
+## Repo map
+
+| Path | What it is |
+|---|---|
+| `mobile/` | The product — native Android app (Kotlin + Compose + Readium 3) |
+| `design/folio-icon/` | Canonical app icon sources and final assets |
+| `cover-imgs/` | Bundled Folio cover-art set |
+| `folio-logo.png` | Canonical launcher-icon source |
+| `.docs/` | Development knowledge base (plans, audits, session records) — aimed at AI coding agents, readable by humans too |
+
 ## For AI coding agents
 
-See [`AGENTS.md`](AGENTS.md) and the knowledge base in [`.docs/`](.docs/README.md)
-— project context, task board, current session checkpoint, plans, audits, decisions.
+See [`AGENTS.md`](AGENTS.md) and the knowledge base in
+[`.docs/README.md`](.docs/README.md) — project context, task board, current
+session checkpoint, plans, audits, and decision records.

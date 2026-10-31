@@ -7,10 +7,12 @@ before writing code, and write back to it as you work.
 
 - **`mobile/`** is the only product code: a native Android reading app
   (Kotlin + Jetpack Compose + **Readium 3.0.0**), `dev.folio.mobile`, v0.2.0.
-- The old PWA monorepo was **deleted** (commit `d793212`); root `PRD.md` and
-  `docs/{spec,guide,decisions}.md` are PWA-era background — don't build from them.
-- Planned next target: a Tauri 2 + TS/React Windows desktop port, fully specced
-  in `desktop-docs/` (with schema-1 data compatibility with mobile).
+- The old PWA monorepo was **deleted** (commit `d793212`) along with its
+  era files (`PRD.md`, root `docs/`, `this.md`) in the 2026-10-31 repo cleanup —
+  always recoverable from git history.
+- Planned next target: a Tauri 2 + TS/React Windows desktop port (with schema-1
+  data compatibility with mobile). Not yet in the repo — spec material to be
+  added when the desktop work starts.
 
 ## Read before substantial work
 
@@ -22,7 +24,8 @@ before writing code, and write back to it as you work.
    checkpoint (update both when status changes or a milestone completes).
 4. Working on `mobile/`? Also read `.docs/MOBILE-TRACKING.md` (authoritative:
    locked plan, decisions 1–11+, session log). Bug/fix sweeps: `.docs/FIX-PLAN-TRACKING.md`.
-5. Desktop work: `desktop-docs/README.md`, read in its stated order.
+5. Desktop work: planned but not yet specced in-repo — check
+   `.docs/TASKS.md` first.
 
 ## Verify (run in `mobile/`, all three green = milestone gate)
 

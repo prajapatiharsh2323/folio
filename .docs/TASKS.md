@@ -40,6 +40,16 @@ PROGRESS`, `BLOCKED`, `DONE`.
 - ~~2 debug APKs (~79 MB) tracked at repo root~~ DONE 2026-10-30 (M-26,
   explicit user authorization): all older APKs removed; a single dated
   user-test APK remains at the repo root.
+
+  > Done + moved forward 2026-10-31: that APK is untracked; APKs now ship
+  > as GitHub Release assets (root `/*.apk` gitignored).
 - `this.md` (15-byte stub) and PWA-era `.prettierrc`/`.gitignore` entries are leftovers.
+
+  > DONE 2026-10-31 (user-approved cleanup): `this.md`, `.prettierrc`,
+  > `PRD.md`, `docs/{spec,guide,decisions,mobile-cloud-sync}.md`,
+  > `design/folio-icon/tmp/` deleted; root `.gitignore` rewritten;
+  > `.agents/` untracked (kept local). 2026-10-30 M-26 APK untracked →
+  > shipped via GitHub Release `v0.2.0-m26` (dated 2026-10-31 asset).
+  > No CI artifact / LICENSE by user's call.
 - S1 was crossed with this earlier note (kept for history): `mobile/auditscratch/`
   is untracked scratch (`audit-build.log`, one-off validation test).

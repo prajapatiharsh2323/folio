@@ -1,12 +1,14 @@
-node_modules
-dist
-.output
-.wxt
-coverage
-playwright-report
-test-results
+# OS junk
 .DS_Store
 Thumbs.db
+
+# Built artifacts (APKs stay out of git — ship them via GitHub Releases)
+/*.apk
+
+# Agent tooling (kept local, not tracked)
+.agents/
 .superpowers
+
+# Knowledge-base transient logs
 .docs/logs*
 .docs/*.log
